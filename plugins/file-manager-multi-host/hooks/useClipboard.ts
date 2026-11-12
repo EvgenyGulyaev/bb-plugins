@@ -1,10 +1,10 @@
-// hooks/useClipboard.ts — cut / copy / paste state for the panel (§8.5).
+// hooks/useClipboard.ts вЂ” cut / copy / paste state for the panel (В§8.5).
 //
 // Deliberately *not* the system clipboard: `navigator.clipboard` cannot carry
 // a file handle the server could act on, and the paste target is always a
 // directory inside this panel. Cut rows render at opacity-50 (`isCut`), paste
 // moves (and clears the clipboard) or copies (and keeps it).
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useFmRpc, type RpcOutput } from "../lib/fm-rpc";
 import { dirname, isSameOrDescendant, isSamePath } from "../lib/fm-paths";
@@ -35,10 +35,14 @@ export interface UseClipboardResult {
   isPasting: boolean;
 }
 
-export function useClipboard(): UseClipboardResult {
+export function useClipboard(hostId: string | null = null): UseClipboardResult {
   const rpc = useFmRpc();
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   const [isPasting, setIsPasting] = useState(false);
+
+  useEffect(() => {
+    setClipboard(null);
+  }, [hostId]);
 
   const cut = useCallback((paths: readonly string[]) => {
     setClipboard(paths.length === 0 ? null : { mode: "cut", paths: [...paths] });
@@ -92,11 +96,13 @@ export function useClipboard(): UseClipboardResult {
               paths,
               destinationDir,
               conflict: conflict ?? "fail",
+              ...(hostId === null ? {} : { hostId }),
             })
           : await rpc.call("copyEntries", {
               paths,
               destinationDir,
               conflict: conflict ?? "rename",
+              ...(hostId === null ? {} : { hostId }),
             });
         if (isCutMode) setClipboard(null);
         return result;
@@ -104,8 +110,9 @@ export function useClipboard(): UseClipboardResult {
         setIsPasting(false);
       }
     },
-    [canPasteInto, clipboard, rpc],
+    [canPasteInto, clipboard, hostId, rpc],
   );
 
   return { clipboard, cut, copy, clear, isCut, canPasteInto, paste, isPasting };
 }
+
