@@ -1,6 +1,6 @@
 // Interface language for the plugins of this repository: English or Russian.
 //
-// Canonical copy: shared/i18n.tsx in the xMinor-1/bb-plugins repository. Each
+// Canonical copy: shared/i18n.tsx in the deicer/bb-plugins repository. Each
 // plugin keeps an identical copy (plugins are built and installed one by one,
 // so they cannot import from outside their own directory). Change it there and
 // copy it to every plugin again.
@@ -79,7 +79,7 @@ type Translation<M> = { [K in keyof M]: M[K] extends (...args: infer A) => strin
  *
  *   const messages = defineMessages(
  *     { save: "Save", apps: (n: number) => `${n} ${n === 1 ? "app" : "apps"}` },
- *     { save: "Сохранить", apps: (n) => `${n} ${pluralRu(n, ["приложение", "приложения", "приложений"])}` },
+ *     { save: "РЎРѕС…СЂР°РЅРёС‚СЊ", apps: (n) => `${n} ${pluralRu(n, ["РїСЂРёР»РѕР¶РµРЅРёРµ", "РїСЂРёР»РѕР¶РµРЅРёСЏ", "РїСЂРёР»РѕР¶РµРЅРёР№"])}` },
  *   );
  *   const t = useMessages(messages);   // in a component
  *   t.save; t.apps(3);
@@ -98,7 +98,7 @@ export function messagesNow<M>(messages: Record<Lang, M>): M {
   return messages[getLang()];
 }
 
-/** Russian plural form: pluralRu(n, ["день", "дня", "дней"]); fractions take the second form (1,5 дня). */
+/** Russian plural form: pluralRu(n, ["РґРµРЅСЊ", "РґРЅСЏ", "РґРЅРµР№"]); fractions take the second form (1,5 РґРЅСЏ). */
 export function pluralRu(n: number, [one, few, many]: readonly [string, string, string]): string {
   if (!Number.isInteger(n)) return few;
   const abs = Math.abs(n);
@@ -121,7 +121,7 @@ export function LanguageSwitch({ className }: { className?: string }) {
   return (
     <div
       role="group"
-      aria-label={lang === "ru" ? "Язык интерфейса" : "Interface language"}
+      aria-label={lang === "ru" ? "РЇР·С‹Рє РёРЅС‚РµСЂС„РµР№СЃР°" : "Interface language"}
       className={`inline-flex shrink-0 rounded-md border border-border p-0.5 text-xs ${className ?? ""}`}
     >
       {LANGS.map((code) => (
@@ -138,3 +138,4 @@ export function LanguageSwitch({ className }: { className?: string }) {
     </div>
   );
 }
+
