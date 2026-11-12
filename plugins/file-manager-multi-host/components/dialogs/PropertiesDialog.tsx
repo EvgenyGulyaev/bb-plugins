@@ -1,14 +1,14 @@
-// components/dialogs/PropertiesDialog.tsx — "Properties" (§8.10).
+// components/dialogs/PropertiesDialog.tsx вЂ” "Properties" (В§8.10).
 //
 // Two shapes behind one dialog. A single target is described in full from
 // `pathProperties`, which is one lstat and therefore safe to run on every
 // open. Several selected rows get a summary the panel already has the data
-// for — counting them costs no round trip at all.
+// for вЂ” counting them costs no round trip at all.
 //
 // A folder's real size is the one expensive question here, so it stays behind
 // a button: `directorySize` walks the subtree with hard limits and can answer
 // "partial", which this renders as a lower bound rather than as a total. bb's
-// RPC has no abort channel, so closing the dialog cannot call the walk off —
+// RPC has no abort channel, so closing the dialog cannot call the walk off вЂ”
 // it retires the ticket the answer would land on, and the walk's own time
 // budget bounds what is left running.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -44,6 +44,7 @@ export interface PropertiesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   target: PropertiesTarget;
+  hostId?: string | null;
 }
 
 const messages = defineMessages(
@@ -65,14 +66,14 @@ const messages = defineMessages(
     folders: "Folders",
     size: "Size",
     unmeasured:
-      "Folders and links are not measured here — the total covers the selected files. Open a folder on its own to calculate its size.",
-    reading: "Reading…",
+      "Folders and links are not measured here вЂ” the total covers the selected files. Open a folder on its own to calculate its size.",
+    reading: "ReadingвЂ¦",
     name: "Name",
     kind: "Kind",
     type: "Type",
     location: "Location",
     home: "the home folder",
-    calculating: "Calculating…",
+    calculating: "CalculatingвЂ¦",
     calculate: "Calculate size",
     over: "over ",
     filesInFolders: (files: number, folders: number) =>
@@ -86,52 +87,52 @@ const messages = defineMessages(
     owner: "Owner",
     links: "Links",
     partial: (reason: string) =>
-      `Partial result — ${reason}. The real total is larger than the number above.`,
+      `Partial result вЂ” ${reason}. The real total is larger than the number above.`,
     leavesRoot: (root: string) => `This link leaves ${root}, so the panel cannot follow it.`,
     close: "Close",
   },
   {
-    kindFile: "Файл",
-    kindDirectory: "Папка",
-    kindSymlink: "Символическая ссылка",
-    kindOther: "Особый файл",
-    linkUnresolved: "Символическая ссылка (цель не найдена)",
-    linkTo: (kind) => `Символическая ссылка: ${kind.toLowerCase()}`,
-    stopDepth: "дерево глубже, чем проходит обход",
-    stopEntries: "элементов больше, чем считает один обход",
-    stopTime: "обходу не хватило времени",
-    items: (count) => `${String(count)} ${pluralRu(count, ["элемент", "элемента", "элементов"])}`,
-    title: "Свойства",
-    selection: "Выбрано",
-    files: "Файлы",
-    special: (count) => ` (+${String(count)} особых)`,
-    folders: "Папки",
-    size: "Размер",
+    kindFile: "Р¤Р°Р№Р»",
+    kindDirectory: "РџР°РїРєР°",
+    kindSymlink: "РЎРёРјРІРѕР»РёС‡РµСЃРєР°СЏ СЃСЃС‹Р»РєР°",
+    kindOther: "РћСЃРѕР±С‹Р№ С„Р°Р№Р»",
+    linkUnresolved: "РЎРёРјРІРѕР»РёС‡РµСЃРєР°СЏ СЃСЃС‹Р»РєР° (С†РµР»СЊ РЅРµ РЅР°Р№РґРµРЅР°)",
+    linkTo: (kind) => `РЎРёРјРІРѕР»РёС‡РµСЃРєР°СЏ СЃСЃС‹Р»РєР°: ${kind.toLowerCase()}`,
+    stopDepth: "РґРµСЂРµРІРѕ РіР»СѓР±Р¶Рµ, С‡РµРј РїСЂРѕС…РѕРґРёС‚ РѕР±С…РѕРґ",
+    stopEntries: "СЌР»РµРјРµРЅС‚РѕРІ Р±РѕР»СЊС€Рµ, С‡РµРј СЃС‡РёС‚Р°РµС‚ РѕРґРёРЅ РѕР±С…РѕРґ",
+    stopTime: "РѕР±С…РѕРґСѓ РЅРµ С…РІР°С‚РёР»Рѕ РІСЂРµРјРµРЅРё",
+    items: (count) => `${String(count)} ${pluralRu(count, ["СЌР»РµРјРµРЅС‚", "СЌР»РµРјРµРЅС‚Р°", "СЌР»РµРјРµРЅС‚РѕРІ"])}`,
+    title: "РЎРІРѕР№СЃС‚РІР°",
+    selection: "Р’С‹Р±СЂР°РЅРѕ",
+    files: "Р¤Р°Р№Р»С‹",
+    special: (count) => ` (+${String(count)} РѕСЃРѕР±С‹С…)`,
+    folders: "РџР°РїРєРё",
+    size: "Р Р°Р·РјРµСЂ",
     unmeasured:
-      "Папки и ссылки здесь не измеряются — в сумме только выбранные файлы. Чтобы узнать размер папки, откройте свойства только её.",
-    reading: "Читаю…",
-    name: "Имя",
-    kind: "Вид",
-    type: "Тип",
-    location: "Где",
-    home: "Домашняя папка",
-    calculating: "Считаю…",
-    calculate: "Посчитать размер",
-    over: "больше ",
+      "РџР°РїРєРё Рё СЃСЃС‹Р»РєРё Р·РґРµСЃСЊ РЅРµ РёР·РјРµСЂСЏСЋС‚СЃСЏ вЂ” РІ СЃСѓРјРјРµ С‚РѕР»СЊРєРѕ РІС‹Р±СЂР°РЅРЅС‹Рµ С„Р°Р№Р»С‹. Р§С‚РѕР±С‹ СѓР·РЅР°С‚СЊ СЂР°Р·РјРµСЂ РїР°РїРєРё, РѕС‚РєСЂРѕР№С‚Рµ СЃРІРѕР№СЃС‚РІР° С‚РѕР»СЊРєРѕ РµС‘.",
+    reading: "Р§РёС‚Р°СЋвЂ¦",
+    name: "РРјСЏ",
+    kind: "Р’РёРґ",
+    type: "РўРёРї",
+    location: "Р“РґРµ",
+    home: "Р”РѕРјР°С€РЅСЏСЏ РїР°РїРєР°",
+    calculating: "РЎС‡РёС‚Р°СЋвЂ¦",
+    calculate: "РџРѕСЃС‡РёС‚Р°С‚СЊ СЂР°Р·РјРµСЂ",
+    over: "Р±РѕР»СЊС€Рµ ",
     filesInFolders: (files, folders) =>
-      `${String(files)} ${pluralRu(files, ["файл", "файла", "файлов"])} в ${String(folders)} ${pluralRu(folders, ["папке", "папках", "папках"])}`,
-    target: "Цель",
-    resolvesTo: "Ведёт к",
-    modified: "Изменён",
-    created: "Создан",
-    accessed: "Открыт",
-    permissions: "Права",
-    owner: "Владелец",
-    links: "Ссылок",
+      `${String(files)} ${pluralRu(files, ["С„Р°Р№Р»", "С„Р°Р№Р»Р°", "С„Р°Р№Р»РѕРІ"])} РІ ${String(folders)} ${pluralRu(folders, ["РїР°РїРєРµ", "РїР°РїРєР°С…", "РїР°РїРєР°С…"])}`,
+    target: "Р¦РµР»СЊ",
+    resolvesTo: "Р’РµРґС‘С‚ Рє",
+    modified: "РР·РјРµРЅС‘РЅ",
+    created: "РЎРѕР·РґР°РЅ",
+    accessed: "РћС‚РєСЂС‹С‚",
+    permissions: "РџСЂР°РІР°",
+    owner: "Р’Р»Р°РґРµР»РµС†",
+    links: "РЎСЃС‹Р»РѕРє",
     partial: (reason) =>
-      `Неполный результат — ${reason}. На самом деле больше, чем показано выше.`,
-    leavesRoot: (root) => `Ссылка ведёт за пределы ${root}, панель по ней не пойдёт.`,
-    close: "Закрыть",
+      `РќРµРїРѕР»РЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚ вЂ” ${reason}. РќР° СЃР°РјРѕРј РґРµР»Рµ Р±РѕР»СЊС€Рµ, С‡РµРј РїРѕРєР°Р·Р°РЅРѕ РІС‹С€Рµ.`,
+    leavesRoot: (root) => `РЎСЃС‹Р»РєР° РІРµРґС‘С‚ Р·Р° РїСЂРµРґРµР»С‹ ${root}, РїР°РЅРµР»СЊ РїРѕ РЅРµР№ РЅРµ РїРѕР№РґС‘С‚.`,
+    close: "Р—Р°РєСЂС‹С‚СЊ",
   },
 );
 
@@ -192,7 +193,7 @@ export interface SelectionSummary {
 /**
  * The multi-selection answer, straight off the rows on screen. Folders have no
  * size in a listing and a symlink's `sizeBytes` is the length of its target
- * string rather than of the file — so neither is added up, and `hasUnmeasured`
+ * string rather than of the file вЂ” so neither is added up, and `hasUnmeasured`
  * says the total is only about the plain files.
  */
 export function summarizeEntries(entries: readonly FileEntry[]): SelectionSummary {
@@ -245,7 +246,7 @@ function Row({
   );
 }
 
-export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialogProps) {
+export function PropertiesDialog({ open, onOpenChange, target, hostId = null }: PropertiesDialogProps) {
   const t = useMessages(messages);
   const rpc = useFmRpc();
 
@@ -270,7 +271,7 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
   /**
    * The only cancellation available. Every answer carries the ticket it was
    * asked under; opening on another path, or closing, retires it, so a reply
-   * that arrives late — a `directorySize` walk in particular — lands on
+   * that arrives late вЂ” a `directorySize` walk in particular вЂ” lands on
    * nothing instead of repainting a dialog about a different file.
    */
   const ticketRef = useRef(0);
@@ -292,7 +293,10 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
     setLoading(true);
     void (async () => {
       try {
-        const result = await rpc.call("pathProperties", { path: singlePath });
+        const result = await rpc.call("pathProperties", {
+          path: singlePath,
+          ...(hostId === null ? {} : { hostId }),
+        });
         if (ticketRef.current !== ticket) return;
         setProperties(result);
       } catch (failure) {
@@ -306,7 +310,7 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
     return () => {
       ticketRef.current += 1;
     };
-  }, [open, rpc, singlePath]);
+  }, [hostId, open, rpc, singlePath]);
 
   const calculateSize = useCallback(() => {
     if (singlePath === null) return;
@@ -315,7 +319,10 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
     setSizeError(null);
     void (async () => {
       try {
-        const result = await rpc.call("directorySize", { path: singlePath });
+        const result = await rpc.call("directorySize", {
+          path: singlePath,
+          ...(hostId === null ? {} : { hostId }),
+        });
         if (ticketRef.current !== ticket) return;
         setSize(result);
       } catch (failure) {
@@ -325,7 +332,7 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
         if (ticketRef.current === ticket) setSizeBusy(false);
       }
     })();
-  }, [rpc, singlePath]);
+  }, [hostId, rpc, singlePath]);
 
   const heading =
     singlePath === null
@@ -429,7 +436,7 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
                         {size.partial ? t.over : ""}
                         {formatBytes(size.sizeBytes)}
                         <span className="text-muted-foreground">
-                          {" · "}
+                          {" В· "}
                           {t.filesInFolders(size.fileCount, size.directoryCount)}
                         </span>
                       </span>
@@ -512,3 +519,4 @@ export function PropertiesDialog({ open, onOpenChange, target }: PropertiesDialo
     </Dialog>
   );
 }
+
