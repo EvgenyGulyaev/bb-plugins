@@ -6,8 +6,8 @@
   "author": "Foma",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xMinor-1/bb-plugins.git",
-    "directory": "plugins/file-manager"
+    "url": "git+https://github.com/deicer/bb-plugins.git",
+    "directory": "plugins/file-manager-multi-host"
   },
   "type": "module",
   "keywords": [
@@ -93,3 +93,4 @@
     "vitest": "^4.1.1"
   }
 }
+
