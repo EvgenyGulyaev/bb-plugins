@@ -1,4 +1,4 @@
-// bb-plugin-session-history вЂ” frontend. A "Past sessions" section on the
+// bb-plugin-session-history — frontend. A "Past sessions" section on the
 // new-thread screen (scoped to the selected project) and a "Sessions" page
 // with the full list and a transcript at /sessions/<agent>/<id>, under which a
 // composer starts a BB thread that continues the session.
@@ -196,7 +196,7 @@ function SessionRowView({
           <span className="min-w-0 flex-1">
             <span className="block truncate">{session.title}</span>
             {subtitle.length > 0 ? (
-              <span className="block truncate text-xs text-muted-foreground">{subtitle.join(" В· ")}</span>
+              <span className="block truncate text-xs text-muted-foreground">{subtitle.join(" · ")}</span>
             ) : null}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{ago(session.updatedAt)}</span>
@@ -485,12 +485,12 @@ function SessionList({
                           }
                         >
                           <span className="w-4 shrink-0 text-center text-muted-foreground" aria-hidden>
-                            {collapsed ? "в–ё" : "в–ѕ"}
+                            {collapsed ? "▸" : "▾"}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{group.cwd || t.unknownFolder}</span>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {group.hostName} В· {t.folderSessionCount(group.sessions.length)} В· {ago(latest.updatedAt)}
+                              {group.hostName} · {t.folderSessionCount(group.sessions.length)} · {ago(latest.updatedAt)}
                             </span>
                           </span>
                         </button>
@@ -641,10 +641,10 @@ function SessionTranscript({
               data.session.cwd,
               data.session.gitBranch,
               data.session.model,
-              `${dateTime(data.session.createdAt)} вЂ” ${dateTime(data.session.updatedAt)}`,
+              `${dateTime(data.session.createdAt)} — ${dateTime(data.session.updatedAt)}`,
             ]
               .filter(Boolean)
-              .join(" В· ")}
+              .join(" · ")}
           </p>
         </div>
       </div>
@@ -882,4 +882,3 @@ export default definePluginApp((app) => {
     component: SessionsPage,
   });
 });
-
