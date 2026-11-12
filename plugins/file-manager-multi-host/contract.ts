@@ -1,4 +1,4 @@
-// contract.ts — frozen wire contract between the File Manager backend and panel.
+// contract.ts вЂ” frozen wire contract between the File Manager backend and panel.
 // Any change here is a breaking change: bump the plugin version and update both
 // sides in the same commit.
 import type { PluginRpcContract } from "@get-bb/plugin-sdk";
@@ -9,7 +9,7 @@ import type { PluginRpcContract } from "@get-bb/plugin-sdk";
  * The SDK exports `defineRpcContract`, but importing it as a *value* pulls
  * `@get-bb/plugin-sdk` into the frontend bundle graph (app.tsx imports this
  * file for its constants). bb only shims the `/app` subpath, and a catalog
- * install runs `npm install --omit=dev` before bundling — so a value import
+ * install runs `npm install --omit=dev` before bundling вЂ” so a value import
  * here breaks installs unless the SDK is a runtime dependency, which
  * `bb plugin types --check` then rejects. The SDK helper is `c => c`; the
  * type-only import below is erased at build time and costs nothing.
@@ -24,25 +24,25 @@ import { z } from "zod";
 /* ------------------------------------------------------------------ */
 
 export const PLUGIN_ID = "file-manager-multi-host";
-/** navPanel `path` — the panel lives at /plugins/file-manager/files/* */
+/** navPanel `path` вЂ” the panel lives at /plugins/file-manager/files/* */
 export const PANEL_PATH = "files";
 export const RPC_BASE = `/api/v1/plugins/${PLUGIN_ID}/rpc`;
 export const HTTP_BASE = `/api/v1/plugins/${PLUGIN_ID}/http`;
 export const TOKEN_URL = `/api/v1/plugins/${PLUGIN_ID}/token`;
 export const UPLOAD_CHUNK_URL = `${HTTP_BASE}/upload/chunk`;
 export const DOWNLOAD_URL = `${HTTP_BASE}/download`;
-/** Several entries as one zip: `?dir=<folder>&name=<relative>&name=…` (§5.3). */
+/** Several entries as one zip: `?dir=<folder>&name=<relative>&name=вЂ¦` (В§5.3). */
 export const DOWNLOAD_ZIP_URL = `${HTTP_BASE}/download-zip`;
 
 /** The largest file the current remote file API returns in one read. */
 export const MAX_REMOTE_FILE_BYTES = 25 * 1024 * 1024;
 
 /**
- * Extensions the file-location openers claim (§10.2).
+ * Extensions the file-location openers claim (В§10.2).
  *
- * bb matches an opener by exact extension — there is no wildcard, and a name
+ * bb matches an opener by exact extension вЂ” there is no wildcard, and a name
  * with no extension at all (`Makefile`, `LICENSE`) gets no "Open with" rows
- * from any plugin — so this list is simply "what a link in a message
+ * from any plugin вЂ” so this list is simply "what a link in a message
  * plausibly points at": text, docs, ebooks, config, data, code, web, images,
  * audio, video, archives, fonts and binaries.
  *
@@ -50,7 +50,7 @@ export const MAX_REMOTE_FILE_BYTES = 25 * 1024 * 1024;
  * formats (`doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`), their OpenDocument
  * twins (`odt`, `ods`, `odp`) and `rtf` all belong to the pdf-viewer plugin,
  * which renders them. bb's automatic pick is the FIRST matching opener in
- * plugin-id order, and `file-manager` sorts before `pdf-viewer` — so claiming
+ * plugin-id order, and `file-manager` sorts before `pdf-viewer` вЂ” so claiming
  * any of them here would shadow the viewer with a reveal strip over bb's own
  * preview, which cannot render an office file at all.
  */
@@ -79,7 +79,7 @@ export const LOCATION_OPENER_EXTENSIONS = [
   // audio and video
   "mp3", "wav", "flac", "aac", "ogg", "oga", "m4a", "opus", "aiff",
   "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "mpg", "mpeg",
-  // archives — the plugin lists and extracts several of these itself (§8.13)
+  // archives вЂ” the plugin lists and extracts several of these itself (В§8.13)
   "zip", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "7z", "rar", "zst",
   "lz4", "iso", "dmg", "jar", "war", "whl", "gem", "crate", "nupkg", "xpi",
   "vsix", "apk", "aab", "ipa", "deb", "rpm", "pkg", "msi", "appimage", "snap",
@@ -108,13 +108,13 @@ export const MAX_CHUNK_BYTES = 64 * 1024 * 1024;
 
 /**
  * The `bb.ui.registerMentionProvider` id, and the section label its rows group
- * under in the composer's mention menu (§8.8).
+ * under in the composer's mention menu (В§8.8).
  *
  * Shared because both halves address it by name: the backend registers the
  * provider under this id, and every "Add to chat" affordance in the panel
- * inserts pills with `insertMention({ provider: MENTION_PROVIDER_ID, … })`.
- * A mismatch is silent — the pill renders and then resolves to nothing at send
- * time — so the string lives here rather than being typed twice.
+ * inserts pills with `insertMention({ provider: MENTION_PROVIDER_ID, вЂ¦ })`.
+ * A mismatch is silent вЂ” the pill renders and then resolves to nothing at send
+ * time вЂ” so the string lives here rather than being typed twice.
  */
 export const MENTION_PROVIDER_ID = "file";
 export const MENTION_PROVIDER_LABEL = "Files";
@@ -138,13 +138,13 @@ export const archiveFormatSchema = z.enum([
 export type ArchiveFormat = z.infer<typeof archiveFormatSchema>;
 
 /**
- * Name → archive format, longest suffix first: `.tar.gz` must win over a
+ * Name в†’ archive format, longest suffix first: `.tar.gz` must win over a
  * `.gz`-style single match.
  *
  * Shared because both halves ask the question. The backend marks listing rows
  * with it and picks an extractor or a lister by it; the file opener asks it of
  * a link's name to decide between bb's own preview and the archive's contents
- * (§10.2), before anything has been resolved on the server.
+ * (В§10.2), before anything has been resolved on the server.
  */
 const ARCHIVE_SUFFIXES: ReadonlyArray<readonly [string, ArchiveFormat]> = [
   [".tar.gz", "tar.gz"],
@@ -162,7 +162,7 @@ const ARCHIVE_SUFFIXES: ReadonlyArray<readonly [string, ArchiveFormat]> = [
 
 /**
  * The archive format a file name announces, or `null`. By name only, never
- * by content — see `entrySchema.archiveFormat`.
+ * by content вЂ” see `entrySchema.archiveFormat`.
  */
 export function detectArchiveFormat(name: string): ArchiveFormat | null {
   const lower = name.toLowerCase();
@@ -194,7 +194,7 @@ export const PREVIEW_TTL_MS = 10 * 60 * 1000;
 /**
  * Hard cap on what `readTextFile` returns, in bytes.
  *
- * The built-in viewer (§8.12) reads text over RPC rather than over the byte
+ * The built-in viewer (В§8.12) reads text over RPC rather than over the byte
  * routes, because it needs the *whole* string in the page to hand to a
  * renderer. One mebibyte is far more than anyone reads in a dialog and small
  * enough that a stray click on a 4 GB log costs one bounded read; past it the
@@ -203,12 +203,12 @@ export const PREVIEW_TTL_MS = 10 * 60 * 1000;
 export const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024;
 
 /**
- * How many members `listArchive` hands back (§8.13).
+ * How many members `listArchive` hands back (В§8.13).
  *
  * An archive's table of contents becomes a tree the page builds and paints,
  * so this is what keeps a 400 000-file backup from becoming a 400 000-row
- * page. Members past it are still *counted* — the summary line describes the
- * whole archive — they are just not sent.
+ * page. Members past it are still *counted* вЂ” the summary line describes the
+ * whole archive вЂ” they are just not sent.
  */
 export const MAX_ARCHIVE_ENTRIES = 10_000;
 
@@ -244,7 +244,7 @@ export type FileManagerErrorCode = z.infer<typeof errorCodeSchema>;
 
 /**
  * bb's `fileOpener` source descriptor, mirrored so the backend can validate it
- * (§10.2). `kind` decides what `path` is relative to.
+ * (В§10.2). `kind` decides what `path` is relative to.
  */
 export const fileOpenerSourceSchema = z.strictObject({
   kind: z.enum(["host", "thread-storage", "workspace"]),
@@ -255,7 +255,7 @@ export const fileOpenerSourceSchema = z.strictObject({
 export type FileOpenerSourceInput = z.infer<typeof fileOpenerSourceSchema>;
 
 /**
- * Why a thread's workspace folder cannot be opened (§10.3).
+ * Why a thread's workspace folder cannot be opened (В§10.3).
  *
  * Codes rather than sentences: the phrasing belongs to whichever control has
  * to say it, and the panel is the side that speaks English to the user. All
@@ -266,7 +266,7 @@ export const threadWorkspaceReasonSchema = z.enum([
   "no_environment",
   // The environment has no directory on disk: unprovisioned, or destroyed.
   "no_checkout",
-  // The checkout is real, but not under the hard root, so §6 forbids it.
+  // The checkout is real, but not under the hard root, so В§6 forbids it.
   "outside_root",
 ]);
 export type ThreadWorkspaceReason = z.infer<typeof threadWorkspaceReasonSchema>;
@@ -310,22 +310,22 @@ export const preferencesSchema = z.strictObject({
    */
   restoreLastFolder: z.boolean(),
   /**
-   * Open a thread panel tab in that thread's own project folder — the
-   * environment checkout `threadWorkspace` reports — instead of the
+   * Open a thread panel tab in that thread's own project folder вЂ” the
+   * environment checkout `threadWorkspace` reports вЂ” instead of the
    * remembered or configured folder (v0.9.1).
    *
    * It rides with the other bootstrap-tick preferences for the reason
    * `restoreLastFolder` documents above: the panel decides where to open in
    * the tick `getState` lands, and a second async source racing it would
    * either delay the first listing or open one folder and jump a moment
-   * later. Surfaces bb gives no thread — the nav panel, the New thread
-   * launcher, the file openers — ignore it: there is no thread to be in.
+   * later. Surfaces bb gives no thread вЂ” the nav panel, the New thread
+   * launcher, the file openers вЂ” ignore it: there is no thread to be in.
    */
   openThreadWorkspace: z.boolean(),
   sortField: sortFieldSchema,
   sortDirection: sortDirectionSchema,
   /**
-   * List or gallery (§8.9). It rides here rather than in `useSettings()` for
+   * List or gallery (В§8.9). It rides here rather than in `useSettings()` for
    * the same reason `restoreLastFolder` does: the panel has to know which
    * surface to paint in the tick it learns the root, and a second async source
    * racing the bootstrap would show the list for a frame and then swap it.
@@ -392,13 +392,13 @@ export const fsSignalSchema = z.strictObject({
 export type FsSignal = z.infer<typeof fsSignalSchema>;
 
 /* ------------------------------------------------------------------ */
-/* Properties (§8.10)                                                  */
+/* Properties (В§8.10)                                                  */
 /* ------------------------------------------------------------------ */
 
 /** Everything the Properties dialog shows about a single path. */
 export const pathPropertiesSchema = z.strictObject({
   name: z.string(),
-  /** Absolute path of the entry itself — the link, never its target. */
+  /** Absolute path of the entry itself вЂ” the link, never its target. */
   path: z.string(),
   /** Containing directory; null for the hard root, which has no parent here. */
   parentPath: z.string().nullable(),
@@ -414,7 +414,7 @@ export const pathPropertiesSchema = z.strictObject({
   linkTargetPath: z.string().nullable(),
   /**
    * lstat size: file bytes, symlink target length, or a directory's own inode
-   * size — never the size of a directory's contents. That is `directorySize`.
+   * size вЂ” never the size of a directory's contents. That is `directorySize`.
    */
   sizeBytes: z.number(),
   modifiedAtMs: z.number(),
@@ -429,8 +429,8 @@ export const pathPropertiesSchema = z.strictObject({
   ownerGid: z.number(),
   /**
    * Owner's name, or null. Node has no getpwuid, so only the user bb itself
-   * runs as can be named without a name-service lookup; every other owner —
-   * and every group — is reported as a number, the way `ls -n` does it.
+   * runs as can be named without a name-service lookup; every other owner вЂ”
+   * and every group вЂ” is reported as a number, the way `ls -n` does it.
    */
   ownerName: z.string().nullable(),
   linkCount: z.number(),
@@ -457,7 +457,7 @@ export const directorySizeSchema = z.strictObject({
 export type DirectorySize = z.infer<typeof directorySizeSchema>;
 
 /* ------------------------------------------------------------------ */
-/* Archive contents (§8.13)                                            */
+/* Archive contents (В§8.13)                                            */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -471,7 +471,7 @@ export type ArchiveEntryKind = z.infer<typeof archiveEntryKindSchema>;
 export const archiveEntrySchema = z.strictObject({
   /**
    * The member's path inside the archive: `/`-separated, decoded for display.
-   * Never a filesystem path — `../evil` and `/etc/passwd` are shown exactly as
+   * Never a filesystem path вЂ” `../evil` and `/etc/passwd` are shown exactly as
    * the archive spells them, and nothing is ever done with them.
    */
   path: z.string(),
@@ -497,7 +497,7 @@ export type ArchiveEntry = z.infer<typeof archiveEntrySchema>;
 export const archiveStopReasonSchema = z.enum(["entries", "time", "output", "damaged"]);
 export type ArchiveStopReason = z.infer<typeof archiveStopReasonSchema>;
 
-/** The table of contents of one archive (§8.13). */
+/** The table of contents of one archive (В§8.13). */
 export const archiveListingSchema = z.strictObject({
   /** The realpath'ed archive, echoed back. */
   path: z.string(),
@@ -508,7 +508,7 @@ export const archiveListingSchema = z.strictObject({
   entries: z.array(archiveEntrySchema),
   /** Members the scan saw: all of them unless `partial`. */
   totalEntries: z.number().int(),
-  /** Members that are not folders — files and links. */
+  /** Members that are not folders вЂ” files and links. */
   fileCount: z.number().int(),
   /** Distinct folders, including the ones only implied by a member's path. */
   directoryCount: z.number().int(),
@@ -526,28 +526,28 @@ export const archiveListingSchema = z.strictObject({
   problem: z.string().nullable(),
   /**
    * True when `extractArchive` can unpack this format on this host, so a
-   * surface can offer "Extract…" without a second round trip to find out.
+   * surface can offer "ExtractвЂ¦" without a second round trip to find out.
    */
   extractable: z.boolean(),
 });
 export type ArchiveListing = z.infer<typeof archiveListingSchema>;
 
 /* ------------------------------------------------------------------ */
-/* Bookmarks (§8.11)                                                   */
+/* Bookmarks (В§8.11)                                                   */
 /* ------------------------------------------------------------------ */
 
 /**
  * How many folders the bookmark list holds.
  *
  * The whole list is one `bb.storage.kv` row and kv caps a value at 256 KB, so
- * the ceiling has to be a number that cannot blow it: 50 × (PATH_MAX 4096 +
+ * the ceiling has to be a number that cannot blow it: 50 Г— (PATH_MAX 4096 +
  * a short name + JSON overhead) still fits with room to spare. 50 is also well
  * past the point where a menu stops being a menu.
  */
 export const MAX_BOOKMARKS = 50;
 /**
- * A bookmark name is a label, not a file name — it never reaches the
- * filesystem — so the 255-byte rule of `validateName` does not apply. This is
+ * A bookmark name is a label, not a file name вЂ” it never reaches the
+ * filesystem вЂ” so the 255-byte rule of `validateName` does not apply. This is
  * simply "long enough to be a sentence, short enough to fit a menu row".
  */
 export const MAX_BOOKMARK_NAME_LENGTH = 80;
@@ -579,7 +579,7 @@ export const machineSchema = z.strictObject({
   status: machineStatusSchema,
   /** The machine's home directory, or null when it is not reachable. */
   root: z.string().nullable(),
-  /** The first stage only exposes read and download for remote machines. */
+  /** True when this machine is unavailable for writes (offline or unknown). */
   readOnly: z.boolean(),
 });
 export type FileManagerMachine = z.infer<typeof machineSchema>;
@@ -606,15 +606,15 @@ export const fileManagerContract = defineRpcContract({
         sevenZip: z.boolean(),
         /**
          * 7z *lists* any RAR, but only a build that carries the RAR codec can
-         * unpack one — Debian's `7zip` ships without it (`7zip-rar` adds it).
+         * unpack one вЂ” Debian's `7zip` ships without it (`7zip-rar` adds it).
          * Probed once at load from `7z i`.
          */
         rar: z.boolean(),
       }),
       pluginVersion: z.string(),
       /**
-       * The host bb itself runs on — the machine whose home folder is the root
-       * (§8.2). The panel needs it to hand a file to bb's preview panel, which
+       * The host bb itself runs on вЂ” the machine whose home folder is the root
+       * (В§8.2). The panel needs it to hand a file to bb's preview panel, which
        * addresses a live file by host id. Null when the server could not name
        * it, and then a double-click downloads as it did before 0.7.
        */
@@ -649,7 +649,7 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * Everything the Properties dialog shows about one path (§8.10).
+   * Everything the Properties dialog shows about one path (В§8.10).
    *
    * One lstat, and it never looks below the path it was given: the final
    * component is not followed, so a symlink describes itself, and a directory
@@ -661,7 +661,7 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * Recursive size of one directory (§8.10).
+   * Recursive size of one directory (В§8.10).
    *
    * Separate from `pathProperties` because it can take seconds: the walk is
    * bounded by depth, entry count and wall clock, never follows a symlink, and
@@ -682,7 +682,7 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * A short-lived base URL the gallery hangs its thumbnails off (§8.9).
+   * A short-lived base URL the gallery hangs its thumbnails off (В§8.9).
    *
    * `bb.sdk.files.createPreview` mints a token-bearing URL rooted at one
    * folder; appending a relative path to it streams that file's bytes. The
@@ -690,7 +690,7 @@ export const fileManagerContract = defineRpcContract({
    * of megabytes, so reading the bytes over RPC and building data-URLs would
    * mean holding the whole folder in the page.
    *
-   * Not a per-file method on purpose — one call serves every tile in the
+   * Not a per-file method on purpose вЂ” one call serves every tile in the
    * folder, and the alternative is one round trip per row.
    */
   createPreviewUrl: {
@@ -702,7 +702,7 @@ export const fileManagerContract = defineRpcContract({
     output: z.strictObject({
       /**
        * Prefix for a *relative* path under `path`. Segments are encoded one by
-       * one (lib/preview.ts#previewUrl) — a file name may contain `/`-unsafe
+       * one (lib/preview.ts#previewUrl) вЂ” a file name may contain `/`-unsafe
        * characters, and encoding the whole path at once would eat the
        * separators.
        */
@@ -715,14 +715,14 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * The text of one file, capped, for the built-in viewer (§8.12).
+   * The text of one file, capped, for the built-in viewer (В§8.12).
    *
    * The counterpart of `createPreviewUrl`: images, PDFs and media are *shown*
    * from a URL and never travel through JS, while text has to be a string in
    * the page before bb's Markdown or source renderer can take it.
    *
    * "Is this text?" is answered here rather than from the file name, because
-   * the names that carry no extension — `Makefile`, `LICENSE`, `.gitignore` —
+   * the names that carry no extension вЂ” `Makefile`, `LICENSE`, `.gitignore` вЂ”
    * are exactly the ones a viewer must still open. A NUL byte in the read
    * window, or bytes that are not valid UTF-8, throw `unsupported`; the viewer
    * turns that into "no preview" plus a download button.
@@ -748,29 +748,30 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * What is inside one archive, without extracting it (§8.13).
+   * What is inside one archive, without extracting it (В§8.13).
    *
    * The third way the panel gets at a file's contents, beside
    * `createPreviewUrl` and `readTextFile`: a zip's central directory is read
    * in-process, tar and 7z/rar are asked through `tar -tv` and `7z l`, and
-   * nothing is ever written anywhere. Bounded three ways — members returned,
-   * members scanned, wall clock — and says so rather than hanging on a
+   * nothing is ever written anywhere. Bounded three ways вЂ” members returned,
+   * members scanned, wall clock вЂ” and says so rather than hanging on a
    * multi-gigabyte `.tar.xz`.
    */
   listArchive: {
     input: z.strictObject({
       /** Absolute path, or a path relative to root. */
       path: z.string(),
+      ...machineTarget,
     }),
     output: archiveListingSchema,
   },
 
   /**
-   * Where a file link points, and which folder to open for it (§10.2).
+   * Where a file link points, and which folder to open for it (В§10.2).
    *
    * The path comes from a `fileOpener`, so it is relative to whatever surface
    * produced it: a worktree, a thread's storage directory, or absolute for a
-   * host path. A target that does not exist is not an error — the nearest
+   * host path. A target that does not exist is not an error вЂ” the nearest
    * existing folder is still the useful answer, which is what an agent's glob
    * or a since-renamed file needs.
    */
@@ -794,7 +795,7 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /**
-   * The folder a thread's code lives in — its environment's checkout (§10.3).
+   * The folder a thread's code lives in вЂ” its environment's checkout (В§10.3).
    *
    * Answers, never refuses: a thread with no environment, an environment with
    * no checkout and a checkout outside the hard root are all states the panel
@@ -806,12 +807,12 @@ export const fileManagerContract = defineRpcContract({
     output: z.strictObject({
       /**
        * The realpath'ed checkout directory, non-null exactly when it is a real
-       * directory on disk right now — including when it sits outside the root
+       * directory on disk right now вЂ” including when it sits outside the root
        * and is therefore unopenable, so the panel can say *where* it is rather
        * than only that it cannot go.
        */
       path: z.string().nullable(),
-      /** True only when `path` is the hard root or below it: §6's prefix test. */
+      /** True only when `path` is the hard root or below it: В§6's prefix test. */
       insideRoot: z.boolean(),
       /** Null exactly when the panel may open `path`; a code otherwise. */
       reason: threadWorkspaceReasonSchema.nullable(),
@@ -839,6 +840,7 @@ export const fileManagerContract = defineRpcContract({
       /** Parent directory. */
       path: z.string(),
       name: z.string().min(1),
+      ...machineTarget,
     }),
     output: z.strictObject({ entry: entrySchema }),
   },
@@ -847,6 +849,7 @@ export const fileManagerContract = defineRpcContract({
     input: z.strictObject({
       path: z.string(),
       newName: z.string().min(1),
+      ...machineTarget,
     }),
     output: z.strictObject({ entry: entrySchema }),
   },
@@ -856,6 +859,7 @@ export const fileManagerContract = defineRpcContract({
       paths: z.array(z.string()).min(1).max(1000),
       /** Required for non-empty directories; false fails with not_empty. */
       recursive: z.boolean().default(true),
+      ...machineTarget,
     }),
     output: batchResultSchema,
   },
@@ -865,6 +869,7 @@ export const fileManagerContract = defineRpcContract({
       paths: z.array(z.string()).min(1).max(1000),
       destinationDir: z.string(),
       conflict: conflictPolicySchema.default("fail"),
+      ...machineTarget,
     }),
     output: batchResultSchema,
   },
@@ -874,6 +879,7 @@ export const fileManagerContract = defineRpcContract({
       paths: z.array(z.string()).min(1).max(1000),
       destinationDir: z.string(),
       conflict: conflictPolicySchema.default("rename"),
+      ...machineTarget,
     }),
     output: batchResultSchema,
   },
@@ -887,6 +893,7 @@ export const fileManagerContract = defineRpcContract({
       /** Extract into <dest>/<archive base name>/ instead of <dest>/. */
       createSubfolder: z.boolean().default(true),
       conflict: conflictPolicySchema.default("rename"),
+      ...machineTarget,
     }),
     output: z.strictObject({ job: jobSchema }),
   },
@@ -903,7 +910,7 @@ export const fileManagerContract = defineRpcContract({
 
   /**
    * Open (or resume) an upload session. Resume key is
-   * (destination dir, file name, size, lastModifiedMs) — a repeat call with the
+   * (destination dir, file name, size, lastModifiedMs) вЂ” a repeat call with the
    * same tuple returns the existing session and its byte count.
    */
   uploadCreate: {
@@ -918,10 +925,11 @@ export const fileManagerContract = defineRpcContract({
        * Created on finish. "" for a plain file drop.
        */
       relativeDir: z.string().default(""),
+      ...machineTarget,
     }),
     output: z.strictObject({
       uploadId: z.string(),
-      /** Bytes already on disk — the client starts from this offset. */
+      /** Bytes already on disk вЂ” the client starts from this offset. */
       receivedBytes: z.number().int(),
       chunkSizeBytes: z.number().int(),
       resumed: z.boolean(),
@@ -978,7 +986,7 @@ export const fileManagerContract = defineRpcContract({
   },
 
   /* ---------------------------------------------------------------- */
-  /* Bookmarks (§8.11)                                                 */
+  /* Bookmarks (В§8.11)                                                 */
   /*                                                                   */
   /* Every mutator answers with the whole list rather than with the row */
   /* it touched: the panel then replaces its state wholesale and has no */
@@ -1001,7 +1009,7 @@ export const fileManagerContract = defineRpcContract({
     output: z.strictObject({ bookmarks: z.array(bookmarkSchema) }),
   },
 
-  /** Works on a bookmark whose folder is gone — that is the point of it. */
+  /** Works on a bookmark whose folder is gone вЂ” that is the point of it. */
   removeBookmark: {
     input: z.strictObject({ path: z.string() }),
     output: z.strictObject({ bookmarks: z.array(bookmarkSchema) }),
@@ -1014,3 +1022,4 @@ export const fileManagerContract = defineRpcContract({
 });
 
 export type FileManagerContract = typeof fileManagerContract;
+
