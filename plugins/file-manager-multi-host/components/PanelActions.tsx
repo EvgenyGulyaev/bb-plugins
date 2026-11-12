@@ -1,0 +1,304 @@
+// components/PanelActions.tsx — the action cluster a panel tab wears.
+//
+// A nav panel gets its actions from the shared title bar (components/
+// HeaderActions.tsx, wired through the panel bus). A panel tab has no title
+// bar: the host paints a tab strip and hands the plugin the whole content
+// area. So the same actions ride here, inside the toolbar, and everything the
+// wide toolbar spreads across the strip — sort, the list/gallery switch,
+// hidden files, collapse all, refresh, the bookmark list — folds into the one
+// overflow menu, because a side panel is ~450px wide and the path bar has to
+// keep its share of it.
+//
+// One action exists here and nowhere else: the jump into the thread's own
+// checkout (§10.3). Only this surface is told which thread it belongs to.
+import type { ReactNode } from "react";
+
+import type { ViewMode } from "../contract";
+import type { SortDirection, SortField } from "../hooks/useDirectory";
+import type { PanelCommand } from "./panel-bus";
+import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { Icon } from "./ui/icon";
+import { actionMessages, sortLabels, viewLabels } from "./action-messages";
+import { LanguageSwitch, useMessages } from "../lib/i18n";
+
+/**
+ * §10.3 — the jump into the thread's own checkout. Only the panel tab of an
+ * existing thread ever has one; every other surface passes null.
+ */
+export interface ThreadFolderAction {
+  /** True when the jump can happen right now. */
+  available: boolean;
+  /** Why it cannot, already phrased for display; null when it can. */
+  blockedReason: string | null;
+  onOpen: () => void;
+}
+
+export interface PanelActionsProps {
+  /** False until the bootstrap lands: every action needs a folder to act on. */
+  ready: boolean;
+  /** False when the backend reported the folder read-only. */
+  writable: boolean;
+  canPaste: boolean;
+  showHidden: boolean;
+  sortField: SortField;
+  sortDirection: SortDirection;
+  viewMode: ViewMode;
+  /** How many folders the tree has open — drives the collapse-all rule. */
+  expandedCount: number;
+  /**
+   * The bookmark list (§8.11), as ready-made menu items.
+   *
+   * It rides here rather than in the toolbar because a ~450px column has room
+   * for four icon buttons, and the path bar, the filter magnifier, upload, new
+   * folder, the bookmark star and this overflow already claim them. Of the two
+   * bookmark controls the star is the one that has to stay visible — it *is*
+   * the state — while the list is something you go looking for, which is
+   * exactly what an overflow menu is for. It sits at the top of the menu, not
+   * the bottom: it is the one item here that navigates.
+   */
+  bookmarks?: ReactNode;
+  onCommand: (command: PanelCommand) => void;
+  onSortFieldChange: (field: SortField) => void;
+  onSortDirectionChange: (direction: SortDirection) => void;
+  /** Null on a surface with no thread, and while the lookup is still running. */
+  threadFolder?: ThreadFolderAction | null;
+  onViewModeChange: (mode: ViewMode) => void;
+}
+
+export function PanelActions({
+  ready,
+  writable,
+  canPaste,
+  showHidden,
+  sortField,
+  sortDirection,
+  viewMode,
+  expandedCount,
+  bookmarks,
+  onCommand,
+  onSortFieldChange,
+  onSortDirectionChange,
+  threadFolder = null,
+  onViewModeChange,
+}: PanelActionsProps) {
+  const t = useMessages(actionMessages);
+  const SORT_LABELS: Record<SortField, string> = sortLabels(t);
+  const VIEW_LABELS: Record<ViewMode, string> = viewLabels(t);
+  const mutationsDisabled = !ready || !writable;
+  /*
+   * Where the thread folder lives, and why it has two homes rather than one.
+   *
+   * A jump into the thread's own code is the whole reason this tab sits beside
+   * the thread, so while it can be used it gets its own button rather than a
+   * row two clicks deep in the overflow — spending the feature to save 32px
+   * would be the wrong trade. When it cannot be used the button would be a
+   * dead pixel that cannot explain itself — the vendored Tooltip is unusable
+   * here (Radix tooltip is a devDependency, so shipping it would break a
+   * catalog install) and a disabled <button> shows no native tooltip in every
+   * browser either — so the reason moves into the overflow menu as a disabled
+   * row: full text, and the place a user looks for a missing action. Never
+   * both at once; one action must not appear twice in one strip.
+   */
+  const blockedReason = threadFolder?.blockedReason ?? null;
+
+  return (
+    <div className="flex shrink-0 items-center gap-1" data-testid="fm-panel-actions">
+      {threadFolder?.available === true ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 shrink-0 p-0"
+          aria-label={t.openThreadFolder}
+          data-testid="fm-panel-thread-folder"
+          onClick={threadFolder.onOpen}
+        >
+          <Icon name="FolderGit" className="size-4" aria-hidden="true" />
+        </Button>
+      ) : null}
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 shrink-0 p-0"
+        disabled={mutationsDisabled}
+        aria-label={t.uploadFilesButton}
+        data-testid="fm-panel-upload"
+        // Dispatched straight from the click handler: the panel's hidden
+        // <input type="file"> only opens while the user gesture is still live.
+        onClick={() => onCommand({ type: "upload" })}
+      >
+        <Icon name="PackageReceive" className="size-4" aria-hidden="true" />
+      </Button>
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 shrink-0 p-0"
+        disabled={mutationsDisabled}
+        aria-label={t.newFolder}
+        data-testid="fm-panel-new-folder"
+        onClick={() => onCommand({ type: "new-folder" })}
+      >
+        <Icon name="FolderPlus" className="size-4" aria-hidden="true" />
+      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 shrink-0 p-0"
+            aria-label={t.moreActions}
+            data-testid="fm-panel-overflow"
+          >
+            <Icon name="MoreHorizontal" className="size-4" aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="max-h-96 w-56 overflow-y-auto">
+          {blockedReason === null ? null : (
+            <>
+              <DropdownMenuItem disabled data-testid="fm-panel-thread-folder-blocked">
+                <Icon name="FolderGit" className="size-4" aria-hidden="true" />
+                {blockedReason}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {bookmarks === undefined ? null : (
+            <>
+              {bookmarks}
+              <DropdownMenuSeparator />
+            </>
+          )}
+          <DropdownMenuItem
+            disabled={!ready}
+            data-testid="fm-panel-refresh"
+            onSelect={() => onCommand({ type: "refresh" })}
+          >
+            <Icon name="ArrowReloadHorizontal" className="size-4" aria-hidden="true" />
+            {t.refresh}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!ready}
+            data-testid="fm-panel-toggle-hidden"
+            onSelect={() => onCommand({ type: "toggle-hidden" })}
+          >
+            <Icon name={showHidden ? "EyeOff" : "Eye"} className="size-4" aria-hidden="true" />
+            {showHidden ? t.hideHidden : t.showHiddenAction}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={expandedCount === 0}
+            data-testid="fm-panel-collapse-all"
+            onSelect={() => onCommand({ type: "collapse-all" })}
+          >
+            <Icon name="Minimize2" className="size-4" aria-hidden="true" />
+            {t.collapseAll}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!ready}
+            data-testid="fm-panel-select-all"
+            onSelect={() => onCommand({ type: "select-all" })}
+          >
+            <Icon name="Check" className="size-4" aria-hidden="true" />
+            {t.selectAll}
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem
+            disabled={!canPaste || mutationsDisabled}
+            data-testid="fm-panel-paste"
+            onSelect={() => onCommand({ type: "paste" })}
+          >
+            <Icon name="Copy" className="size-4" aria-hidden="true" />
+            {t.paste}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!ready}
+            data-testid="fm-panel-copy-path"
+            onSelect={() => onCommand({ type: "copy-path" })}
+          >
+            <Icon name="Paperclip" className="size-4" aria-hidden="true" />
+            {t.copyFolderPath}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!ready}
+            data-testid="fm-panel-set-start-folder"
+            onSelect={() => onCommand({ type: "set-start-folder" })}
+          >
+            <Icon name="Pin" className="size-4" aria-hidden="true" />
+            {t.setStartFolder}
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+
+          {/* A menu row rather than the wide toolbar's icon toggle: the compact
+              strip already carries the path bar, the filter and three buttons
+              in ~450px, and a sixth control there costs the path bar more
+              width than a view switch is worth. It sits next to "Sort by"
+              because it answers the same question — how this folder is shown. */}
+          <DropdownMenuLabel>{t.view}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={viewMode}
+            onValueChange={(value) => onViewModeChange(value as ViewMode)}
+          >
+            {(Object.keys(VIEW_LABELS) as ViewMode[]).map((mode) => (
+              <DropdownMenuRadioItem
+                key={mode}
+                value={mode}
+                data-testid={`fm-panel-view-${mode}`}
+              >
+                {VIEW_LABELS[mode]}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuLabel>{t.sortBy}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={sortField}
+            onValueChange={(value) => onSortFieldChange(value as SortField)}
+          >
+            {(Object.keys(SORT_LABELS) as SortField[]).map((field) => (
+              <DropdownMenuRadioItem key={field} value={field}>
+                {SORT_LABELS[field]}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuRadioGroup
+            value={sortDirection}
+            onValueChange={(value) => onSortDirectionChange(value as SortDirection)}
+          >
+            <DropdownMenuRadioItem value="asc">{t.ascending}</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="desc">{t.descending}</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+
+          {/* The panel tab has no title bar, so the language switch rides at
+              the bottom of the overflow menu. Its buttons are not menu items:
+              picking a language keeps the menu open. */}
+          <DropdownMenuSeparator />
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm">
+            <span className="text-muted-foreground">{t.language}</span>
+            <LanguageSwitch />
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
