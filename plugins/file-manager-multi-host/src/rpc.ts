@@ -1,4 +1,4 @@
-// src/rpc.ts — wiring only. Core (metadata) handlers live here; the byte-transfer
+// src/rpc.ts вЂ” wiring only. Core (metadata) handlers live here; the byte-transfer
 // half of the contract is injected as `deps.transfer` so this module never
 // imports src/uploads.ts, src/archives.ts or src/jobs.ts.
 import type { BbPluginApi, PluginRpcHandlers } from "@get-bb/plugin-sdk";
@@ -45,7 +45,7 @@ export interface ArchiveSupport {
 
 export interface RpcDeps {
   settings: SettingsModule;
-  /** §8.11 folder shortcuts; the only reader/writer of the plugin's kv row. */
+  /** В§8.11 folder shortcuts; the only reader/writer of the plugin's kv row. */
   bookmarks: BookmarksModule;
   archiveSupport: ArchiveSupport;
   pluginVersion: string;
@@ -57,8 +57,8 @@ export interface RpcDeps {
  * The id of the machine bb runs on, which is the machine this plugin reads.
  *
  * Resolved once and remembered: `getState` runs on every panel mount, and the
- * answer cannot change without a server restart. A failure is not fatal — the
- * panel falls back to downloading a double-clicked file — so it is cached as
+ * answer cannot change without a server restart. A failure is not fatal вЂ” the
+ * panel falls back to downloading a double-clicked file вЂ” so it is cached as
  * "unknown" only for this call and retried on the next one.
  */
 async function resolvePrimaryHostId(bb: BbPluginApi): Promise<string | null> {
@@ -75,7 +75,7 @@ async function resolvePrimaryHostId(bb: BbPluginApi): Promise<string | null> {
 
 let cachedPrimaryHostId: string | null | undefined;
 
-/** The metadata half of the contract — everything that never carries bytes. */
+/** The metadata half of the contract вЂ” everything that never carries bytes. */
 export function createCoreHandlers(
   bb: BbPluginApi,
   deps: Omit<RpcDeps, "transfer">,
@@ -117,13 +117,13 @@ export function createCoreHandlers(
         : deps.remote.listDir({ ...input, hostId: input.hostId }),
     pathProperties: (input) => {
       if (input.hostId !== undefined && input.hostId !== null) {
-        throw new Error("unsupported: properties are not available for remote machines yet");
+        return deps.remote.pathProperties({ hostId: input.hostId, path: input.path }) as never;
       }
       return pathProperties(input);
     },
     directorySize: (input) => {
       if (input.hostId !== undefined && input.hostId !== null) {
-        throw new Error("unsupported: directory sizes are not available for remote machines yet");
+        return deps.remote.directorySize({ hostId: input.hostId, path: input.path }) as never;
       }
       return directorySize(input);
     },
@@ -143,16 +143,31 @@ export function createCoreHandlers(
     threadWorkspace: (input) => resolveThreadWorkspace(bb, input),
     searchDir: (input) => {
       if (input.hostId !== undefined && input.hostId !== null) {
-        throw new Error("unsupported: recursive search is not available for remote machines yet");
+        return deps.remote.searchDir({ hostId: input.hostId, path: input.path, query: input.query, showHidden: input.showHidden, maxDepth: input.maxDepth });
       }
       return searchDir(input);
     },
 
-    createFolder: (input) => createFolder(bb, input),
-    renameEntry: (input) => renameEntry(bb, input),
-    deleteEntries: (input) => deleteEntries(bb, input),
-    moveEntries: (input) => moveEntries(bb, input),
-    copyEntries: (input) => copyEntries(bb, input),
+    createFolder: (input) =>
+      input.hostId === undefined || input.hostId === null
+        ? createFolder(bb, input)
+        : deps.remote.createFolder({ hostId: input.hostId, path: input.path, name: input.name }),
+    renameEntry: (input) =>
+      input.hostId === undefined || input.hostId === null
+        ? renameEntry(bb, input)
+        : deps.remote.renameEntry({ hostId: input.hostId, path: input.path, newName: input.newName }),
+    deleteEntries: (input) =>
+      input.hostId === undefined || input.hostId === null
+        ? deleteEntries(bb, input)
+        : deps.remote.deleteEntries({ hostId: input.hostId, paths: input.paths, recursive: input.recursive }),
+    moveEntries: (input) =>
+      input.hostId === undefined || input.hostId === null
+        ? moveEntries(bb, input)
+        : deps.remote.moveEntries({ hostId: input.hostId, paths: input.paths, destinationDir: input.destinationDir, conflict: input.conflict }),
+    copyEntries: (input) =>
+      input.hostId === undefined || input.hostId === null
+        ? copyEntries(bb, input)
+        : deps.remote.copyEntries({ hostId: input.hostId, paths: input.paths, destinationDir: input.destinationDir, conflict: input.conflict }),
 
     savePreferences: (input) => deps.settings.savePreferences(input),
 
@@ -167,6 +182,19 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const handlers: FileManagerHandlers = {
     ...createCoreHandlers(bb, deps),
     ...deps.transfer,
+    listArchive: (input) => {
+      if (input.hostId !== undefined && input.hostId !== null) {
+        throw new Error("unsupported: archive listing is not available for remote machines");
+      }
+      return deps.transfer.listArchive(input);
+    },
+    extractArchive: (input) => {
+      if (input.hostId !== undefined && input.hostId !== null) {
+        throw new Error("unsupported: archive extraction is not available for remote machines");
+      }
+      return deps.transfer.extractArchive(input);
+    },
   };
   bb.rpc.register(fileManagerContract, handlers);
 }
+
