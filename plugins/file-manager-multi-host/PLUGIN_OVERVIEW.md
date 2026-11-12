@@ -1,7 +1,7 @@
 ## What you get
 
 - A **File Manager** page in the sidebar and a tab beside any thread, with a machine selector for the server and every connected BB machine.
-- Remote machines support read-only browsing, previews and single-file downloads. The server machine keeps the complete manager.
+- Connected remote machines support navigation, search, CRUD actions, previews, uploads and single-file downloads. Remote transfers are limited to 25 MiB; archive processing and multi-selection zip downloads remain server-only because the public host API has no remote archive process or archive stream.
 - A list with sizes and dates, folders that expand in place, a gallery of thumbnails, a filter over the rows, and an address bar that takes a pasted path.
 - Uploads by drag and drop, whole folders included. They go in chunks, keep running while you work elsewhere in bb, and resume after a dropped connection. Downloads stream from disk, so a 10 GB file costs the browser no memory. Several selected files or a whole folder download as one zip.
 - Rename, move, copy, delete and new folder, with cut and paste or drag and drop. A name clash becomes `name (1).ext` instead of an overwrite.
@@ -13,7 +13,7 @@ Double-click, Enter or **Open** shows a file. Beside a thread it opens in bb's o
 
 ## Archives
 
-zip, tar, tar.gz, tar.bz2, tar.xz, 7z and rar archives open as a folder tree without being extracted: select one and press Space. Sizes, dates and encrypted members are shown. **Extract…** runs as a background job you can cancel, into a staging folder that is checked before anything is moved into place.
+zip, tar, tar.gz, tar.bz2, tar.xz, 7z and rar archives open as a folder tree without being extracted: select one and press Space. Sizes, dates and encrypted members are shown. **ExtractвЂ¦** runs as a background job you can cancel, into a staging folder that is checked before anything is moved into place.
 
 ## Working with the agent
 
@@ -26,3 +26,4 @@ Tick one or more rows and an **Actions** bar appears. It opens the whole row men
 ## Limits and requirements
 
 Everything stays inside the home folder of the user bb runs as, and every path is resolved and checked on the server before a byte moves. Extraction uses `tar`, `unzip` and `7z` on that machine. Looking inside tar archives needs GNU `tar`, and 7z and rar need `7z`; zip needs nothing. Extracting rar needs a `7z` build with the RAR codec, packaged as `7zip-rar` on Debian and Ubuntu.
+
