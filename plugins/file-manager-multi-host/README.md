@@ -4,10 +4,12 @@ A bb plugin that adds a full-page file manager for the machine that runs your
 bb server and every other connected BB machine. The multi-host edition lets
 you browse and download files from a selected machine without leaving bb.
 
-The server machine keeps the full file-management feature set. Remote machines
-are read-only in this first version: browsing, previews and single-file
-downloads are available; uploads, mutations, archives and recursive search stay
-local until the remote mutation protocol is added.
+Connected remote machines support the same navigation, search, folder creation,
+rename, delete, move, copy, upload, preview and single-file download actions as
+the server machine. Remote transfers are bounded by 25 MiB because the public
+BB host API exposes one-file reads and writes. Archive listing, extraction and
+multi-selection zip downloads stay on the server until BB exposes a remote
+archive process and streaming archive route.
 
 Everything the panel touches lives under one hard root вЂ” the home directory of
 the user running bb вЂ” and
