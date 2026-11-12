@@ -1,6 +1,6 @@
-// lib/upload-manager.ts — chunked, resumable, framework-free uploads.
+// lib/upload-manager.ts вЂ” chunked, resumable, framework-free uploads.
 //
-// Why this file is shaped the way it is (all of it is §5.2 / §8.7 of SPEC.md):
+// Why this file is shaped the way it is (all of it is В§5.2 / В§8.7 of SPEC.md):
 //
 //  * Node's `requestTimeout` kills any single request after 300 s, so a big
 //    file MUST arrive as many bounded requests. Chunk size adapts to the
@@ -47,14 +47,14 @@ const messages = defineMessages(
     timedOut: "request timed out",
   },
   {
-    tokenFetchFailed: (status) => `Не удалось получить токен плагина (HTTP ${String(status)}).`,
-    uploadFailed: "Не удалось загрузить.",
-    tokenRejected: "Токен плагина отклонён. Перезагрузите панель и попробуйте ещё раз.",
-    chunkRejected: "Сервер отклонил запрос с частью файла (HTTP 400)",
-    connectionDropped: "Соединение оборвалось посреди передачи",
-    httpFailed: (status) => `Загрузка не удалась (HTTP ${String(status)})`,
-    networkError: "ошибка сети",
-    timedOut: "запрос не дождался ответа",
+    tokenFetchFailed: (status) => `РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ С‚РѕРєРµРЅ РїР»Р°РіРёРЅР° (HTTP ${String(status)}).`,
+    uploadFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ.",
+    tokenRejected: "РўРѕРєРµРЅ РїР»Р°РіРёРЅР° РѕС‚РєР»РѕРЅС‘РЅ. РџРµСЂРµР·Р°РіСЂСѓР·РёС‚Рµ РїР°РЅРµР»СЊ Рё РїРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.",
+    chunkRejected: "РЎРµСЂРІРµСЂ РѕС‚РєР»РѕРЅРёР» Р·Р°РїСЂРѕСЃ СЃ С‡Р°СЃС‚СЊСЋ С„Р°Р№Р»Р° (HTTP 400)",
+    connectionDropped: "РЎРѕРµРґРёРЅРµРЅРёРµ РѕР±РѕСЂРІР°Р»РѕСЃСЊ РїРѕСЃСЂРµРґРё РїРµСЂРµРґР°С‡Рё",
+    httpFailed: (status) => `Р—Р°РіСЂСѓР·РєР° РЅРµ СѓРґР°Р»Р°СЃСЊ (HTTP ${String(status)})`,
+    networkError: "РѕС€РёР±РєР° СЃРµС‚Рё",
+    timedOut: "Р·Р°РїСЂРѕСЃ РЅРµ РґРѕР¶РґР°Р»СЃСЏ РѕС‚РІРµС‚Р°",
   },
 );
 import { etaFromRate } from "./format";
@@ -99,7 +99,7 @@ export type UploadStatus =
   | "done"
   | "error"
   | "canceled"
-  /** Not in §8.7's list: added for the tray's pause button. */
+  /** Not in В§8.7's list: added for the tray's pause button. */
   | "paused";
 
 export interface UploadState {
@@ -122,6 +122,7 @@ export interface UploadState {
 
 export interface UploadRequest {
   file: File;
+  hostId?: string | null;
   dirPath: string;
   /** POSIX sub-path under `dirPath`, e.g. "photos/2024". Defaults to "". */
   relativeDir?: string;
@@ -130,15 +131,15 @@ export interface UploadRequest {
 export interface UploadManagerOptions {
   /** The RPC surface, or a getter when the client is only available later. */
   rpc: UploadRpc | (() => UploadRpc);
-  /** At most this many files move at once (§5.2: 2). */
+  /** At most this many files move at once (В§5.2: 2). */
   maxConcurrentFiles?: number;
-  /** Network/5xx retries per chunk before the file fails (§5.2: 3). */
+  /** Network/5xx retries per chunk before the file fails (В§5.2: 3). */
   maxAttempts?: number;
-  /** Seconds a chunk should take; drives adaptive sizing (§5.2: 45). */
+  /** Seconds a chunk should take; drives adaptive sizing (В§5.2: 45). */
   targetChunkSeconds?: number;
   /** Used until `uploadCreate` reports the server's preference. */
   defaultChunkSizeBytes?: number;
-  /** Conflict policy handed to `uploadFinish` (§5.2 step 4). */
+  /** Conflict policy handed to `uploadFinish` (В§5.2 step 4). */
   conflict?: "rename" | "overwrite" | "fail";
   /**
    * Chunk-size clamp. Defaults to the contract's [4 MiB, 64 MiB]; tests narrow
@@ -189,6 +190,7 @@ interface ChunkOutcome {
 
 interface UploadItem {
   state: UploadState;
+  hostId: string | null;
   file: File;
   uploadId: string | null;
   /** Bytes the server has acknowledged. `state.sentBytes` may run ahead. */
@@ -198,7 +200,7 @@ interface UploadItem {
   busyAttempts: number;
   /** Guards the single automatic session re-creation after a 404. */
   recreated: boolean;
-  /** Guards the single automatic token refresh after a 401 (§5.1). */
+  /** Guards the single automatic token refresh after a 401 (В§5.1). */
   tokenRefreshed: boolean;
   paused: boolean;
   canceled: boolean;
@@ -289,7 +291,7 @@ export class UploadManager {
     this.progressIntervalMs = options.progressIntervalMs ?? 100;
   }
 
-  /* ---------------- public API (§8.7) ---------------- */
+  /* ---------------- public API (В§8.7) ---------------- */
 
   enqueue(requests: readonly UploadRequest[]): UploadState[] {
     const created: UploadState[] = [];
@@ -309,6 +311,7 @@ export class UploadManager {
           errorMessage: null,
           resultPath: null,
         },
+        hostId: request.hostId ?? null,
         file: request.file,
         uploadId: null,
         offset: 0,
@@ -341,7 +344,7 @@ export class UploadManager {
     this.abortActive(item);
     const uploadId = item.uploadId;
     if (uploadId !== null) {
-      // Fire and forget: the session is garbage-collected anyway (§5.2).
+      // Fire and forget: the session is garbage-collected anyway (В§5.2).
       void Promise.resolve()
         .then(() => this.rpc().uploadAbort({ uploadId }))
         .catch(() => undefined);
@@ -526,7 +529,7 @@ export class UploadManager {
     }
   }
 
-  /* ---------------- token (§5.1) ---------------- */
+  /* ---------------- token (В§5.1) ---------------- */
 
   private token(force = false): Promise<string> {
     if (force) this.tokenPromise = null;
@@ -617,6 +620,7 @@ export class UploadManager {
     if (item.uploadId !== null) return;
     const lastModified = Number(item.file.lastModified);
     const created = await this.rpc().uploadCreate({
+      ...(item.hostId === null ? {} : { hostId: item.hostId }),
       dirPath: item.state.dirPath,
       fileName: item.state.fileName,
       sizeBytes: item.state.sizeBytes,
@@ -794,7 +798,7 @@ export class UploadManager {
   }
 
   /**
-   * §5.2: retry up to `maxAttempts` with 1 s / 3 s / 9 s backoff, re-probing
+   * В§5.2: retry up to `maxAttempts` with 1 s / 3 s / 9 s backoff, re-probing
    * the staged size with `uploadStatus` so the next chunk starts from the byte
    * the server actually has.
    */
@@ -852,3 +856,4 @@ export class UploadManager {
     item.chunkSizeBytes = this.clampChunk(rounded);
   }
 }
+
