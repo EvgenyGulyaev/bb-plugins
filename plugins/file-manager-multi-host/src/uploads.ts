@@ -1,4 +1,4 @@
-// src/uploads.ts — chunked, resumable uploads (§5.2).
+// src/uploads.ts вЂ” chunked, resumable uploads (В§5.2).
 //
 // Invariants this file exists to guarantee:
 //
@@ -8,7 +8,7 @@
 //  2. **Positional writes, never append.** `"a"` would double-write a retried
 //     chunk; `"r+" + start` makes a retry idempotent.
 //  3. **The staged size is the single source of truth.** Sessions live in JSON
-//     sidecars next to the part file — never in `bb.storage` — precisely so
+//     sidecars next to the part file вЂ” never in `bb.storage` вЂ” precisely so
 //     that the streaming section touches no `bb.*` handle: `bb plugin reload`
 //     drains in-flight handlers for only 5 s and then disposes plugin
 //     resources under them. Raw fds survive that; a closed database handle
@@ -43,6 +43,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import {
   MAX_CHUNK_BYTES,
+  MAX_REMOTE_FILE_BYTES,
   MIN_CHUNK_BYTES,
   UPLOAD_ID_PATTERN,
   type FileEntry,
@@ -52,15 +53,18 @@ import { buildEntry } from "./listing";
 import { uniqueName } from "./mutations";
 import { getUploadsDir, resolveExistingDir, resolveNew, validateName } from "./root";
 import type { SettingsModule } from "./settings";
+import type { RemoteFilesModule } from "./remote-files";
 import { publishFs } from "./signals";
 
 /* ------------------------------------------------------------------ */
 /* Session sidecars                                                    */
 /* ------------------------------------------------------------------ */
 
-/** `<ROOT>/.bb-file-manager/uploads/<uploadId>.json` (§5.2). */
+/** `<ROOT>/.bb-file-manager/uploads/<uploadId>.json` (В§5.2). */
 export interface UploadSession {
   uploadId: string;
+  /** Null for the server filesystem; otherwise the enrolled machine id. */
+  hostId: string | null;
   /** Realpath'ed destination directory as it was at uploadCreate time. */
   dirPath: string;
   /** POSIX sub-path under dirPath for folder drops; "" for a plain file. */
@@ -72,12 +76,12 @@ export interface UploadSession {
   createdAtMs: number;
 }
 
-/** 24 h, per §5.2's GC rule. */
+/** 24 h, per В§5.2's GC rule. */
 const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CHUNK_BYTES = 16 * 1024 * 1024;
 
 /* ------------------------------------------------------------------ */
-/* Chunk outcomes — the §5.2 response table, as data                   */
+/* Chunk outcomes вЂ” the В§5.2 response table, as data                   */
 /* ------------------------------------------------------------------ */
 
 export interface ChunkRequest {
@@ -87,7 +91,7 @@ export interface ChunkRequest {
   offset: string | number | null | undefined;
   /** The request body exactly as `c.req.raw.body` hands it over. */
   body: ReadableStream<Uint8Array> | null | undefined;
-  /** `c.req.raw.signal` — aborted when the client disconnects. */
+  /** `c.req.raw.signal` вЂ” aborted when the client disconnects. */
   signal?: AbortSignal | undefined;
 }
 
@@ -108,6 +112,7 @@ export type ChunkOutcome =
 /* ------------------------------------------------------------------ */
 
 export interface UploadCreateInput {
+  hostId?: string | null;
   dirPath: string;
   fileName: string;
   sizeBytes: number;
@@ -156,6 +161,7 @@ export interface UploadsModule {
 export interface UploadsOptions {
   /** Only `chunkSizeBytes()` is used; the full SettingsModule satisfies it. */
   settings: Pick<SettingsModule, "chunkSizeBytes">;
+  remote?: RemoteFilesModule;
   /** Session lifetime for `sweep()`; defaults to 24 h. */
   sessionTtlMs?: number;
   now?: () => number;
@@ -230,8 +236,9 @@ function parseOffset(raw: string | number | null | undefined): number | null {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-/** §5.2's resume key: same (dir, sub-path, name, size, mtime) → same session. */
+/** В§5.2's resume key: same (dir, sub-path, name, size, mtime) в†’ same session. */
 function sessionKeyOf(input: {
+  hostId: string | null;
   dirPath: string;
   relativeDir: string;
   fileName: string;
@@ -241,6 +248,7 @@ function sessionKeyOf(input: {
   return createHash("sha256")
     .update(
       [
+        input.hostId ?? "",
         input.dirPath,
         input.relativeDir,
         input.fileName,
@@ -294,11 +302,11 @@ export async function createUploads(
 ): Promise<UploadsModule> {
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const now = options.now ?? Date.now;
-  /** §7.2: the chunk lock is in-memory and resets on reload, by design. */
+  /** В§7.2: the chunk lock is in-memory and resets on reload, by design. */
   const locked = new Set<string>();
 
   // The staging directory is derived from the *current* root on every call
-  // (getUploadsDir() reads it) — never cached — so tests can repoint the root
+  // (getUploadsDir() reads it) вЂ” never cached вЂ” so tests can repoint the root
   // and a reload can never serve a stale path.
   async function stagingDir(): Promise<string> {
     const dir = getUploadsDir();
@@ -353,6 +361,7 @@ export async function createUploads(
       }
       return {
         uploadId: parsed.uploadId,
+        hostId: typeof parsed.hostId === "string" ? parsed.hostId : null,
         dirPath: parsed.dirPath,
         relativeDir: typeof parsed.relativeDir === "string" ? parsed.relativeDir : "",
         fileName: parsed.fileName,
@@ -374,7 +383,7 @@ export async function createUploads(
   /**
    * Find the resumable session for this exact (dir, sub-path, name, size,
    * mtime). Duplicates can exist when a session was locked at create time, so
-   * the one with the most staged bytes wins — never a readdir-order accident.
+   * the one with the most staged bytes wins вЂ” never a readdir-order accident.
    */
   async function findByKey(dir: string, sessionKey: string): Promise<UploadSession | null> {
     let names: string[];
@@ -404,9 +413,16 @@ export async function createUploads(
   /* ---------------------------------------------------------------- */
 
   async function uploadCreate(input: UploadCreateInput): Promise<UploadCreateOutput> {
-    // The destination is resolved here to fail fast, and *again* at finish —
-    // §6 rule 8: the directory may be renamed while the bytes are in flight.
-    const dirReal = await resolveExistingDir(input.dirPath);
+    // The destination is resolved here to fail fast, and *again* at finish вЂ”
+    // В§6 rule 8: the directory may be renamed while the bytes are in flight.
+    const hostId = input.hostId ?? null;
+    const dirReal = hostId === null
+      ? await resolveExistingDir(input.dirPath)
+      : input.dirPath;
+    if (hostId !== null) {
+      if (options.remote === undefined) throw fmError("unsupported", "remote uploads are unavailable");
+      await options.remote.listDir({ hostId, path: dirReal, showHidden: true });
+    }
     validateName(input.fileName);
     const relativeDir = normalizeRelativeDir(input.relativeDir);
     if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0) {
@@ -414,6 +430,7 @@ export async function createUploads(
     }
 
     const sessionKey = sessionKeyOf({
+      hostId,
       dirPath: dirReal,
       relativeDir,
       fileName: input.fileName,
@@ -440,6 +457,7 @@ export async function createUploads(
     const uploadId = randomBytes(16).toString("hex");
     const session: UploadSession = {
       uploadId,
+      hostId,
       dirPath: dirReal,
       relativeDir,
       fileName: input.fileName,
@@ -482,7 +500,7 @@ export async function createUploads(
   }
 
   /* ---------------------------------------------------------------- */
-  /* writeChunk — the streaming section (§5.2)                         */
+  /* writeChunk вЂ” the streaming section (В§5.2)                         */
   /* ---------------------------------------------------------------- */
 
   /**
@@ -525,9 +543,9 @@ export async function createUploads(
       } catch (error) {
         if (error instanceof UploadOverflowError) {
           // A rejected chunk must not move the staged size by a single byte.
-          // Truncating back to `session.sizeBytes` (what the §5.2 sketch says)
-          // would leave the prefix of a *rejected* body staged and — since the
-          // limiter never lets a write past the declared size through — mark
+          // Truncating back to `session.sizeBytes` (what the В§5.2 sketch says)
+          // would leave the prefix of a *rejected* body staged and вЂ” since the
+          // limiter never lets a write past the declared size through вЂ” mark
           // the session "complete", so the next uploadCreate resumes at 100 %
           // and uploadFinish commits rejected bytes as a successful upload.
           // Rolling back to `offset` is the same thing for the case the sketch
@@ -537,7 +555,7 @@ export async function createUploads(
           return { status: 413, body: { ok: false, error: "size_mismatch" } };
         }
         if (isAbortLike(error, request.signal)) {
-          // §5.2: never delete the part file on abort — the surviving byte
+          // В§5.2: never delete the part file on abort вЂ” the surviving byte
           // count is exactly what makes the resume work.
           return {
             status: 499,
@@ -629,6 +647,25 @@ export async function createUploads(
         );
       }
 
+      if (session.hostId !== null) {
+        if (options.remote === undefined) throw fmError("unsupported", "remote uploads are unavailable");
+        if (staged > MAX_REMOTE_FILE_BYTES) {
+          throw fmError("unsupported", `remote files are limited to ${MAX_REMOTE_FILE_BYTES} bytes`);
+        }
+        const content = (await readFile(partPath)).toString("base64");
+        const result = await options.remote.uploadFile({
+          hostId: session.hostId,
+          dirPath: session.dirPath,
+          relativeDir: session.relativeDir,
+          fileName: session.fileName,
+          content,
+          conflict: input.conflict,
+        });
+        await rm(sessionPathFor(session.uploadId), { force: true }).catch(() => undefined);
+        await rm(partPath, { force: true }).catch(() => undefined);
+        return result;
+      }
+
       // Re-resolve now, not at create time: the directory may have moved.
       const baseReal = await resolveExistingDir(session.dirPath);
       const destDir = session.relativeDir
@@ -642,7 +679,7 @@ export async function createUploads(
           target = await resolveNew(destDir, await uniqueName(destDir, session.fileName));
         } else {
           // overwrite: rename() replaces a regular file atomically, but not a
-          // directory — remove whatever is there first.
+          // directory вЂ” remove whatever is there first.
           await rm(target, { recursive: true, force: true }).catch((error: unknown) => {
             throw mapNodeError(error, target);
           });
@@ -653,8 +690,8 @@ export async function createUploads(
         await rename(partPath, target);
       } catch (error) {
         const mapped = mapNodeError(error, target);
-        // §5.2 / §14 risk 7: a bind-mount under the root would make the commit
-        // cross-device. copyFile streams in the kernel — still no buffering.
+        // В§5.2 / В§14 risk 7: a bind-mount under the root would make the commit
+        // cross-device. copyFile streams in the kernel вЂ” still no buffering.
         if (mapped.code !== "cross_device") throw mapped;
         await copyFile(partPath, target);
         await unlink(partPath).catch(() => undefined);
@@ -742,3 +779,4 @@ export async function createUploads(
     inFlight: () => [...locked],
   };
 }
+
