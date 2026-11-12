@@ -1,7 +1,7 @@
-// components/FileManagerPanel.tsx — the panel root: layout, state ownership,
-// the keyboard map and the drag&drop surface (§8.1–§8.5, §9).
+// components/FileManagerPanel.tsx вЂ” the panel root: layout, state ownership,
+// the keyboard map and the drag&drop surface (В§8.1вЂ“В§8.5, В§9).
 //
-// One body, two surfaces (§10.1). `FileManagerSurface` takes an `FmLocation`
+// One body, two surfaces (В§10.1). `FileManagerSurface` takes an `FmLocation`
 // instead of reading the route, so the nav panel can keep the folder in the
 // URL while a panel tab keeps it in component state, and a `chrome` flag says
 // whether the actions live in bb's title bar or in the toolbar.
@@ -153,7 +153,7 @@ const messages = defineMessages(
     addedToChat: (name: string) => `${name} added to the chat`,
     filesAddedToChat: (count: number) => `${String(count)} files added to the chat`,
     linkOutside: (root: string) => `Link points outside ${root}`,
-    folderUploadUnsupported: "Folder upload is not supported in this browser — drop individual files.",
+    folderUploadUnsupported: "Folder upload is not supported in this browser вЂ” drop individual files.",
     backendSilent: "The file manager backend did not answer",
     folderOpenFailed: "Could not open this folder",
     listingTruncated: (shown: number, total: number) =>
@@ -162,59 +162,59 @@ const messages = defineMessages(
       `Showing the first ${String(count)} rows. Collapse a folder to see more.`,
     cancelJobFailed: "Could not cancel that job.",
     finishFailed: "Could not finish that operation.",
-    moveTo: "Move to…",
-    copyTo: "Copy to…",
+    moveTo: "Move toвЂ¦",
+    copyTo: "Copy toвЂ¦",
     chooseFolder: "Choose this folder",
     move: "Move",
     copy: "Copy",
   },
   {
     restoreGone: (label) =>
-      `Папки, в которой вы были в прошлый раз, больше нет. Вместо неё открыта ${label}.`,
+      `РџР°РїРєРё, РІ РєРѕС‚РѕСЂРѕР№ РІС‹ Р±С‹Р»Рё РІ РїСЂРѕС€Р»С‹Р№ СЂР°Р·, Р±РѕР»СЊС€Рµ РЅРµС‚. Р’РјРµСЃС‚Рѕ РЅРµС‘ РѕС‚РєСЂС‹С‚Р° ${label}.`,
     restoreDenied: (label) =>
-      `Папку, в которой вы были в прошлый раз, не открыть. Вместо неё открыта ${label}.`,
+      `РџР°РїРєСѓ, РІ РєРѕС‚РѕСЂРѕР№ РІС‹ Р±С‹Р»Рё РІ РїСЂРѕС€Р»С‹Р№ СЂР°Р·, РЅРµ РѕС‚РєСЂС‹С‚СЊ. Р’РјРµСЃС‚Рѕ РЅРµС‘ РѕС‚РєСЂС‹С‚Р° ${label}.`,
     restoreUnreachable: (label) =>
-      `Папка, в которой вы были в прошлый раз, больше недоступна. Вместо неё открыта ${label}.`,
-    pathOpenFailed: "Не удалось открыть этот путь.",
-    pathNothing: (typed) => `По пути ${typed} ничего нет.`,
-    pathDenied: (typed) => `Нет доступа к ${typed}.`,
-    pathIoError: "Файловая система сообщила об ошибке. Попробуйте ещё раз.",
-    showingHidden: (name) => `Скрытые файлы показаны, чтобы был виден ${name}.`,
+      `РџР°РїРєР°, РІ РєРѕС‚РѕСЂРѕР№ РІС‹ Р±С‹Р»Рё РІ РїСЂРѕС€Р»С‹Р№ СЂР°Р·, Р±РѕР»СЊС€Рµ РЅРµРґРѕСЃС‚СѓРїРЅР°. Р’РјРµСЃС‚Рѕ РЅРµС‘ РѕС‚РєСЂС‹С‚Р° ${label}.`,
+    pathOpenFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ СЌС‚РѕС‚ РїСѓС‚СЊ.",
+    pathNothing: (typed) => `РџРѕ РїСѓС‚Рё ${typed} РЅРёС‡РµРіРѕ РЅРµС‚.`,
+    pathDenied: (typed) => `РќРµС‚ РґРѕСЃС‚СѓРїР° Рє ${typed}.`,
+    pathIoError: "Р¤Р°Р№Р»РѕРІР°СЏ СЃРёСЃС‚РµРјР° СЃРѕРѕР±С‰РёР»Р° РѕР± РѕС€РёР±РєРµ. РџРѕРїСЂРѕР±СѓР№С‚Рµ РµС‰С‘ СЂР°Р·.",
+    showingHidden: (name) => `РЎРєСЂС‹С‚С‹Рµ С„Р°Р№Р»С‹ РїРѕРєР°Р·Р°РЅС‹, С‡С‚РѕР±С‹ Р±С‹Р» РІРёРґРµРЅ ${name}.`,
     revealCutOff: (name, count) =>
-      `${name} есть в этой папке, но список обрезан на ${String(count)} ${pluralRu(count, ["элементе", "элементах", "элементах"])}. Найдите его через фильтр.`,
-    revealGone: (name) => `${name} в этой папке больше нет.`,
-    preferencesFailed: "Не удалось сохранить настройки.",
-    threadFolderFailed: (detail) => `Не удалось найти папку этого треда. ${detail}`,
-    linkLeadsNowhere: (root) => `Эта ссылка не ведёт никуда внутри ${root}.`,
-    moveFailed: "Не удалось переместить.",
-    copyFailed: "Не удалось скопировать.",
-    deleteFailed: "Не удалось удалить.",
-    pasteFailed: "Не удалось вставить сюда.",
+      `${name} РµСЃС‚СЊ РІ СЌС‚РѕР№ РїР°РїРєРµ, РЅРѕ СЃРїРёСЃРѕРє РѕР±СЂРµР·Р°РЅ РЅР° ${String(count)} ${pluralRu(count, ["СЌР»РµРјРµРЅС‚Рµ", "СЌР»РµРјРµРЅС‚Р°С…", "СЌР»РµРјРµРЅС‚Р°С…"])}. РќР°Р№РґРёС‚Рµ РµРіРѕ С‡РµСЂРµР· С„РёР»СЊС‚СЂ.`,
+    revealGone: (name) => `${name} РІ СЌС‚РѕР№ РїР°РїРєРµ Р±РѕР»СЊС€Рµ РЅРµС‚.`,
+    preferencesFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё.",
+    threadFolderFailed: (detail) => `РќРµ СѓРґР°Р»РѕСЃСЊ РЅР°Р№С‚Рё РїР°РїРєСѓ СЌС‚РѕРіРѕ С‚СЂРµРґР°. ${detail}`,
+    linkLeadsNowhere: (root) => `Р­С‚Р° СЃСЃС‹Р»РєР° РЅРµ РІРµРґС‘С‚ РЅРёРєСѓРґР° РІРЅСѓС‚СЂРё ${root}.`,
+    moveFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ РїРµСЂРµРјРµСЃС‚РёС‚СЊ.",
+    copyFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРєРѕРїРёСЂРѕРІР°С‚СЊ.",
+    deleteFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ СѓРґР°Р»РёС‚СЊ.",
+    pasteFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ РІСЃС‚Р°РІРёС‚СЊ СЃСЋРґР°.",
     pathsCopied: (count) =>
       count === 1
-        ? "Путь скопирован"
-        : `${pluralRu(count, ["Скопирован", "Скопировано", "Скопировано"])} ${String(count)} ${pluralRu(count, ["путь", "пути", "путей"])}`,
-    clipboardDenied: "Браузер не разрешил копировать в буфер обмена.",
-    downloadTooMany: "Слишком много элементов для одного скачивания. Выберите их папку.",
-    onlyFilesToChat: "В чат можно добавить только файлы.",
-    addedToChat: (name) => `${name} добавлен в чат`,
+        ? "РџСѓС‚СЊ СЃРєРѕРїРёСЂРѕРІР°РЅ"
+        : `${pluralRu(count, ["РЎРєРѕРїРёСЂРѕРІР°РЅ", "РЎРєРѕРїРёСЂРѕРІР°РЅРѕ", "РЎРєРѕРїРёСЂРѕРІР°РЅРѕ"])} ${String(count)} ${pluralRu(count, ["РїСѓС‚СЊ", "РїСѓС‚Рё", "РїСѓС‚РµР№"])}`,
+    clipboardDenied: "Р‘СЂР°СѓР·РµСЂ РЅРµ СЂР°Р·СЂРµС€РёР» РєРѕРїРёСЂРѕРІР°С‚СЊ РІ Р±СѓС„РµСЂ РѕР±РјРµРЅР°.",
+    downloadTooMany: "РЎР»РёС€РєРѕРј РјРЅРѕРіРѕ СЌР»РµРјРµРЅС‚РѕРІ РґР»СЏ РѕРґРЅРѕРіРѕ СЃРєР°С‡РёРІР°РЅРёСЏ. Р’С‹Р±РµСЂРёС‚Рµ РёС… РїР°РїРєСѓ.",
+    onlyFilesToChat: "Р’ С‡Р°С‚ РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ С‚РѕР»СЊРєРѕ С„Р°Р№Р»С‹.",
+    addedToChat: (name) => `${name} РґРѕР±Р°РІР»РµРЅ РІ С‡Р°С‚`,
     filesAddedToChat: (count) =>
-      `${String(count)} ${pluralRu(count, ["файл добавлен", "файла добавлены", "файлов добавлено"])} в чат`,
-    linkOutside: (root) => `Ссылка ведёт за пределы ${root}`,
-    folderUploadUnsupported: "Этот браузер не умеет загружать папки — перетащите файлы по одному.",
-    backendSilent: "Сервер файлового менеджера не ответил",
-    folderOpenFailed: "Не удалось открыть эту папку",
+      `${String(count)} ${pluralRu(count, ["С„Р°Р№Р» РґРѕР±Р°РІР»РµРЅ", "С„Р°Р№Р»Р° РґРѕР±Р°РІР»РµРЅС‹", "С„Р°Р№Р»РѕРІ РґРѕР±Р°РІР»РµРЅРѕ"])} РІ С‡Р°С‚`,
+    linkOutside: (root) => `РЎСЃС‹Р»РєР° РІРµРґС‘С‚ Р·Р° РїСЂРµРґРµР»С‹ ${root}`,
+    folderUploadUnsupported: "Р­С‚РѕС‚ Р±СЂР°СѓР·РµСЂ РЅРµ СѓРјРµРµС‚ Р·Р°РіСЂСѓР¶Р°С‚СЊ РїР°РїРєРё вЂ” РїРµСЂРµС‚Р°С‰РёС‚Рµ С„Р°Р№Р»С‹ РїРѕ РѕРґРЅРѕРјСѓ.",
+    backendSilent: "РЎРµСЂРІРµСЂ С„Р°Р№Р»РѕРІРѕРіРѕ РјРµРЅРµРґР¶РµСЂР° РЅРµ РѕС‚РІРµС‚РёР»",
+    folderOpenFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РєСЂС‹С‚СЊ СЌС‚Сѓ РїР°РїРєСѓ",
     listingTruncated: (shown, total) =>
-      `Показаны первые ${String(shown)} из ${String(total)}. Сузьте список фильтром.`,
+      `РџРѕРєР°Р·Р°РЅС‹ РїРµСЂРІС‹Рµ ${String(shown)} РёР· ${String(total)}. РЎСѓР·СЊС‚Рµ СЃРїРёСЃРѕРє С„РёР»СЊС‚СЂРѕРј.`,
     treeTruncated: (count) =>
-      `Показаны первые ${String(count)} ${pluralRu(count, ["строка", "строки", "строк"])}. Сверните папку, чтобы увидеть остальное.`,
-    cancelJobFailed: "Не удалось отменить задание.",
-    finishFailed: "Не удалось завершить операцию.",
-    moveTo: "Переместить в…",
-    copyTo: "Копировать в…",
-    chooseFolder: "Выбрать эту папку",
-    move: "Переместить",
-    copy: "Копировать",
+      `РџРѕРєР°Р·Р°РЅС‹ РїРµСЂРІС‹Рµ ${String(count)} ${pluralRu(count, ["СЃС‚СЂРѕРєР°", "СЃС‚СЂРѕРєРё", "СЃС‚СЂРѕРє"])}. РЎРІРµСЂРЅРёС‚Рµ РїР°РїРєСѓ, С‡С‚РѕР±С‹ СѓРІРёРґРµС‚СЊ РѕСЃС‚Р°Р»СЊРЅРѕРµ.`,
+    cancelJobFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РјРµРЅРёС‚СЊ Р·Р°РґР°РЅРёРµ.",
+    finishFailed: "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РІРµСЂС€РёС‚СЊ РѕРїРµСЂР°С†РёСЋ.",
+    moveTo: "РџРµСЂРµРјРµСЃС‚РёС‚СЊ РІвЂ¦",
+    copyTo: "РљРѕРїРёСЂРѕРІР°С‚СЊ РІвЂ¦",
+    chooseFolder: "Р’С‹Р±СЂР°С‚СЊ СЌС‚Сѓ РїР°РїРєСѓ",
+    move: "РџРµСЂРµРјРµСЃС‚РёС‚СЊ",
+    copy: "РљРѕРїРёСЂРѕРІР°С‚СЊ",
   },
 );
 
@@ -253,7 +253,7 @@ type DialogState =
 
 function isExternalDrag(event: ReactDragEvent<HTMLElement>): boolean {
   // `dataTransfer` is always there in a browser, but a throw inside an event
-  // handler takes the plugin's whole UI down with it — cheap insurance.
+  // handler takes the plugin's whole UI down with it вЂ” cheap insurance.
   const types = (event.dataTransfer as DataTransfer | undefined)?.types;
   return types !== undefined && Array.from(types).includes("Files");
 }
@@ -276,7 +276,7 @@ function readDraggedPaths(dataTransfer: DataTransfer): string[] {
 }
 
 /**
- * Grab the `FileSystemEntry` list synchronously — `dataTransfer.items` is
+ * Grab the `FileSystemEntry` list synchronously вЂ” `dataTransfer.items` is
  * neutered as soon as the drop handler returns. Returns null when the browser
  * has no `webkitGetAsEntry`, which is the folder-upload fallback of risk #3.
  */
@@ -334,12 +334,12 @@ async function writeClipboardText(text: string): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Location memory and the path bar (PATHBAR-SPEC §1.6, §5.4)          */
+/* Location memory and the path bar (PATHBAR-SPEC В§1.6, В§5.4)          */
 /* ------------------------------------------------------------------ */
 
 /**
  * The codes that mean "the folder you were last in is not there any more".
- * Everything else — `io_error`, a dropped socket, an offline backend — is a
+ * Everything else вЂ” `io_error`, a dropped socket, an offline backend вЂ” is a
  * transient failure of a folder that probably still exists, and throwing the
  * memory away over it is worse than the normal error banner with its retry.
  */
@@ -368,7 +368,7 @@ function restoreFallbackText(code: FileManagerErrorCode, label: string): string 
 /**
  * The inline message under the path input. It names the path the *user* typed,
  * never the server's own path string: on a missing parent `statPath` resolves
- * the parent chain first and the error it throws names the parent (§5.4).
+ * the parent chain first and the error it throws names the parent (В§5.4).
  */
 function pathCommitErrorText(failure: unknown, typed: string, root: string): string {
   const t = messagesNow(messages);
@@ -403,12 +403,12 @@ interface PendingReveal {
    * The listing on screen when the reveal was armed, but only when the reveal
    * itself turned hidden files on: that refetch is in flight for a render or
    * two, and the listing still on screen genuinely does not contain the row.
-   * Declaring "it is not here" against it would be wrong (§5.3).
+   * Declaring "it is not here" against it would be wrong (В§5.3).
    */
   since: ListDirResult | null;
   /**
-   * Open the Extract dialog for the entry once it is selected (§8.13): the
-   * file opener's "Extract…" arrives here, so the extraction runs through
+   * Open the Extract dialog for the entry once it is selected (В§8.13): the
+   * file opener's "ExtractвЂ¦" arrives here, so the extraction runs through
    * the panel's own dialog, job and tray rather than one of its own.
    */
   extract: boolean;
@@ -425,9 +425,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 /**
  * True when the keystroke is aimed at something Space already means something
  * to. Space activates a button, a link and a checkbox, and the quick-look
- * binding (§8.9) bubbles up from every one of them: without this guard, Space
+ * binding (В§8.9) bubbles up from every one of them: without this guard, Space
  * on the toolbar's Refresh would refresh *and* open a preview from one press.
- * `isTypingTarget` does not cover it — a button is not a typing target.
+ * `isTypingTarget` does not cover it вЂ” a button is not a typing target.
  */
 function isActivationTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -439,40 +439,40 @@ function isActivationTarget(target: EventTarget | null): boolean {
 /* ------------------------------------------------------------------ */
 
 export interface FileManagerSurfaceProps {
-  /** Where the current folder lives — the route, or this component's state. */
+  /** Where the current folder lives вЂ” the route, or this component's state. */
   location: FmLocation;
   /**
    * Which chrome the surface is wearing.
    *
    * "host-header" is the nav panel: bb renders `HeaderActions` in the shared
    * title bar, and the panel talks to it through components/panel-bus.ts.
-   * "inline" is a panel tab, which has no title bar of its own — the same
+   * "inline" is a panel tab, which has no title bar of its own вЂ” the same
    * actions ride in the toolbar instead, and the surface stays off the bus so
    * two open surfaces cannot answer one header click.
    */
   chrome: "host-header" | "inline";
   /**
    * Absolute folder to open on mount, outranking the remembered and the
-   * configured start folder (§10.2). The file-location openers pass the folder
+   * configured start folder (В§10.2). The file-location openers pass the folder
    * they resolved; every other surface leaves it null and gets the ordinary
-   * §1.5 rules.
+   * В§1.5 rules.
    */
   initialPath?: string | null;
-  /** Absolute path of an entry to select once its folder is listed (§5.3). */
+  /** Absolute path of an entry to select once its folder is listed (В§5.3). */
   revealPath?: string | null;
   /**
-   * Also open the Extract dialog for `revealPath` once it is selected — the
-   * file opener's "Extract…" for an archive link (§8.13). Ignored for a
+   * Also open the Extract dialog for `revealPath` once it is selected вЂ” the
+   * file opener's "ExtractвЂ¦" for an archive link (В§8.13). Ignored for a
    * reveal that is not an archive.
    */
   extractOnReveal?: boolean;
   /** Seed for the in-folder filter; the compact chrome unfolds for it. */
   initialQuery?: string;
   /**
-   * The thread this surface belongs to, when it belongs to one (§10.3).
+   * The thread this surface belongs to, when it belongs to one (В§10.3).
    *
    * Only bb's thread panel names it, and it buys exactly one thing: the
-   * toolbar's jump into that thread's checkout. Null everywhere else — the
+   * toolbar's jump into that thread's checkout. Null everywhere else вЂ” the
    * nav panel, the New thread launcher and the file openers are rooted at the
    * home folder, not at a thread.
    */
@@ -524,7 +524,7 @@ export function FileManagerSurface({
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
 
-  // The draft "Add to chat" writes into (§8.8). Which draft that is, is the
+  // The draft "Add to chat" writes into (В§8.8). Which draft that is, is the
   // host's call and depends on the surface: a panel tab beside a thread writes
   // into that thread's composer, while the sidebar page seeds the composer of
   // the next new thread. Held in a ref so the callback below never has to
@@ -551,7 +551,7 @@ export function FileManagerSurface({
   const selectMachine = useCallback((hostId: string) => {
     const machine = stateRef.current?.machines?.find((candidate) => candidate.id === hostId);
     if (machine === undefined || machine.root === null) {
-      setStateError("Эта машина сейчас недоступна.");
+      setStateError("Р­С‚Р° РјР°С€РёРЅР° СЃРµР№С‡Р°СЃ РЅРµРґРѕСЃС‚СѓРїРЅР°.");
       return;
     }
     setSelectedHostId(hostId);
@@ -566,7 +566,7 @@ export function FileManagerSurface({
   const [confirmOnDelete, setConfirmOnDelete] = useState(true);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
-  /** List or gallery (§8.9), persisted exactly like sort and hidden files. */
+  /** List or gallery (В§8.9), persisted exactly like sort and hidden files. */
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const galleryView = viewMode === "gallery";
   const [query, setQuery] = useState(initialQuery);
@@ -577,7 +577,7 @@ export function FileManagerSurface({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [externalDrag, setExternalDrag] = useState(false);
 
-  /* Path bar (§3). The panel owns the mode, the inline failure and the commit;
+  /* Path bar (В§3). The panel owns the mode, the inline failure and the commit;
      `components/PathBar.tsx` owns the draft text for exactly as long as the
      mode lasts. */
   /**
@@ -601,8 +601,8 @@ export function FileManagerSurface({
    */
   const [pendingReveal, setPendingReveal] = useState<PendingReveal | null>(null);
 
-  /* Location memory (§1). `restorePending` is the absolute path the bootstrap
-     restored from memory; it arms the §1.6 fallback and is cleared the moment
+  /* Location memory (В§1). `restorePending` is the absolute path the bootstrap
+     restored from memory; it arms the В§1.6 fallback and is cleared the moment
      the listing lands. */
   const [restorePending, setRestorePending] = useState<string | null>(null);
   const [swallowedError, setSwallowedError] = useState<ParsedRpcError | null>(null);
@@ -610,8 +610,8 @@ export function FileManagerSurface({
   /**
    * True between the bootstrap's `replace` navigation and the host applying
    * it. The route still says "root" in that window, so listing it would spend
-   * a full `readdir` of the home directory on a folder nobody asked for — and
-   * would record it as "where you were" (§1.4). Nothing is listed until the
+   * a full `readdir` of the home directory on a folder nobody asked for вЂ” and
+   * would record it as "where you were" (В§1.4). Nothing is listed until the
    * route the panel asked for is the route it is on.
    */
   const [redirectPending, setRedirectPending] = useState(false);
@@ -622,15 +622,15 @@ export function FileManagerSurface({
   /**
    * The tier-2 debounce lives in a ref, not in an effect cleanup: a refetch of
    * the folder already recorded must not cancel a write that is still pending
-   * for it (§1.4).
+   * for it (В§1.4).
    */
   const lastFolderTimerRef = useRef<number | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** The `role="treegrid"` element: the list view's keyboard widget (§8.3). */
+  /** The `role="treegrid"` element: the list view's keyboard widget (В§8.3). */
   const gridRef = useRef<HTMLTableElement>(null);
-  /** The gallery's `role="listbox"` grid — the same widget in the other view. */
+  /** The gallery's `role="listbox"` grid вЂ” the same widget in the other view. */
   const galleryRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -642,7 +642,7 @@ export function FileManagerSurface({
 
   /**
    * Focus whichever of the two surfaces is mounted. Exactly one ever is, so
-   * this is the old "focus the grid" with the view switch factored out — and
+   * this is the old "focus the grid" with the view switch factored out вЂ” and
    * focus still never lands on `<body>`, which is what the keyboard map needs.
    */
   const focusSurface = useCallback(() => {
@@ -650,7 +650,7 @@ export function FileManagerSurface({
   }, []);
 
   /* -------------------------------------------------------------- */
-  /* Bootstrap (§8.1)                                                */
+  /* Bootstrap (В§8.1)                                                */
   /* -------------------------------------------------------------- */
 
   useEffect(() => {
@@ -670,9 +670,9 @@ export function FileManagerSurface({
         setSortDirection(result.preferences.sortDirection);
         setViewMode(result.preferences.viewMode);
         setStateError(null);
-        // Where to open: a folder the caller asked for (§10.2), then an
+        // Where to open: a folder the caller asked for (В§10.2), then an
         // explicit link, then the remembered folder, then the configured start
-        // folder (§1.5). The `subPath === ""` guard that used to sit here is
+        // folder (В§1.5). The `subPath === ""` guard that used to sit here is
         // now rule 1 of `pickInitialFolder`.
         const requested = initialPathRef.current;
         if (requested !== null) {
@@ -687,11 +687,11 @@ export function FileManagerSurface({
           return;
         }
         // The thread's own project folder, when this surface has a thread and
-        // the preference is on (§1.5). One extra round trip before the first
+        // the preference is on (В§1.5). One extra round trip before the first
         // listing, and only on the surfaces and setting that ask for it: the
         // nav panel, the New thread launcher and the openers have no thread,
-        // so they never pay for it. Every "no" answer — no environment, no
-        // checkout, outside the root, or a lookup that failed outright —
+        // so they never pay for it. Every "no" answer вЂ” no environment, no
+        // checkout, outside the root, or a lookup that failed outright вЂ”
         // leaves the folder null and the decision as it was.
         const bootstrapThreadId = bootstrapThreadIdRef.current;
         let workspaceFolder: string | null = null;
@@ -757,7 +757,7 @@ export function FileManagerSurface({
 
   // The filter is NOT handed to `useDirectory`: it moved wholesale into
   // `flattenTree`, so there is exactly one implementation of it and it can
-  // keep the ancestors of a nested match visible (§5.7).
+  // keep the ancestors of a nested match visible (В§5.7).
   const directory = useDirectory({
     path: currentPath,
     showHidden,
@@ -780,7 +780,7 @@ export function FileManagerSurface({
   treeRef.current = tree;
 
   /**
-   * §8.4's optimistic move: the rows leave the screen the moment the drag is
+   * В§8.4's optimistic move: the rows leave the screen the moment the drag is
    * dropped and come back if the backend refuses them. They stay hidden past
    * the answer, until the fresh listing that really drops them lands, so there
    * is no reappear-then-vanish flicker in between.
@@ -802,10 +802,10 @@ export function FileManagerSurface({
   }, [pendingMoved, tree.rows, tree.visiblePaths]);
 
   /**
-   * The gallery's own row set (§8.9): the current folder, nothing nested.
+   * The gallery's own row set (В§8.9): the current folder, nothing nested.
    *
    * The filter is applied here rather than in `useDirectory` for the same
-   * reason the tree applies its own — one implementation per surface, and the
+   * reason the tree applies its own вЂ” one implementation per surface, and the
    * tree's has to keep the ancestors of a nested match visible, which a flat
    * grid has no use for. `useTree` keeps running while the gallery is up: it
    * is what the list comes back to, and its cached child listings survive the
@@ -829,7 +829,7 @@ export function FileManagerSurface({
   );
 
   // One short-lived URL per folder, and none at all while the list is up: the
-  // list has no thumbnails to hang off it (§8.9).
+  // list has no thumbnails to hang off it (В§8.9).
   const previewBaseUrl = usePreviewBase({
     path: currentPath,
     enabled: galleryView && listingEnabled,
@@ -848,9 +848,9 @@ export function FileManagerSurface({
   const selection = useSelection(galleryView ? galleryPaths : visiblePaths);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
-  const clipboard = useClipboard();
+  const clipboard = useClipboard(activeRemoteHostId);
   const uploads = useUploads();
-  // §8.11. Independent of the bootstrap: the list is not about a folder, so it
+  // В§8.11. Independent of the bootstrap: the list is not about a folder, so it
   // does not have to wait for one, and the star is simply disabled until it
   // lands.
   const bookmarks = useBookmarks();
@@ -869,7 +869,7 @@ export function FileManagerSurface({
     },
   });
 
-  const writable = activeRemoteHostId === null && (directory.data?.writable ?? true);
+  const writable = directory.data?.writable ?? true;
   const archiveSupport =
     activeRemoteHostId === null ? state?.archiveSupport ?? DEFAULT_ARCHIVE_SUPPORT : DEFAULT_ARCHIVE_SUPPORT;
   // Built over the *flattened* rows, so every nested row is selectable,
@@ -882,10 +882,10 @@ export function FileManagerSurface({
   const rowByPathRef = useRef(rowByPath);
   rowByPathRef.current = rowByPath;
   /**
-   * Path → entry for whatever the user can see right now. `rowByPath` above
+   * Path в†’ entry for whatever the user can see right now. `rowByPath` above
    * stays list-only because it carries tree facts (depth, expanded) that the
-   * gallery has no answer for; everything that only needs the *entry* — the
-   * context menu, the selection, the keyboard's open and quick-look — reads
+   * gallery has no answer for; everything that only needs the *entry* вЂ” the
+   * context menu, the selection, the keyboard's open and quick-look вЂ” reads
    * this instead, and so works identically in both views.
    */
   const entryByPath = useMemo(() => {
@@ -930,14 +930,14 @@ export function FileManagerSurface({
   const nowMs = useMemo(() => Date.now(), [directory.data]);
 
   /* -------------------------------------------------------------- */
-  /* Location memory (§1)                                            */
+  /* Location memory (В§1)                                            */
   /* -------------------------------------------------------------- */
 
   /**
    * Remember the folder the backend *confirmed*, not the one the route names.
    *
    * `listDir` answers with the realpath'ed directory, so a route that went
-   * through a symlink is remembered as the thing it actually opened — and a
+   * through a symlink is remembered as the thing it actually opened вЂ” and a
    * route the backend refused never produces `directory.data` at all, which is
    * what stops a bad deep link from poisoning the memory for the next open.
    *
@@ -948,10 +948,10 @@ export function FileManagerSurface({
   useEffect(() => {
     const listed = directory.data?.path;
     if (!listingEnabled || listed === undefined || root === SEPARATOR) return;
-    // A refetch — an `fs` signal, a reconnect, a finished job — re-delivers the
+    // A refetch вЂ” an `fs` signal, a reconnect, a finished job вЂ” re-delivers the
     // folder already recorded. Writing it again would be one `localStorage`
     // write per signal, and would undo the settings section's "Forget" button
-    // the moment anything touched the folder on screen (§1.9).
+    // the moment anything touched the folder on screen (В§1.9).
     const written = lastFolderWrittenRef.current;
     if (written !== null && written.path === listed && written.root === root) return;
     const value: RememberedFolder = { path: listed, root };
@@ -978,7 +978,7 @@ export function FileManagerSurface({
   );
 
   /**
-   * The restore was optimistic (§1.6 (b)): the first `listDir` failure is how
+   * The restore was optimistic (В§1.6 (b)): the first `listDir` failure is how
    * the panel learns the remembered folder is gone. Only the codes that mean
    * "not there" count; anything else is a normal error with a retry.
    */
@@ -1022,7 +1022,7 @@ export function FileManagerSurface({
     setRestorePending(null);
     forgetLastFolder();
     lastFolderWrittenRef.current = null;
-    // The remembered folder *is* the start folder — which is the case for
+    // The remembered folder *is* the start folder вЂ” which is the case for
     // anyone who has opened the panel once with a start folder configured.
     // There is nowhere to fall back to: navigating would ask the host for the
     // route it is already on, no new listing would land, and the banner that
@@ -1053,9 +1053,9 @@ export function FileManagerSurface({
   }, [directory.error, swallowedError]);
 
   /**
-   * The caller's "reveal this file" (§10.2): a file-location opener names the
+   * The caller's "reveal this file" (В§10.2): a file-location opener names the
    * entry it resolved, and the same machinery the path bar uses selects it
-   * once its folder is listed. Armed once — a re-render must not re-select a
+   * once its folder is listed. Armed once вЂ” a re-render must not re-select a
    * row the user has since navigated away from.
    */
   const revealArmedRef = useRef(false);
@@ -1065,7 +1065,7 @@ export function FileManagerSurface({
     const name = basename(revealPath);
     let since: ListDirResult | null = null;
     if (name.startsWith(".") && !showHiddenRef.current) {
-      // State only, never `persist()` — same rule as the path bar's reveal.
+      // State only, never `persist()` вЂ” same rule as the path bar's reveal.
       setShowHidden(true);
       since = directoryDataRef.current;
       toast.message(messagesNow(messages).showingHidden(name));
@@ -1080,8 +1080,8 @@ export function FileManagerSurface({
   }, [extractOnReveal, revealPath, state]);
 
   /**
-   * The path bar's "reveal this file" (§5.3). It cannot select the row before
-   * the row exists — `useSelection` prunes any path that is not visible — so
+   * The path bar's "reveal this file" (В§5.3). It cannot select the row before
+   * the row exists вЂ” `useSelection` prunes any path that is not visible вЂ” so
    * the request waits here until the new listing lands. The panel's existing
    * `selection.focus` effect does the scrolling.
    */
@@ -1191,7 +1191,7 @@ export function FileManagerSurface({
 
   const navigateTo = useCallback((absolute: string) => {
     // Any move the user makes cancels a pending reveal, so a stale one cannot
-    // steal the selection two folders later (§5.3). The reveal re-arms itself
+    // steal the selection two folders later (В§5.3). The reveal re-arms itself
     // straight after its own `navigateTo`, and the later `setState` wins.
     setPendingReveal(null);
     setRestorePending(null);
@@ -1209,7 +1209,7 @@ export function FileManagerSurface({
   }, [navigateTo, parentPath]);
 
   /* -------------------------------------------------------------- */
-  /* Thread folder (§10.3)                                           */
+  /* Thread folder (В§10.3)                                           */
   /* -------------------------------------------------------------- */
 
   const workspace = useThreadWorkspace(threadId);
@@ -1220,11 +1220,11 @@ export function FileManagerSurface({
 
   /**
    * Jump to the thread's own checkout, through the same `navigateTo` every
-   * other move uses — a second navigation path would be a second set of bugs.
+   * other move uses вЂ” a second navigation path would be a second set of bugs.
    *
    * A "no" the lookup already knows about never reaches this handler: the
    * button is not rendered then. What does reach it is a lookup that *failed*,
-   * because "bb did not answer" is not "there is nowhere to go" — so the click
+   * because "bb did not answer" is not "there is nowhere to go" вЂ” so the click
    * retries once, and only a second failure becomes a toast.
    */
   const openThreadWorkspace = useCallback(() => {
@@ -1247,7 +1247,7 @@ export function FileManagerSurface({
   }, [navigateTo]);
 
   const threadFolder = useMemo<ThreadFolderAction | null>(() => {
-    // Nothing for a surface with no thread — and nothing yet while the lookup
+    // Nothing for a surface with no thread вЂ” and nothing yet while the lookup
     // is in flight, because a control that appears only to vanish half a tick
     // later reads worse than one that arrives late.
     const status = workspace.state.status;
@@ -1263,13 +1263,13 @@ export function FileManagerSurface({
   }, [openThreadWorkspace, workspace.state]);
 
   /* -------------------------------------------------------------- */
-  /* Path bar (§3, §5)                                               */
+  /* Path bar (В§3, В§5)                                               */
   /* -------------------------------------------------------------- */
 
-  /** Open, or re-select when it is already open — a browser's address bar. */
+  /** Open, or re-select when it is already open вЂ” a browser's address bar. */
   const openPathBar = useCallback(() => {
     // Compact chrome shows the path bar *or* the unfolded filter, never both,
-    // so opening one has to fold the other away — otherwise Ctrl+L would put
+    // so opening one has to fold the other away вЂ” otherwise Ctrl+L would put
     // the panel into path-editing with no field on screen to edit.
     if (searchOpenRef.current) {
       setSearchOpen(false);
@@ -1308,8 +1308,8 @@ export function FileManagerSurface({
 
   /**
    * Enter in the path bar. A folder navigates; a file navigates to its folder
-   * and reveals it. Nothing here ever *opens* a file — `openEntry` downloads,
-   * and pasting a path must not start a download nobody asked for (§5.2).
+   * and reveals it. Nothing here ever *opens* a file вЂ” `openEntry` downloads,
+   * and pasting a path must not start a download nobody asked for (В§5.2).
    */
   const submitPath = useCallback(
     (raw: string) => {
@@ -1341,8 +1341,8 @@ export function FileManagerSurface({
             // `src/listing.ts#entryFrom` sets it when realpath *throws*, and
             // the wire carries no way to tell that apart from a link that
             // really resolves outside the root. One sentence has to be true of
-            // both, so it says what is certain — the link leads nowhere this
-            // panel can open (§5.2).
+            // both, so it says what is certain вЂ” the link leads nowhere this
+            // panel can open (В§5.2).
             setPathError(messagesNow(messages).linkLeadsNowhere(rootPhrase(root)));
             return;
           }
@@ -1351,7 +1351,7 @@ export function FileManagerSurface({
             // is what double-clicking that row already does; `listDir` then
             // answers with the realpath and the crumbs settle on the target.
             // Committing the folder already on screen is a no-op, not a
-            // history step that a later Back would spend doing nothing (§5.1).
+            // history step that a later Back would spend doing nothing (В§5.1).
             if (isSamePath(entry.path, currentPathRef.current)) setPendingReveal(null);
             else navigateTo(entry.path);
             closePathBar(true);
@@ -1363,7 +1363,7 @@ export function FileManagerSurface({
           if (queryRef.current !== "") setQuery("");
           let since: ListDirResult | null = null;
           if (entry.isHidden && !showHiddenRef.current) {
-            // State only — never `persist()`. Silently rewriting a stored
+            // State only вЂ” never `persist()`. Silently rewriting a stored
             // preference is worse than the empty-looking folder it prevents.
             setShowHidden(true);
             since = directoryDataRef.current;
@@ -1410,8 +1410,8 @@ export function FileManagerSurface({
       }
       // Delete and move both consume their sources: `succeeded` echoes the
       // caller's own paths (src/mutations.ts), which is exactly what the tree
-      // is keyed on. A move cannot be re-keyed — with `conflict: "rename"` the
-      // destination base name is unknown — so it collapses instead (§5.4).
+      // is keyed on. A move cannot be re-keyed вЂ” with `conflict: "rename"` the
+      // destination base name is unknown вЂ” so it collapses instead (В§5.4).
       if (operation !== "copy") treeRef.current.pruneSubtree(result.succeeded);
       refetchRef.current();
     },
@@ -1432,13 +1432,14 @@ export function FileManagerSurface({
         );
       };
       void (async () => {
-        // §8.4: the rows go the moment the drop happens, not a round trip later.
+        // В§8.4: the rows go the moment the drop happens, not a round trip later.
         setPendingMoved((previous) => [...previous, ...targets]);
         try {
           const result = await rpc.call("moveEntries", {
             paths: [...targets],
             destinationDir,
             conflict: "fail",
+            ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
           });
           // Whatever the backend refused (a conflict included) comes straight
           // back; what it moved stays hidden until the refetch confirms it.
@@ -1450,7 +1451,7 @@ export function FileManagerSurface({
         }
       })();
     },
-    [applyBatch, rpc],
+    [activeRemoteHostId, applyBatch, rpc],
   );
 
   const copyTo = useCallback(
@@ -1461,6 +1462,7 @@ export function FileManagerSurface({
             paths: topLevelPaths(paths),
             destinationDir,
             conflict: "rename",
+            ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
           });
           applyBatch(result, "copy");
         } catch (failure) {
@@ -1468,7 +1470,7 @@ export function FileManagerSurface({
         }
       })();
     },
-    [applyBatch, rpc],
+    [activeRemoteHostId, applyBatch, rpc],
   );
 
   const deleteEntries = useCallback(
@@ -1478,19 +1480,20 @@ export function FileManagerSurface({
         const result = await rpc.call("deleteEntries", {
           paths: entries.map((entry) => entry.path),
           recursive: true,
+          ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
         });
         applyBatch(result, "delete");
       } catch (failure) {
         toast.error(errorToastText(failure, messagesNow(messages).deleteFailed));
       }
     },
-    [applyBatch, rpc],
+    [activeRemoteHostId, applyBatch, rpc],
   );
 
   const requestDelete = useCallback(
     (entries: readonly FileEntry[]) => {
       // Deleting a folder already removes its children; sending both would
-      // come back as `not_found` on the child (§4.5).
+      // come back as `not_found` on the child (В§4.5).
       const keep = new Set(topLevelPaths(entries.map((entry) => entry.path)));
       const targets = entries.filter((entry) => keep.has(entry.path));
       if (targets.length === 0) return;
@@ -1528,9 +1531,9 @@ export function FileManagerSurface({
   }, []);
 
   /**
-   * One file downloads as itself; anything more — several files, a folder —
+   * One file downloads as itself; anything more вЂ” several files, a folder вЂ”
    * as one zip, because a burst of separate downloads is what browsers block
-   * after the first (§5.3).
+   * after the first (В§5.3).
    */
   const downloadSelection = useCallback((entries: readonly FileEntry[]) => {
     const usable = entries.filter((entry) => {
@@ -1545,7 +1548,7 @@ export function FileManagerSurface({
     }
     if (paths.length === 0) return;
     if (activeRemoteHostId !== null) {
-      toast.error("Для удалённой машины можно скачивать только отдельный файл.");
+      toast.error("Р”Р»СЏ СѓРґР°Р»С‘РЅРЅРѕР№ РјР°С€РёРЅС‹ РјРѕР¶РЅРѕ СЃРєР°С‡РёРІР°С‚СЊ С‚РѕР»СЊРєРѕ РѕС‚РґРµР»СЊРЅС‹Р№ С„Р°Р№Р».");
       return;
     }
     if (downloadZip(paths) === null) {
@@ -1554,12 +1557,12 @@ export function FileManagerSurface({
   }, [activeRemoteHostId]);
 
   /**
-   * "Add to chat" — one @-mention pill per selected file (§8.8).
+   * "Add to chat" вЂ” one @-mention pill per selected file (В§8.8).
    *
    * The pill carries the path, not the bytes: the backend's mention provider
    * re-reads the file when the message is actually sent, so a file edited (or
    * deleted) between picking and sending is not silently stale. Folders and
-   * links that leave the root are dropped rather than refused one by one —
+   * links that leave the root are dropped rather than refused one by one вЂ”
    * the menu item is disabled when the selection holds nothing else.
    */
   const addToChat = useCallback((entries: readonly FileEntry[]) => {
@@ -1578,13 +1581,13 @@ export function FileManagerSurface({
 
   /**
    * Opening a file (double-click, or Enter) shows it in bb's preview panel
-   * beside the manager rather than downloading it (§8.2).
+   * beside the manager rather than downloading it (В§8.2).
    *
    * bb addresses a live file by host id, which is why `getState` carries the
    * machine bb runs on. Everything that can go wrong here answers `false`
    * rather than throwing: no host id (an older server, or a config call that
    * failed), no preview surface on this client, or a host that declined the
-   * open. `showEntry` turns that `false` into the built-in viewer (§8.12) —
+   * open. `showEntry` turns that `false` into the built-in viewer (В§8.12) вЂ”
    * which is the ordinary case, not the exception, because the sidebar's own
    * File Manager page is a surface bb wires no preview panel into.
    */
@@ -1609,9 +1612,9 @@ export function FileManagerSurface({
 
   /**
    * Show one file: bb's shared preview panel when this surface has one, the
-   * built-in viewer when it does not (§8.12).
+   * built-in viewer when it does not (В§8.12).
    *
-   * The order is not a preference for our own dialog — it is the opposite.
+   * The order is not a preference for our own dialog вЂ” it is the opposite.
    * bb's panel sits *beside* the manager and survives navigation, so it wins
    * wherever it exists; the viewer is what the standalone page gets, where
    * the alternative was silently dropping the file in ~/Downloads.
@@ -1658,13 +1661,14 @@ export function FileManagerSurface({
         destinationDir: submission.destinationDir,
         createSubfolder: submission.createSubfolder,
         conflict: "rename",
+        ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
       });
       jobs.track(result.job);
     },
-    [jobs, rpc],
+    [activeRemoteHostId, jobs, rpc],
   );
 
-  // Same write the settings section performs (lib/start-folder.ts) — the panel
+  // Same write the settings section performs (lib/start-folder.ts) вЂ” the panel
   // just reports it as a toast instead of inline text.
   const setStartFolder = useCallback(
     (path: string) => {
@@ -1681,7 +1685,7 @@ export function FileManagerSurface({
   );
 
   /* -------------------------------------------------------------- */
-  /* Bookmarks (§8.11)                                               */
+  /* Bookmarks (В§8.11)                                               */
   /* -------------------------------------------------------------- */
 
   const bookmarksRef = useRef(bookmarks);
@@ -1732,9 +1736,13 @@ export function FileManagerSurface({
   const enqueueUploads = useCallback(
     (requests: readonly UploadRequest[]) => {
       if (requests.length === 0) return;
-      uploads.enqueue(requests);
+      uploads.enqueue(
+        requests.map((request) =>
+          activeRemoteHostId === null ? request : { ...request, hostId: activeRemoteHostId },
+        ),
+      );
     },
-    [uploads],
+    [activeRemoteHostId, uploads],
   );
 
   const openFilePicker = useCallback(() => {
@@ -1814,7 +1822,7 @@ export function FileManagerSurface({
   }, [contextTarget, entryByPath, selectedEntries, selection.selected]);
 
   /**
-   * Properties (§8.10), from either menu and from `Alt+Enter`. Rows describe
+   * Properties (В§8.10), from either menu and from `Alt+Enter`. Rows describe
    * themselves; an empty list describes the folder on screen, which is the
    * only thing the empty-space menu has to talk about.
    */
@@ -1827,14 +1835,14 @@ export function FileManagerSurface({
   }, []);
 
   /* -------------------------------------------------------------- */
-  /* Drag & drop (§8.4)                                              */
+  /* Drag & drop (В§8.4)                                              */
   /* -------------------------------------------------------------- */
 
   const dropTargetFor = useCallback((entry: FileEntry): string | null => {
     if (entry.escapesRoot) return null;
     if (effectiveKind(entry) === "directory") return entry.path;
     // A file row inside an expanded folder resolves to that folder, not to the
-    // current directory — otherwise a drop on `docs/inner.txt` would land in
+    // current directory вЂ” otherwise a drop on `docs/inner.txt` would land in
     // `~`. At depth 0 this still returns null, i.e. today's behaviour.
     const row = rowByPathRef.current.get(entry.path);
     return row !== undefined && row.depth > 0 ? row.parentPath : null;
@@ -1901,8 +1909,8 @@ export function FileManagerSurface({
         const dragged = selectionRef.current;
         if (dragged.isSelected(entry.path)) return;
         // A folder can never be dropped into itself or into one of its own
-        // descendants — now reachable on screen, so it must not even
-        // highlight (SPEC §8.4).
+        // descendants вЂ” now reachable on screen, so it must not even
+        // highlight (SPEC В§8.4).
         if (dragged.selectedPaths.some((path) => isSameOrDescendant(target, path))) return;
       }
       scheduleHoverExpand(entry);
@@ -1916,7 +1924,7 @@ export function FileManagerSurface({
   const handleRowDragLeave = useCallback(
     (entry: FileEntry, event: ReactDragEvent<HTMLElement>) => {
       // The browser fires `dragleave` for every hop between the nested
-      // elements of one row (td → div → span). Restarting the spring-load
+      // elements of one row (td в†’ div в†’ span). Restarting the spring-load
       // dwell on those would make a 700 ms hover unreachable for anyone whose
       // hand is not perfectly still.
       const related = event.relatedTarget;
@@ -1941,7 +1949,7 @@ export function FileManagerSurface({
       const external = isExternalDrag(event);
       if (external) {
         // Without preventDefault the browser navigates to the dropped file and
-        // the panel is gone (§8.4).
+        // the panel is gone (В§8.4).
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setExternalDrag(true);
@@ -2026,7 +2034,7 @@ export function FileManagerSurface({
   );
 
   /* -------------------------------------------------------------- */
-  /* Keyboard map (§8.3)                                             */
+  /* Keyboard map (В§8.3)                                             */
   /* -------------------------------------------------------------- */
 
   const rowElement = useCallback((path: string | null): HTMLElement | null => {
@@ -2048,7 +2056,7 @@ export function FileManagerSurface({
    * `Shift+F10` / the Menu key. Both context menus hang off the scroll
    * container, which never holds focus (the panel root does), so the browser's
    * own `contextmenu` event never reaches the Radix trigger. Synthesize it on
-   * the focused row — the row handler then fills the menu exactly like a right
+   * the focused row вЂ” the row handler then fills the menu exactly like a right
    * click would, and Radix positions the menu over that row.
    */
   const openKeyboardContextMenu = useCallback(
@@ -2079,10 +2087,10 @@ export function FileManagerSurface({
       // so their keystrokes bubble up the *React* tree to this handler while
       // their DOM lives outside the panel. None of them are the panel's to
       // read: Ctrl+L would open the path bar behind the modal and steal the
-      // focus its focus-trap is holding (§7.2).
+      // focus its focus-trap is holding (В§7.2).
       const panel = rootRef.current;
       if (panel !== null && event.target instanceof Node && !panel.contains(event.target)) return;
-      // The one shortcut handled *above* the typing-target guard (§7.2):
+      // The one shortcut handled *above* the typing-target guard (В§7.2):
       // Ctrl/Cmd+L has to work from the filter box and from the path input
       // itself, which is the behaviour of the thing it imitates. Nothing else
       // moves above this line.
@@ -2119,8 +2127,8 @@ export function FileManagerSurface({
         openKeyboardContextMenu(selection.focus);
         return;
       }
-      // `Alt+Enter` is the OS-wide properties gesture (§8.3), and it has to be
-      // read here rather than in the switch below — that switch's `Enter` case
+      // `Alt+Enter` is the OS-wide properties gesture (В§8.3), and it has to be
+      // read here rather than in the switch below вЂ” that switch's `Enter` case
       // opens the focused row, and it does not look at `altKey`.
       if (event.altKey && !mod && !event.shiftKey && event.key === "Enter") {
         event.preventDefault();
@@ -2191,7 +2199,7 @@ export function FileManagerSurface({
           }
           return;
         case " ": {
-          /* Quick look (§8.9): the preview a double-click opens, without
+          /* Quick look (В§8.9): the preview a double-click opens, without
              leaving the keyboard. */
           // Space is the activation key of whatever control has focus, and
           // that meaning wins: a press on the toolbar's Refresh must not
@@ -2203,13 +2211,13 @@ export function FileManagerSurface({
           // Claimed before the outcome is known: whatever the row turns out to
           // be, scrolling the listing out from under the cursor is not it.
           event.preventDefault();
-          // A folder is Enter's business, not quick look's — there is nothing
+          // A folder is Enter's business, not quick look's вЂ” there is nothing
           // to read, and opening it would make Space a second Enter. A link
           // that leaves the root is not readable through this plugin at all.
           if (!isViewableEntry(focusedEntry)) return;
           // Still no download fallback, unlike `openEntry`: a peek that
           // silently puts a file in the downloads folder is not a peek. What
-          // 0.7 could not do is the rest of it — a surface with no preview
+          // 0.7 could not do is the rest of it вЂ” a surface with no preview
           // panel got nothing at all, and now gets the built-in viewer.
           showEntry(focusedEntry);
           return;
@@ -2220,7 +2228,7 @@ export function FileManagerSurface({
           return;
         case "ArrowRight": {
           // `Alt+ArrowRight` is the host's history-forward gesture, exactly
-          // like `Alt+ArrowLeft` below — leave it alone (§8.3).
+          // like `Alt+ArrowLeft` below вЂ” leave it alone (В§8.3).
           if (event.altKey) return;
           // In the gallery the rows run left to right, so left/right are the
           // previous and next tile. There is no tree there to expand into.
@@ -2230,7 +2238,7 @@ export function FileManagerSurface({
             return;
           }
           // Tree semantics only: open the folder, else step into it. Never
-          // preventDefault for a row that has nothing to open (§8.3).
+          // preventDefault for a row that has nothing to open (В§8.3).
           if (focusedRow === undefined || !focusedRow.expandable) return;
           if (!focusedRow.expanded) {
             event.preventDefault();
@@ -2286,17 +2294,17 @@ export function FileManagerSurface({
           }
           return;
         case "Escape":
-          // §8.3: "clear search box if focused, else clear selection". The box
+          // В§8.3: "clear search box if focused, else clear selection". The box
           // clears itself (Toolbar stops the event there), so by the time the
           // panel sees an Escape the focus is elsewhere and it belongs to the
-          // selection — clearing the filter here would strand the selection.
+          // selection вЂ” clearing the filter here would strand the selection.
           if (selection.count > 0) {
             event.preventDefault();
             selection.clear();
           }
           return;
         default:
-          // Never preventDefault on keys we do not handle (§8.3).
+          // Never preventDefault on keys we do not handle (В§8.3).
           return;
       }
     },
@@ -2330,7 +2338,7 @@ export function FileManagerSurface({
   /**
    * Only the nav panel is on the bus. A panel tab renders the very same
    * actions inside its toolbar, and publishing from both would leave the title
-   * bar describing whichever surface rendered last — while a header click
+   * bar describing whichever surface rendered last вЂ” while a header click
    * would run in both.
    */
   const snapshot: PanelSnapshot = useMemo(
@@ -2441,7 +2449,7 @@ export function FileManagerSurface({
   const hiddenCount = directory.data?.hiddenCount ?? 0;
   const truncated = directory.data?.truncated ?? false;
 
-  /* Bookmarks (§8.11). The only thing that disables a bookmark control is not
+  /* Bookmarks (В§8.11). The only thing that disables a bookmark control is not
      knowing yet: a full list still answers, with the sentence that says what
      to do about it (`toggleBookmark`). */
   const currentBookmarked = bookmarks.isBookmarked(currentPath);
@@ -2629,7 +2637,7 @@ export function FileManagerSurface({
       {/* One navigation and one toast, never an error that repairs itself half
           a second later: while a restored folder is being answered for, and
           until the folder we fell back to answers, the banner stays down
-          (§1.6). Every other failure renders exactly as it did before. */}
+          (В§1.6). Every other failure renders exactly as it did before. */}
       {directory.error === null || restoreFallbackMoves || directory.error === swallowedError ? null : (
         <ErrorBanner
           error={directory.error.rawMessage}
@@ -2815,7 +2823,11 @@ export function FileManagerSurface({
           existingNames={existingNames}
           destinationLabel={currentPath}
           onSubmit={async (name) => {
-            await rpc.call("createFolder", { path: currentPath, name });
+            await rpc.call("createFolder", {
+              path: currentPath,
+              name,
+              ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
+            });
             refetchRef.current();
           }}
         />
@@ -2830,9 +2842,13 @@ export function FileManagerSurface({
             if (!open) setDialog({ kind: "none" });
           }}
           onSubmit={async (entry, newName) => {
-            const result = await rpc.call("renameEntry", { path: entry.path, newName });
+            const result = await rpc.call("renameEntry", {
+              path: entry.path,
+              newName,
+              ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
+            });
             // The one mutation whose new absolute path is knowable, so the one
-            // that keeps its subtree open instead of collapsing it (§5.4).
+            // that keeps its subtree open instead of collapsing it (В§5.4).
             treeRef.current.remapPrefix(entry.path, result.entry.path);
             refetchRef.current();
           }}
@@ -2891,8 +2907,8 @@ export function FileManagerSurface({
           onOpenChange={(open) => {
             if (!open) setDialog({ kind: "none" });
           }}
-          // An archive's "Extract…" swaps the viewer for the ordinary dialog:
-          // one extraction flow, whichever surface it starts from (§8.13).
+          // An archive's "ExtractвЂ¦" swaps the viewer for the ordinary dialog:
+          // one extraction flow, whichever surface it starts from (В§8.13).
           onExtract={(entry) => setDialog({ kind: "extract", entry })}
         />
       ) : null}
@@ -2901,6 +2917,7 @@ export function FileManagerSurface({
         <PropertiesDialog
           open
           target={dialog.target}
+          hostId={activeRemoteHostId}
           onOpenChange={(open) => {
             if (!open) setDialog({ kind: "none" });
           }}
@@ -2919,7 +2936,7 @@ export function FileManagerSurface({
             if (!open) setDialog({ kind: "none" });
           }}
           onChoose={(destination) => {
-            // "Set as start folder" takes the folder it was invoked on (§8.6),
+            // "Set as start folder" takes the folder it was invoked on (В§8.6),
             // both from the row menu and from the background menu, so the
             // picker only ever runs the two batch destinations.
             if (dialog.mode === "move") moveTo(dialog.paths, destination);
@@ -2952,11 +2969,13 @@ export function FileManagerSurface({
                         paths,
                         destinationDir,
                         conflict: conflictPolicy,
+                        ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
                       })
                     : await rpc.call("copyEntries", {
                         paths,
                         destinationDir,
                         conflict: conflictPolicy,
+                        ...(activeRemoteHostId === null ? {} : { hostId: activeRemoteHostId }),
                       });
                 applyBatch(result, operation);
               } catch (failure) {
@@ -2975,10 +2994,11 @@ export function FileManagerSurface({
 /* ------------------------------------------------------------------ */
 
 /**
- * The nav panel (§10): the route carries the folder, and bb renders
+ * The nav panel (В§10): the route carries the folder, and bb renders
  * `HeaderActions` in the shared title bar above this component.
  */
 export function FileManagerPanel({ subPath }: PluginNavPanelProps) {
   const location = useRouteLocation(subPath);
   return <FileManagerSurface location={location} chrome="host-header" />;
 }
+
