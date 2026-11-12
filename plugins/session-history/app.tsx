@@ -1,4 +1,4 @@
-// bb-plugin-session-history — frontend. A "Past sessions" section on the
+// bb-plugin-session-history вЂ” frontend. A "Past sessions" section on the
 // new-thread screen (scoped to the selected project) and a "Sessions" page
 // with the full list and a transcript at /sessions/<agent>/<id>, under which a
 // composer starts a BB thread that continues the session.
@@ -196,7 +196,7 @@ function SessionRowView({
           <span className="min-w-0 flex-1">
             <span className="block truncate">{session.title}</span>
             {subtitle.length > 0 ? (
-              <span className="block truncate text-xs text-muted-foreground">{subtitle.join(" · ")}</span>
+              <span className="block truncate text-xs text-muted-foreground">{subtitle.join(" В· ")}</span>
             ) : null}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{ago(session.updatedAt)}</span>
@@ -346,6 +346,7 @@ function SessionList({
   error,
   pageSize,
   showFolder,
+  showArchivedToggle = false,
   toolbarExtra,
   onDelete,
   onDeleteFolder,
@@ -354,6 +355,7 @@ function SessionList({
   error: string | null;
   pageSize: number;
   showFolder: boolean;
+  showArchivedToggle?: boolean;
   toolbarExtra?: ReactNode;
   onDelete?: (session: SessionRow) => Promise<void>;
   onDeleteFolder?: (group: SessionFolderGroup) => Promise<void>;
@@ -363,20 +365,26 @@ function SessionList({
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(pageSize);
   const [layout, setLayout] = useState<"list" | "folders">("list");
+  const [showArchived, setShowArchived] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
-  useEffect(() => setLimit(pageSize), [agent, query, pageSize]);
+  useEffect(() => setLimit(pageSize), [agent, query, pageSize, showArchived]);
+
+  const availableSessions = useMemo(
+    () => (sessions ?? []).filter((session) => showArchived || !session.archived),
+    [sessions, showArchived],
+  );
 
   const counts = useMemo(() => {
     const result: Record<AgentFilter, number> = { all: 0, claude: 0, codex: 0, qwen: 0, pi: 0 };
-    for (const session of sessions ?? []) {
+    for (const session of availableSessions) {
       result.all += 1;
       result[session.agent] += 1;
     }
     return result;
-  }, [sessions]);
+  }, [availableSessions]);
   const filtered = useMemo(
-    () => (sessions ?? []).filter((session) => matches(session, agent, query.trim())),
-    [sessions, agent, query],
+    () => availableSessions.filter((session) => matches(session, agent, query.trim())),
+    [availableSessions, agent, query],
   );
   const visible = filtered.slice(0, limit);
   const visibleKeys = useMemo(() => new Set(visible.map(sessionKey)), [visible]);
@@ -401,6 +409,16 @@ function SessionList({
             </Button>
           ))}
         </div>
+        {showArchivedToggle ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-pressed={showArchived}
+            onClick={() => setShowArchived((value) => !value)}
+          >
+            {showArchived ? t.hideArchived : t.showArchived}
+          </Button>
+        ) : null}
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -467,12 +485,12 @@ function SessionList({
                           }
                         >
                           <span className="w-4 shrink-0 text-center text-muted-foreground" aria-hidden>
-                            {collapsed ? "▸" : "▾"}
+                            {collapsed ? "в–ё" : "в–ѕ"}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{group.cwd || t.unknownFolder}</span>
                             <span className="block truncate text-xs text-muted-foreground">
-                              {group.hostName} · {t.folderSessionCount(group.sessions.length)} · {ago(latest.updatedAt)}
+                              {group.hostName} В· {t.folderSessionCount(group.sessions.length)} В· {ago(latest.updatedAt)}
                             </span>
                           </span>
                         </button>
@@ -623,10 +641,10 @@ function SessionTranscript({
               data.session.cwd,
               data.session.gitBranch,
               data.session.model,
-              `${dateTime(data.session.createdAt)} — ${dateTime(data.session.updatedAt)}`,
+              `${dateTime(data.session.createdAt)} вЂ” ${dateTime(data.session.updatedAt)}`,
             ]
               .filter(Boolean)
-              .join(" · ")}
+              .join(" В· ")}
           </p>
         </div>
       </div>
@@ -823,6 +841,7 @@ function SessionsPage({ subPath }: PluginNavPanelProps) {
           error={error}
           pageSize={100}
           showFolder
+          showArchivedToggle
           onDelete={onDelete}
           onDeleteFolder={onDeleteFolder}
           toolbarExtra={
@@ -863,3 +882,4 @@ export default definePluginApp((app) => {
     component: SessionsPage,
   });
 });
+
