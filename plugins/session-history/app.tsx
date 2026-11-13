@@ -11,6 +11,7 @@ import {
   experimental_NewThreadComposer as NewThreadComposer,
   useBbNavigate,
   useRpc,
+  useSettings,
   type NewThreadRequest,
   type PluginHomepageSectionProps,
   type PluginNavPanelProps,
@@ -32,17 +33,20 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { locale, t } from "@/lib/i18n";
+import { isAgent } from "@/lib/sessions/types";
+import { enabledAgents } from "@/lib/sessions/settings";
 
 type Agent = SessionRow["agent"];
 type AgentFilter = Agent | "all";
 
 const PANEL_PATH = "sessions";
-const AGENT_LABEL: Record<Agent, string> = { claude: "Claude", codex: "Codex", qwen: "Qwen", pi: "Pi" };
+const AGENT_LABEL: Record<Agent, string> = { claude: "Claude", codex: "Codex", qwen: "Qwen", pi: "Pi", "command-code": "Command Code" };
 const AGENT_TONE: Record<Agent, string> = {
   claude: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
   codex: "bg-sky-500/15 text-sky-600 dark:text-sky-400",
   qwen: "bg-violet-500/15 text-violet-600 dark:text-violet-400",
   pi: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  "command-code": "bg-amber-500/15 text-amber-600 dark:text-amber-400",
 };
 
 const relative = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
@@ -92,6 +96,9 @@ async function copy(text: string, done: string) {
 
 function useSessions(projectId: string | null, hostId?: string) {
   const rpc = useRpc<typeof rpcContract>();
+  const { values } = useSettings();
+  const sourcesKey = enabledAgents(values ?? {}).join(",");
+  const requestGeneration = useRef(0);
   const [state, setState] = useState<{
     sessions: SessionRow[] | null;
     roots: string[];
@@ -99,13 +106,21 @@ function useSessions(projectId: string | null, hostId?: string) {
     refreshing: boolean;
   }>({ sessions: null, roots: [], error: null, refreshing: false });
   const load = useCallback(() => {
+    const generation = ++requestGeneration.current;
     const input = hostId === undefined ? { projectId } : { projectId, hostId };
     rpc.call("sessions_list", input).then(
-      (result) => setState({ sessions: result.sessions, roots: result.roots, error: null, refreshing: result.refreshing }),
-      (cause) => setState((prev) => ({ ...prev, error: errorText(cause) })),
+      (result) => {
+        if (generation === requestGeneration.current) setState({ sessions: result.sessions, roots: result.roots, error: null, refreshing: result.refreshing });
+      },
+      (cause) => {
+        if (generation === requestGeneration.current) setState((prev) => ({ ...prev, error: errorText(cause) }));
+      },
     );
-  }, [rpc, projectId, hostId]);
-  useEffect(load, [load]);
+  }, [rpc, projectId, hostId, sourcesKey]);
+  useEffect(() => {
+    load();
+    return () => { requestGeneration.current += 1; };
+  }, [load]);
   useEffect(() => {
     if (!state.refreshing) return;
     const timer = window.setInterval(load, 2_000);
@@ -367,15 +382,21 @@ function SessionList({
   const [layout, setLayout] = useState<"list" | "folders">("list");
   const [showArchived, setShowArchived] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
+  const { values } = useSettings();
+  const enabled = enabledAgents(values ?? {});
+  const sourcesKey = enabled.join(",");
+  useEffect(() => {
+    if (agent !== "all" && !enabled.includes(agent)) setAgent("all");
+  }, [agent, sourcesKey]);
   useEffect(() => setLimit(pageSize), [agent, query, pageSize, showArchived]);
 
   const availableSessions = useMemo(
-    () => (sessions ?? []).filter((session) => showArchived || !session.archived),
-    [sessions, showArchived],
+    () => (sessions ?? []).filter((session) => enabled.includes(session.agent) && (showArchived || !session.archived)),
+    [sessions, showArchived, sourcesKey],
   );
 
   const counts = useMemo(() => {
-    const result: Record<AgentFilter, number> = { all: 0, claude: 0, codex: 0, qwen: 0, pi: 0 };
+    const result: Record<AgentFilter, number> = { all: 0, claude: 0, codex: 0, qwen: 0, pi: 0, "command-code": 0 };
     for (const session of availableSessions) {
       result.all += 1;
       result[session.agent] += 1;
@@ -389,7 +410,7 @@ function SessionList({
   const visible = filtered.slice(0, limit);
   const visibleKeys = useMemo(() => new Set(visible.map(sessionKey)), [visible]);
   const folderGroups = useMemo(() => groupSessionsByFolder(filtered), [filtered]);
-  const filters: AgentFilter[] = ["all", "claude", "codex", "qwen", "pi"];
+  const filters: AgentFilter[] = ["all", ...enabled];
 
   return (
     <div>
@@ -815,6 +836,7 @@ function TranscriptView({ agent, id, hostId }: { agent: Agent; id: string; hostI
 }
 
 function SessionsPage({ subPath }: PluginNavPanelProps) {
+  const { values } = useSettings();
   const parts = subPath.split("/");
   const [hostId, agent, id] = parts.length >= 3 ? parts : [undefined, parts[0], parts[1]];
   const [selectedHost, setSelectedHost] = useState("all");
@@ -830,7 +852,7 @@ function SessionsPage({ subPath }: PluginNavPanelProps) {
       return [...next.values()].sort((a, b) => a.name.localeCompare(b.name));
     });
   }, [sessions]);
-  if ((agent === "claude" || agent === "codex" || agent === "qwen" || agent === "pi") && id) {
+  if (isAgent(agent) && enabledAgents(values ?? {}).includes(agent) && id) {
     return <TranscriptView key={`${hostId}/${agent}/${id}`} agent={agent} id={id} hostId={hostId} />;
   }
   return (

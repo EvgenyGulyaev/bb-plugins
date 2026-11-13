@@ -1,10 +1,10 @@
 import { FileCache, scanJsonl } from "./files.js";
 
 const recoveredTitles = new FileCache<string>();
-const continuation = /^You are continuing an earlier (?:Claude Code|Codex|Qwen Code) session\b/;
+const continuation = /^You are continuing an earlier (?:Claude Code|Codex|Qwen Code|Pi|Command Code) session\b/;
 
 function transcriptTitle(text: string): string | null {
-  return /(?:^|\n)# ([^\n]+)\n\nAgent: (?:Claude Code|Codex|Qwen Code)\n\nSession id: [^\n]+/.exec(text)?.[1]?.trim() || null;
+  return /(?:^|\n)# ([^\n]+)\n\nAgent: (?:Claude Code|Codex|Qwen Code|Pi|Command Code)\n\nSession id: [^\n]+/.exec(text)?.[1]?.trim() || null;
 }
 
 /** Recover original names without changing native session files or custom names. */

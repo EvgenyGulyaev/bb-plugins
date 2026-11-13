@@ -6,7 +6,8 @@ import { readClaudeTranscript } from "./sessions/claude.js";
 import { readCodexTranscript } from "./sessions/codex.js";
 import { readPiTranscript } from "./sessions/pi.js";
 import { readQwenTranscript } from "./sessions/qwen.js";
-import { clip, oneLine, toMs, type Agent, type SessionSummary, type Transcript } from "./sessions/types.js";
+import { commandCodeMetadata, readCommandCodeTranscript } from "./sessions/command-code.js";
+import { AGENTS, isAgent, clip, oneLine, toMs, type Agent, type SessionSummary, type Transcript } from "./sessions/types.js";
 
 export interface RemoteHost { id: string; name: string; home: string }
 
@@ -64,22 +65,22 @@ export async function resolveRemoteHost(bb: BbPluginApi, hostId: string, name: s
   return home ? { id: hostId, name, home } : null;
 }
 
-function discoveryScript(home: string, agentFilter?: Agent): string {
+export function discoveryScript(home: string, agentFilter?: Agent, enabled: readonly Agent[] = AGENTS): string {
   const stat = 'if stat -f %m . >/dev/null 2>&1; then S="-f %m|%z|%N"; else S="-c %Y|%s|%n"; fi; emit() { stat $S "$1"; }';
   const emit = (agent: Agent, root: string, pattern: string) =>
     `r=${shellQuote(root)}; if [ -d "$r" ]; then find "$r" -type f ${pattern} 2>/dev/null | while IFS= read -r f; do printf '%s\\t' ${shellQuote(agent)}; emit "$f"; done; fi`;
-  const scripts = [
-    stat,
-    emit("claude", `${home}/.claude`, `-path '*/projects/*/*.jsonl'`),
-    emit("codex", `${home}/.codex/sessions`, `-name 'rollout-*.jsonl'`),
-    emit("qwen", `${home}/.qwen/projects`, `-path '*/chats/*.jsonl'`),
-    `r=${shellQuote(`${home}/.pi/agent/sessions`)}; if [ -d "$r" ]; then for d in "$r"/*; do [ -d "$d" ] || continue; for f in "$d"/*.jsonl; do [ -f "$f" ] || continue; printf '%s\\t' 'pi'; emit "$f"; done; done; fi`,
+  const scripts: [Agent, string][] = [
+    ["claude", emit("claude", `${home}/.claude`, `-path '*/projects/*/*.jsonl'`)],
+    ["codex", emit("codex", `${home}/.codex/sessions`, `-name 'rollout-*.jsonl'`)],
+    ["qwen", emit("qwen", `${home}/.qwen/projects`, `-path '*/chats/*.jsonl'`)],
+    ["pi", `r=${shellQuote(`${home}/.pi/agent/sessions`)}; if [ -d "$r" ]; then for d in "$r"/*; do [ -d "$d" ] || continue; for f in "$d"/*.jsonl; do [ -f "$f" ] || continue; printf '%s\\t' 'pi'; emit "$f"; done; done; fi`],
+    ["command-code", emit("command-code", `${home}/.commandcode/projects`, `-name '*.jsonl' ! -name '*.checkpoints.jsonl'`)],
   ];
-  return [scripts[0], ...scripts.slice(1).filter((_, index) => agentFilter === undefined || ["claude", "codex", "qwen", "pi"][index] === agentFilter)].join("; ");
+  return [stat, ...scripts.filter(([agent]) => enabled.includes(agent) && (agentFilter === undefined || agent === agentFilter)).map(([, script]) => script)].join("; ");
 }
 
-async function remoteFiles(bb: BbPluginApi, host: RemoteHost, agentFilter?: Agent): Promise<RemoteFile[]> {
-  const output = await hostExec(bb, host.id, discoveryScript(host.home, agentFilter));
+async function remoteFiles(bb: BbPluginApi, host: RemoteHost, agentFilter: Agent | undefined, enabled: readonly Agent[]): Promise<RemoteFile[]> {
+  const output = await hostExec(bb, host.id, discoveryScript(host.home, agentFilter, enabled));
   if (!output) return [];
   const rows: RemoteFile[] = [];
   for (const line of output.split("\n")) {
@@ -91,11 +92,11 @@ async function remoteFiles(bb: BbPluginApi, host: RemoteHost, agentFilter?: Agen
     const mtimeText = statText.slice(0, first);
     const sizeText = statText.slice(first + 1, second);
     const file = statText.slice(second + 1);
-    if (!file || !["claude", "codex", "qwen", "pi"].includes(agent)) continue;
+    if (!file || !isAgent(agent) || !enabled.includes(agent)) continue;
     const mtimeMs = Number(mtimeText) * 1000;
     const sizeBytes = Number(sizeText);
     if (!Number.isFinite(mtimeMs) || !Number.isFinite(sizeBytes)) continue;
-    rows.push({ agent: agent as Agent, mtimeMs, sizeBytes, file: file.trim() });
+    rows.push({ agent, mtimeMs, sizeBytes, file: file.trim() });
   }
   rows.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return rows;
@@ -132,7 +133,11 @@ function summarize(agent: Agent, file: RemoteFile, raw: string, host: RemoteHost
   let archived = file.file.includes("archived");
   for (const row of rows) {
     createdAt ??= toMs(row.timestamp);
-    if (agent === "claude") {
+    if (agent === "command-code" && typeof row.role === "string") {
+      if (typeof row.sessionId === "string") id = row.sessionId;
+      if (typeof row.gitBranch === "string") gitBranch = row.gitBranch;
+      if (row.role === "user" && !firstPrompt) firstPrompt = contentText(row.content);
+    } else if (agent === "claude") {
       if (typeof row.cwd === "string") cwd ||= row.cwd;
       if (typeof row.gitBranch === "string") gitBranch ??= row.gitBranch;
       if (typeof row.aiTitle === "string") title = row.aiTitle;
@@ -167,6 +172,7 @@ function summarize(agent: Agent, file: RemoteFile, raw: string, host: RemoteHost
       }
       if (row.type === "session_info" && typeof row.name === "string") title = row.name.trim();
     }
+    if (agent === "command-code" && typeof row.model === "string") model = row.model;
   }
   if (!title) title = firstPrompt;
   if (!title || !id) return null;
@@ -194,29 +200,37 @@ export async function listRemoteSessions(
   log: (message: string) => void,
   agentFilter?: Agent,
   cache?: RemoteSummaryCache,
+  enabled: readonly Agent[] = AGENTS,
+  isCurrent: () => boolean = () => true,
 ): Promise<SessionSummary[]> {
-  const files = await remoteFiles(bb, host, agentFilter);
+  if (!isCurrent() || enabled.length === 0 || (agentFilter !== undefined && !enabled.includes(agentFilter))) return [];
+  const files = await remoteFiles(bb, host, agentFilter, enabled);
+  if (!isCurrent()) return [];
   const rows: SessionSummary[] = [];
   let index = 0;
   const worker = async () => {
-    while (index < files.length) {
+    while (isCurrent() && index < files.length) {
       const file = files[index++];
-      const cached = cache?.get(file, host);
-      if (cached !== null && cached !== undefined) {
-        rows.push(cached);
-        continue;
+      let row = cache?.get(file, host);
+      if (row === null || row === undefined) {
+        const head = await hostExec(bb, host.id, `head -c 262144 ${shellQuote(file.file)}`);
+        if (!isCurrent()) break;
+        if (!head) continue;
+        row = summarize(file.agent, file, head, host);
+        if (row) cache?.set(file, host, row);
       }
-      const head = await hostExec(bb, host.id, `head -c 262144 ${shellQuote(file.file)}`);
-      if (!head) continue;
-      const row = summarize(file.agent, file, head, host);
       if (row) {
+        if (file.agent === "command-code") {
+          const metadata = await bb.sdk.files.read({ hostId: host.id, path: file.file.replace(/\.jsonl$/, ".meta.json") }).catch(() => null);
+          if (!isCurrent()) break;
+          if (metadata) row = commandCodeMetadata(row, metadata.contentEncoding === "base64" ? Buffer.from(metadata.content, "base64").toString("utf8") : metadata.content);
+        }
         rows.push(row);
-        cache?.set(file, host, row);
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(8, files.length) }, worker));
-  if (files.length > 0 && rows.length === 0) log(`${host.name}: session files were found but could not be read`);
+  if (isCurrent() && files.length > 0 && rows.length === 0) log(`${host.name}: session files were found but could not be read`);
   return rows;
 }
 
@@ -236,6 +250,7 @@ export async function readRemoteTranscript(
       case "codex": return await readCodexTranscript(local, true);
       case "qwen": return await readQwenTranscript(local, true);
       case "pi": return await readPiTranscript(local, true);
+      case "command-code": return await readCommandCodeTranscript(local, true);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

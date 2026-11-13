@@ -79,8 +79,11 @@ export class FileCache<T> {
   async get(
     file: string,
     load: (info: { mtimeMs: number; size: number }) => Promise<T | null>,
+    isCurrent: () => boolean = () => true,
   ): Promise<T | null> {
+    if (!isCurrent()) return null;
     const info = await statFile(file);
+    if (!isCurrent()) return null;
     if (info === null) {
       this.entries.delete(file);
       return null;
@@ -90,6 +93,7 @@ export class FileCache<T> {
       return cached.value;
     }
     const value = await load(info);
+    if (!isCurrent()) return null;
     this.entries.set(file, { ...info, value });
     return value;
   }
@@ -100,17 +104,18 @@ export async function mapLimit<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,
+  isCurrent: () => boolean = () => true,
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
   async function worker() {
-    while (next < items.length) {
+    while (isCurrent() && next < items.length) {
       const index = next++;
       results[index] = await fn(items[index]!);
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
+  return results.slice(0, next);
 }
 
 /** Best one-line description of a tool call's arguments. */
