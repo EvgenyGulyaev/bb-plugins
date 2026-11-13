@@ -10,7 +10,7 @@
     "name": "Api модели",
     "description": "Подключение моделей с API-адресов в pi: аккордеоны адресов, доступные/подключённые модели, настройки.",
     "branding": {
-      "icon": "Boxes"
+      "icon": "Workflow"
     },
     "server": "./server.ts",
     "app": "./app.tsx"

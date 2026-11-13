@@ -101,7 +101,7 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
         </div>
       ))}
       <div className="mt-1 flex justify-end">
-        <Button size="sm" onClick={save}><Icon name="Save" className="size-3.5" />Сохранить</Button>
+        <Button size="sm" onClick={save}><Icon name="Check" className="size-3.5" />Сохранить</Button>
       </div>
     </div>
   );
@@ -159,8 +159,8 @@ function ProviderSection({ provider, rpc, report, onEdit }: { provider: Provider
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Обновить список моделей"
-          onClick={() => { setOpen(true); discover(); }}><Icon name="RefreshCw" className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
-        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Pencil" className="size-3.5" /></Button>
+          onClick={() => { setOpen(true); discover(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
+        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Edit" className="size-3.5" /></Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Удалить API?"
           onConfirm={() => rpc.call("provider_delete", { id: provider.id }).then(() => toast.success(`Удалён ${provider.id}`), report)} />
       </div>
@@ -229,7 +229,7 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
             <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" aria-label="API-ключ" /></label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Отмена</Button>
-            <Button type="submit"><Icon name="Save" className="size-3.5" />Сохранить</Button>
+            <Button type="submit"><Icon name="Check" className="size-3.5" />Сохранить</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -278,5 +278,5 @@ function ApiModelsPage() {
 }
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Boxes", path: "api-models", component: ApiModelsPage });
+  app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Workflow", path: "api-models", component: ApiModelsPage });
 });
