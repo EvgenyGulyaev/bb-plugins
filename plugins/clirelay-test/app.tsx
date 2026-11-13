@@ -216,7 +216,7 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
         <DialogHeader><DialogTitle>{editing ? "Настроить API" : "Добавить API"}</DialogTitle></DialogHeader>
         <form className="flex flex-col gap-3" onSubmit={submit}>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">id (slug)</span>
-            <Input value={id} onChange={(event) => setId(event.target.value)} disabled={!!editing} placeholder="router-gpt" required aria-label="id провайдера" /></label>
+            <Input value={id} onChange={(event) => setId(event.target.value)} disabled={!!editing} placeholder="my-router" required aria-label="id провайдера" /></label>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Имя (необязательно)</span>
             <Input value={name} onChange={(event) => setName(event.target.value)} aria-label="имя провайдера" /></label>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Адрес (baseUrl)</span>
