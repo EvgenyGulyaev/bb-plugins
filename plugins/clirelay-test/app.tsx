@@ -105,7 +105,20 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
 
 function ModelAccordion({ providerId, model, rpc, report }: { providerId: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
   const [open, setOpen] = useState(false);
+  const [testing, setTesting] = useState(false);
   const modelId = String(model.id);
+  const runTest = () => {
+    setTesting(true);
+    rpc.call("model_test", { providerId, modelId }).then(
+      (result) => {
+        setTesting(false);
+        const seconds = (result.latencyMs / 1000).toFixed(1);
+        if (result.ok) toast.success(`${modelId}: работает (${seconds}с) — ${result.detail}`);
+        else toast.error(`${modelId}: ${result.detail}`);
+      },
+      (cause) => { setTesting(false); report(cause); },
+    );
+  };
   return (
     <div className="rounded-lg border border-border/70">
       <div className="flex items-center gap-1 px-2 py-1.5">
@@ -114,6 +127,9 @@ function ModelAccordion({ providerId, model, rpc, report }: { providerId: string
           <span className="truncate font-mono text-xs">{modelId}</span>
           {typeof model.name === "string" ? <span className="truncate text-xs text-muted-foreground">{model.name}</span> : null}
         </button>
+        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" disabled={testing} onClick={runTest} aria-label={`Тест ${modelId}`}>
+          <Icon name={testing ? "Loading" : "Target"} className={`size-3.5 ${testing ? "animate-spin" : ""}`} />Тест
+        </Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Точно?"
           onConfirm={() => rpc.call("model_disconnect", { providerId, modelId }).then(() => toast.success(`Отключена ${modelId}`), report)} />
       </div>

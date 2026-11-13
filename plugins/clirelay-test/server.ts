@@ -3,7 +3,7 @@
 import { homedir } from "node:os";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { discoverModels, resolveApiKey } from "./lib/discover";
+import { discoverModels, resolveApiKey, testModel } from "./lib/discover";
 import {
   connectModel, deleteProvider, disconnectModel, listProviders,
   readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
@@ -44,6 +44,10 @@ export const rpcContract = defineRpcContract({
   model_update: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema, patch: modelPatchSchema }).strict(),
     output: z.looseObject({ id: z.string() }),
+  },
+  model_test: {
+    input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
+    output: z.object({ ok: z.boolean(), latencyMs: z.number(), detail: z.string() }),
   },
 });
 
@@ -92,6 +96,18 @@ export default async function plugin(bb: BbPluginApi) {
     model_connect: async ({ providerId, modelId }) => ({ connected: await mutate((file) => connectModel(file, providerId, modelId)) }),
     model_disconnect: async ({ providerId, modelId }) => ({ removed: await mutate((file) => disconnectModel(file, providerId, modelId)) }),
     model_update: async ({ providerId, modelId, patch }) => mutate((file) => updateModel(file, providerId, modelId, patch)),
+    model_test: async ({ providerId, modelId }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const models = Array.isArray(entry.models) ? entry.models : [];
+      const model = models.find((item) => item && typeof item === "object" && (item as Record<string, unknown>).id === modelId) as Record<string, unknown> | undefined;
+      if (!model) throw new Error(`Модель не найдена: ${modelId}`);
+      const api = typeof model.api === "string" ? model.api : entry.api;
+      if (api !== "openai-completions") return { ok: false, latencyMs: 0, detail: "тест поддерживается только для openai-completions" };
+      return testModel(entry.baseUrl, resolveApiKey(entry.apiKey), modelId);
+    },
   });
 
   bb.log.info("api-models loaded");

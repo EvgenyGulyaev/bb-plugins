@@ -74,6 +74,20 @@ describe("RPC", () => {
     const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ id: string }> };
     expect(providers.map((p) => p.id)).toEqual(["cfg"]);
   });
+  it("model_test: ok через chat/completions; неподдерживаемый api → отказ", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
+    await host.harness.behavior.callRpc("model_connect", { providerId: "p", modelId: "m1" });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: "OK" } }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await host.harness.behavior.callRpc("model_test", { providerId: "p", modelId: "m1" }) as { ok: boolean; detail: string };
+    expect(result.ok).toBe(true);
+    expect(result.detail).toBe("OK");
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "anthropic-messages" });
+    const refused = await host.harness.behavior.callRpc("model_test", { providerId: "p", modelId: "m1" }) as { ok: boolean; detail: string };
+    expect(refused.ok).toBe(false);
+    expect(refused.detail).toContain("openai-completions");
+  });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
