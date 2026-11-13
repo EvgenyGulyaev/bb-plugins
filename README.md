@@ -30,6 +30,20 @@
 
 [Подробная документация kanban-board](plugins/kanban-board/README.md)
 
+### `clirelay-test` («Api модели»)
+
+Панель для лёгкого подключения моделей с API-адресов в [pi](https://pi.dev). Источник истины — `~/.pi/agent/models.json` pi; плагин читает и правит его напрямую, pi подхватывает изменения при открытии `/model`.
+
+- иконка «Api модели» в левом рейле → панель с аккордеонами API-адресов;
+- несколько провайдеров на одном адресе показываются вложенно под общей группой адреса;
+- внутри адреса слева — доступные модели (`GET {baseUrl}/models` минус уже подключённые) и ручное добавление по id, справа — подключённые;
+- аккордеон подключённой модели → форма настроек по типам полей pi (`name`, `reasoning` bool, `contextWindow`/`maxTokens` int, `input` multiselect); неизвестные поля файла сохраняются;
+- кнопка «Тест» у модели: минимальный реальный запрос (`POST /chat/completions`, `max_tokens: 8`, таймаут 30с) → латентность и кусочек ответа в тосте; ошибки санитизируются (v1: только `openai-completions`);
+- путь к файлу pi конфигурируется: `bb plugin config clirelay-test set modelsPath <путь>` + `bb plugin reload clirelay-test`;
+- запись атомарная (tmp + rename) с ротацией `.bak`; ключи и адреса живут только в `models.json` вне репо и никогда не возвращаются фронтенду целиком.
+
+[Подробная документация clirelay-test](plugins/clirelay-test/README.md)
+
 ### `ru`
 
 Русская локализация интерфейса BB и связанные с ней переводы. Плагин нужен, если вы хотите пользоваться основными экранами BB на русском языке.
@@ -50,6 +64,12 @@ bb plugin install git:https://github.com/deicer/bb-plugins.git@main --plugin ses
 file-manager-multi-host
 kanban-board
 ru
+```
+
+`clirelay-test` («Api модели») пока живёт в форке [EvgenyGulyaev/bb-plugins](https://github.com/EvgenyGulyaev/bb-plugins) (ветка `feat/session-history-cli-sources`):
+
+```powershell
+bb plugin install git:https://github.com/EvgenyGulyaev/bb-plugins.git@feat/session-history-cli-sources --plugin clirelay-test
 ```
 
 Например, установить файловый менеджер:
