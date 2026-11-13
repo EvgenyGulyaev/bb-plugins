@@ -9,7 +9,7 @@ description: Use when the user asks to connect, list, or configure pi models fro
 
 - Раскладка: аккордеон на API-адрес → слева доступные модели (`GET {baseUrl}/models`, минус подключённые), справа подключённые; аккордеон модели → форма настроек. Несколько провайдеров на одном адресе → вложенная группа адреса.
 - Конфиг: `bb plugin config clirelay-test set modelsPath <путь>` (+ `bb plugin reload clirelay-test`); дефолт `~/.pi/agent/models.json`.
-- RPC: `providers_list`, `provider_save`, `provider_delete`, `models_discover`, `model_connect`, `model_disconnect`, `model_update`.
+- RPC: `providers_list`, `provider_save`, `provider_delete`, `models_discover`, `model_connect`, `model_disconnect`, `model_update`, `model_test` (минимальный chat-запрос, латентность + ответ; только `openai-completions`, таймаут 30с).
 - v1 поля модели: `name`, `reasoning`, `contextWindow`, `maxTokens`, `input`. Остальные поля файла сохраняются нетронутыми.
 - pi подхватывает изменения при открытии `/model`.
 - Секретность: ключи и адреса живут только в `models.json` вне репо; не коммитить и не логировать их. `apiKey` фронтенду не возвращается.

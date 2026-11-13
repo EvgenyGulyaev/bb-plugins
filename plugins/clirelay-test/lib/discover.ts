@@ -53,3 +53,49 @@ export async function discoverModels(
     .filter((id): id is string => !!id);
   return [...new Set(ids)].sort().slice(0, 1000);
 }
+
+export interface ModelTestResult { ok: boolean; latencyMs: number; detail: string }
+
+// Текст ошибки эндпоинта может содержать URL — вырезаем и режем длину.
+function sanitizeDetail(text: string): string {
+  let message = text;
+  try {
+    const parsed = JSON.parse(text) as { error?: { message?: unknown }; message?: unknown };
+    const inner = parsed?.error?.message ?? parsed?.message;
+    if (typeof inner === "string") message = inner;
+  } catch { /* не JSON — берём как есть */ }
+  return message.replace(/https?:\/\/\S+/g, "[url]").slice(0, 200);
+}
+
+// Минимальный реальный запрос к модели: работает ли она вообще.
+// ponytail: v1 только openai-completions (/chat/completions); апгрейд —
+// ветки под openai-responses (/responses) и anthropic-messages (/messages).
+export async function testModel(
+  baseUrl: string,
+  apiKey: string | undefined,
+  modelId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ModelTestResult> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const started = Date.now();
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Reply with OK" }], max_tokens: 8, stream: false }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const latencyMs = Date.now() - started;
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { ok: false, latencyMs, detail: `HTTP ${response.status}${text ? `: ${sanitizeDetail(text)}` : ""}` };
+    }
+    const body = (await response.json().catch(() => null)) as { choices?: Array<{ message?: { content?: unknown } }> } | null;
+    const content = body?.choices?.[0]?.message?.content;
+    return { ok: true, latencyMs, detail: typeof content === "string" && content ? content.slice(0, 120) : "ответ получен" };
+  } catch (cause) {
+    const latencyMs = Date.now() - started;
+    if (cause instanceof Error && cause.name === "AbortError") return { ok: false, latencyMs, detail: "таймаут 30с: модель не ответила" };
+    return { ok: false, latencyMs, detail: "не удалось соединиться с эндпоинтом" };
+  }
+}
