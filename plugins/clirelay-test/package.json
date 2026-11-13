@@ -28,15 +28,21 @@
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.132",
     "@radix-ui/react-dialog": "^1.2.1",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "^12.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cron-parser": "^5.5.0",
     "hono": "^4.11.9",
     "sonner": "^1.7.4",
     "tailwind-merge": "^3.7.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.1"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }

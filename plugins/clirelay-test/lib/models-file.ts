@@ -105,7 +105,8 @@ export interface ProviderView {
 export function listProviders(file: ModelsFile): ProviderView[] {
   return Object.entries(file.providers).map(([id, entry]) => ({
     id,
-    name: typeof entry.name === "string" ? entry.name : undefined,
+    // RPC-граница требует чистый JSON: отсутствующее имя не пишем вовсе.
+    ...(typeof entry.name === "string" ? { name: entry.name } : {}),
     baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl : "",
     api: typeof entry.api === "string" ? entry.api : "openai-completions",
     apiKeySet: typeof entry.apiKey === "string" && entry.apiKey.length > 0,
