@@ -63,6 +63,17 @@ describe("RPC", () => {
     await expect(host.harness.behavior.callRpc("provider_save", { id: "Bad Id", baseUrl: "http://localhost:4010/v1", api: "openai-completions" })).rejects.toThrow();
     await expect(host.harness.behavior.callRpc("model_update", { providerId: "p", modelId: "m", patch: { reasoning: "yes" } })).rejects.toThrow();
   });
+  it("путь берётся из настройки плагина, когда env не задан", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "api-models-cfg-"));
+    const path = join(dir, "models.json");
+    await writeFile(path, JSON.stringify({ providers: { cfg: { baseUrl: "http://localhost:4010/v1", api: "openai-completions", models: [] } } }));
+    delete process.env.PI_MODELS_PATH;
+    const host = createFakePluginHost({ pluginId: "clirelay-test", settings: { modelsPath: path } });
+    await plugin(host.bb);
+    hosts.push(host);
+    const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ id: string }> };
+    expect(providers.map((p) => p.id)).toEqual(["cfg"]);
+  });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });

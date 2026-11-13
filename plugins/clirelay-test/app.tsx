@@ -5,18 +5,14 @@ import type { FormEvent } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "./server";
-import { API_TYPES, MODEL_FIELDS } from "./lib/schema";
-import type { ApiType, ModelPatch } from "./lib/schema";
+import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
+import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 
-interface ProviderView {
-  id: string; name?: string; baseUrl: string; api: string; apiKeySet: boolean;
-  models: Array<Record<string, unknown>>;
-}
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type Report = (cause: unknown) => void;
 
@@ -126,7 +122,7 @@ function ModelAccordion({ providerId, model, rpc, report }: { providerId: string
   );
 }
 
-function ProviderSection({ provider, rpc, report, onEdit }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void }) {
+function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void; nested?: boolean }) {
   const [open, setOpen] = useState(false);
   const [discovered, setDiscovered] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -149,12 +145,12 @@ function ProviderSection({ provider, rpc, report, onEdit }: { provider: Provider
       .then(() => { toast.success(`Подключена ${modelId.trim()}`); setManualId(""); }, report);
   };
   return (
-    <section className="rounded-xl bg-muted/30">
+    <section className={nested ? "rounded-lg border border-border/60 bg-background/40" : "rounded-xl bg-muted/30"}>
       <div className="flex items-center gap-2 px-3 py-2">
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open}>
           <Icon name="ChevronDown" className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
           <span className="truncate text-sm font-medium">{provider.name || provider.id}</span>
-          <span className="truncate font-mono text-xs text-muted-foreground">{provider.baseUrl}</span>
+          {!nested ? <span className="truncate font-mono text-xs text-muted-foreground">{provider.baseUrl}</span> : null}
           <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{provider.models.length} подкл.</span>
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
@@ -193,6 +189,29 @@ function ProviderSection({ provider, rpc, report, onEdit }: { provider: Provider
               {provider.models.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">Пока пусто — подключи слева</div> : null}
             </div>
           </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Несколько провайдеров на одном адресе → общая группа с вложенными аккордеонами. */
+function AddressGroup({ baseUrl, providers, rpc, report, onEdit }: { baseUrl: string; providers: ProviderView[]; rpc: Rpc; report: Report; onEdit: (provider: ProviderView) => void }) {
+  const [open, setOpen] = useState(true);
+  const total = providers.reduce((sum, provider) => sum + provider.models.length, 0);
+  return (
+    <section className="rounded-xl bg-muted/30">
+      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Icon name="ChevronDown" className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
+        <Icon name="Folder" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="truncate font-mono text-xs">{baseUrl}</span>
+        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{providers.length} пров. · {total} подкл.</span>
+      </button>
+      {open ? (
+        <div className="flex flex-col gap-2 px-3 pb-3">
+          {providers.map((provider) => (
+            <ProviderSection key={provider.id} provider={provider} rpc={rpc} report={report} nested onEdit={() => onEdit(provider)} />
+          ))}
         </div>
       ) : null}
     </section>
@@ -261,9 +280,13 @@ function ApiModelsPage() {
         {error ? <p className="mb-4 text-sm text-destructive" role="alert">{error}</p> : null}
         {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : (
           <div className="flex flex-col gap-3">
-            {providers.map((provider) => (
-              <ProviderSection key={provider.id} provider={provider} rpc={rpc} report={report} onEdit={() => setDialog({ editing: provider })} />
-            ))}
+            {groupProvidersByBaseUrl(providers).map((group) =>
+              group.providers.length === 1 ? (
+                <ProviderSection key={group.providers[0]!.id} provider={group.providers[0]!} rpc={rpc} report={report} onEdit={() => setDialog({ editing: group.providers[0]! })} />
+              ) : (
+                <AddressGroup key={group.baseUrl} baseUrl={group.baseUrl} providers={group.providers} rpc={rpc} report={report} onEdit={(provider) => setDialog({ editing: provider })} />
+              ),
+            )}
             {providers.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                 Нет адресов. Нажми «Добавить API», укажи baseUrl и ключ — модели подтянутся сами.

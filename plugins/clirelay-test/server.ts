@@ -1,13 +1,12 @@
 // «Api модели» — бэкенд: RPC над ~/.pi/agent/models.json pi.
 // Ключи и адреса живут только в этом файле (вне репо); фронтенду apiKey не возвращается.
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { discoverModels, resolveApiKey } from "./lib/discover";
 import {
   connectModel, deleteProvider, disconnectModel, listProviders,
-  readModelsFile, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
+  readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 
@@ -51,8 +50,15 @@ export const rpcContract = defineRpcContract({
 const CHANGED = "api-models-changed";
 
 export default async function plugin(bb: BbPluginApi) {
-  // PI_MODELS_PATH — тестовый шов; в проде файл pi.
-  const filePath = process.env.PI_MODELS_PATH ?? join(homedir(), ".pi", "agent", "models.json");
+  // Путь к файлу pi конфигурируется: Settings → Installed plugins → Api модели
+  // или `bb plugin config clirelay-test set modelsPath <путь>`. Читается при
+  // загрузке — после смены нужен `bb plugin reload clirelay-test`.
+  const settings = bb.settings.define({
+    modelsPath: { type: "string", label: "Путь к models.json pi (пусто = ~/.pi/agent/models.json)", default: "" },
+  });
+  const { modelsPath } = await settings.get();
+  // PI_MODELS_PATH — тестовый шов, важнее настройки.
+  const filePath = resolveModelsPath(process.env, modelsPath, homedir());
 
   // ponytail: внутрипроцессный lock (очередь промисов). Апгрейд при multi-process — файловые блокировки.
   let queue: Promise<unknown> = Promise.resolve();

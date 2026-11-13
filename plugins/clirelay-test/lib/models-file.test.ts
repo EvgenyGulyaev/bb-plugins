@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   connectModel, deleteProvider, disconnectModel, listProviders,
-  readModelsFile, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
+  readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
 } from "./models-file";
 
 const FIXTURE = {
@@ -24,6 +24,19 @@ async function fixture(): Promise<{ path: string; file: ModelsFile }> {
   await writeFile(path, JSON.stringify(FIXTURE));
   return { path, file: await readModelsFile(path) };
 }
+
+describe("resolveModelsPath", () => {
+  it("env важнее настройки и дефолта", () => {
+    expect(resolveModelsPath({ PI_MODELS_PATH: "/tmp/env.json" }, "/tmp/cfg.json", "/home/u")).toBe("/tmp/env.json");
+  });
+  it("настройка важнее дефолта, пробелы тримятся", () => {
+    expect(resolveModelsPath({}, " /tmp/cfg.json ", "/home/u")).toBe("/tmp/cfg.json");
+  });
+  it("дефолт ~/.pi/agent/models.json", () => {
+    expect(resolveModelsPath({}, "", "/home/u")).toBe("/home/u/.pi/agent/models.json");
+    expect(resolveModelsPath({}, undefined, "/home/u")).toBe("/home/u/.pi/agent/models.json");
+  });
+});
 
 describe("readModelsFile", () => {
   it("нет файла → пустой providers", async () => {

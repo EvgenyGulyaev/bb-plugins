@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { MODEL_FIELDS, modelPatchSchema, providerIdSchema } from "./schema";
+import { groupProvidersByBaseUrl, MODEL_FIELDS, modelPatchSchema, providerIdSchema, type ProviderView } from "./schema";
+
+const view = (id: string, baseUrl: string): ProviderView => ({ id, baseUrl, api: "openai-completions", apiKeySet: true, models: [] });
+
+describe("groupProvidersByBaseUrl", () => {
+  it("одинаковый адрес → одна группа, порядок провайдеров и групп сохранён", () => {
+    const groups = groupProvidersByBaseUrl([
+      view("a", "http://localhost:4010/v1"),
+      view("b", "http://localhost:4010/v1"),
+      view("c", "http://localhost:4011/v1"),
+    ]);
+    expect(groups.map((g) => g.baseUrl)).toEqual(["http://localhost:4010/v1", "http://localhost:4011/v1"]);
+    expect(groups[0]!.providers.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(groups[1]!.providers.map((p) => p.id)).toEqual(["c"]);
+  });
+  it("пустой список → пусто", () => {
+    expect(groupProvidersByBaseUrl([])).toEqual([]);
+  });
+});
 
 describe("modelPatchSchema", () => {
   it("принимает типы полей и null-удаление", () => {

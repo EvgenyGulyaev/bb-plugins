@@ -1,10 +1,20 @@
 import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ModelPatch } from "./schema";
+import type { ModelPatch, ProviderView } from "./schema";
+
+export type { ProviderView } from "./schema";
 
 export type ProviderEntry = Record<string, unknown>;
 export type ModelEntry = { id: string } & Record<string, unknown>;
 export interface ModelsFile { providers: Record<string, ProviderEntry>; [key: string]: unknown }
+
+// Приоритет: тестовый env → настройка плагина → дефолт pi.
+export function resolveModelsPath(env: NodeJS.ProcessEnv, configured: string | undefined, home: string): string {
+  if (env.PI_MODELS_PATH) return env.PI_MODELS_PATH;
+  const trimmed = configured?.trim();
+  if (trimmed) return trimmed;
+  return join(home, ".pi", "agent", "models.json");
+}
 
 const CORRUPT = "models.json повреждён или не является объектом — файл не изменён";
 
@@ -96,11 +106,6 @@ export function updateModel(
     else if (value !== undefined) model[key] = value;
   }
   return model;
-}
-
-export interface ProviderView {
-  id: string; name?: string; baseUrl: string; api: string; apiKeySet: boolean;
-  models: ModelEntry[];
 }
 
 export function listProviders(file: ModelsFile): ProviderView[] {

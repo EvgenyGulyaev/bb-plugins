@@ -50,3 +50,25 @@ export const MODEL_FIELDS: readonly ModelFieldSpec[] = [
   { key: "maxTokens", label: "Max output tokens", type: "int", placeholder: "16384" },
   { key: "input", label: "Вход", type: "multiselect", options: ["text", "image"] },
 ];
+
+// Вид провайдера для RPC/фронтенда: без apiKey и headers.
+export interface ProviderView {
+  id: string; name?: string; baseUrl: string; api: string; apiKeySet: boolean;
+  models: Array<{ id: string } & Record<string, unknown>>;
+}
+
+// Провайдеры на одном адресе показываются вложенно под общей группой.
+export function groupProvidersByBaseUrl(providers: ProviderView[]): Array<{ baseUrl: string; providers: ProviderView[] }> {
+  const groups: Array<{ baseUrl: string; providers: ProviderView[] }> = [];
+  const byUrl = new Map<string, { baseUrl: string; providers: ProviderView[] }>();
+  for (const provider of providers) {
+    let group = byUrl.get(provider.baseUrl);
+    if (!group) {
+      group = { baseUrl: provider.baseUrl, providers: [] };
+      byUrl.set(provider.baseUrl, group);
+      groups.push(group);
+    }
+    group.providers.push(provider);
+  }
+  return groups;
+}
