@@ -22,6 +22,8 @@
   },
   "include": [
     "server.ts",
+    "server.test.ts",
+    "vitest.config.ts",
     "app.tsx",
     "components",
     "lib",
