@@ -26,14 +26,20 @@ describe("discoverModels", () => {
   });
   it("HTTP-ошибка санитизируется (без URL)", async () => {
     const fail = async () => new Response("no", { status: 404 });
-    const error = await discoverModels("http://localhost:4010/v1", undefined, fail).catch((e: Error) => e);
+    const error = await discoverModels("http://localhost:4010/v1", undefined, fail).then(
+      () => { throw new Error("ожидалась ошибка"); },
+      (cause: Error) => cause,
+    );
     expect(error).toBeInstanceOf(DiscoverError);
     expect(error.message).toContain("404");
     expect(error.message).not.toContain("localhost");
   });
   it("сетевой сбой санитизируется", async () => {
     const boom = async () => { throw new Error("connect ECONNREFUSED http://localhost:4010"); };
-    const error = await discoverModels("http://localhost:4010/v1", undefined, boom).catch((e: Error) => e);
+    const error = await discoverModels("http://localhost:4010/v1", undefined, boom).then(
+      () => { throw new Error("ожидалась ошибка"); },
+      (cause: Error) => cause,
+    );
     expect(error).toBeInstanceOf(DiscoverError);
     expect(error.message).not.toContain("localhost");
   });

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import type { ModelPatch } from "./schema";
 
 export type ProviderEntry = Record<string, unknown>;
+export type ModelEntry = { id: string } & Record<string, unknown>;
 export interface ModelsFile { providers: Record<string, ProviderEntry>; [key: string]: unknown }
 
 const CORRUPT = "models.json повреждён или не является объектом — файл не изменён";
@@ -47,9 +48,9 @@ function provider(file: ModelsFile, id: string): ProviderEntry {
   return entry;
 }
 
-function modelsArray(entry: ProviderEntry): Array<Record<string, unknown>> {
+function modelsArray(entry: ProviderEntry): ModelEntry[] {
   if (!Array.isArray(entry.models)) entry.models = [];
-  return entry.models as Array<Record<string, unknown>>;
+  return entry.models as ModelEntry[];
 }
 
 export function upsertProvider(
@@ -87,7 +88,7 @@ export function disconnectModel(file: ModelsFile, providerId: string, modelId: s
 
 export function updateModel(
   file: ModelsFile, providerId: string, modelId: string, patch: ModelPatch,
-): Record<string, unknown> {
+): ModelEntry {
   const model = modelsArray(provider(file, providerId)).find((entry) => entry.id === modelId);
   if (!model) throw new Error(`Модель не найдена: ${modelId}`);
   for (const [key, value] of Object.entries(patch)) {
@@ -99,7 +100,7 @@ export function updateModel(
 
 export interface ProviderView {
   id: string; name?: string; baseUrl: string; api: string; apiKeySet: boolean;
-  models: Array<Record<string, unknown>>;
+  models: ModelEntry[];
 }
 
 export function listProviders(file: ModelsFile): ProviderView[] {
@@ -111,7 +112,7 @@ export function listProviders(file: ModelsFile): ProviderView[] {
     api: typeof entry.api === "string" ? entry.api : "openai-completions",
     apiKeySet: typeof entry.apiKey === "string" && entry.apiKey.length > 0,
     models: (Array.isArray(entry.models) ? entry.models : [])
-      .filter((model): model is Record<string, unknown> =>
+      .filter((model): model is ModelEntry =>
         !!model && typeof model === "object" && typeof (model as Record<string, unknown>).id === "string")
       .map((model) => {
         const { apiKey: _key, headers: _headers, ...rest } = model;
