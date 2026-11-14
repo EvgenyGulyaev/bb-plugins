@@ -9,7 +9,7 @@ import {
   readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
-import { fetchUsageSummary, usageSummarySchema } from "./lib/usage";
+import { fetchRelayAccounts, relayAccountSchema } from "./lib/relay-accounts";
 
 const providerViewSchema = z.object({
   id: z.string(),
@@ -50,9 +50,13 @@ export const rpcContract = defineRpcContract({
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
     output: z.object({ ok: z.boolean(), latencyMs: z.number(), detail: z.string() }),
   },
-  provider_usage: {
+  relay_accounts: {
     input: z.object({ providerId: providerIdSchema }).strict(),
-    output: usageSummarySchema,
+    output: z.object({
+      configured: z.boolean(),
+      items: z.array(relayAccountSchema),
+      error: z.string().optional(),
+    }),
   },
 });
 
@@ -64,8 +68,9 @@ export default async function plugin(bb: BbPluginApi) {
   // загрузке — после смены нужен `bb plugin reload clirelay-test`.
   const settings = bb.settings.define({
     modelsPath: { type: "string", label: "Путь к models.json pi (пусто = ~/.pi/agent/models.json)", default: "" },
+    managementKey: { type: "string", label: "Management key clirelay (админ-ключ relay для квот аккаунтов)", secret: true },
   });
-  const { modelsPath } = await settings.get();
+  const { modelsPath, managementKey } = await settings.get();
   // PI_MODELS_PATH — тестовый шов, важнее настройки.
   const filePath = resolveModelsPath(process.env, modelsPath, homedir());
 
@@ -113,12 +118,17 @@ export default async function plugin(bb: BbPluginApi) {
       if (api !== "openai-completions") return { ok: false, latencyMs: 0, detail: "тест поддерживается только для openai-completions" };
       return testModel(entry.baseUrl, resolveApiKey(entry.apiKey), modelId);
     },
-    provider_usage: async ({ providerId }) => {
+    relay_accounts: async ({ providerId }) => {
+      if (!managementKey) return { configured: false, items: [] };
       const file = await readModelsFile(filePath);
       const entry = file.providers[providerId];
       if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
       if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
-      return fetchUsageSummary(entry.baseUrl, resolveApiKey(entry.apiKey));
+      try {
+        return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, managementKey) };
+      } catch (cause) {
+        return { configured: true, items: [], error: cause instanceof Error ? cause.message : String(cause) };
+      }
     },
   });
 

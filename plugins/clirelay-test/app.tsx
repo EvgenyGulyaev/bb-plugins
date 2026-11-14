@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
-import type { UsageSummary } from "./lib/usage";
+import type { RelayAccount } from "./lib/relay-accounts";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -139,55 +139,11 @@ function ModelAccordion({ providerId, model, rpc, report }: { providerId: string
   );
 }
 
-/** Лимиты и расход ключа из публичного usage API relay. */
-function UsageBlock({ usage, error }: { usage: UsageSummary | null; error: string | null }) {
-  if (error) return <div className="mx-3 mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">Лимиты: {error}</div>;
-  if (!usage) return <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">Лимиты: загрузка…</div>;
-  if (!usage.found) return <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">Ключ не найден в relay — лимитов нет</div>;
-  const money = (value: number) => "$" + (value >= 100 ? value.toFixed(0) : value.toFixed(2));
-  const limits = (usage.limits ?? {}) as Record<string, unknown>;
-  const pairs: Array<[string, string, string]> = [
-    ["daily-limit", "daily-used", "Вызовы/день"],
-    ["total-quota", "total-used", "Квота всего"],
-    ["spending-limit", "spending-used", "Расход всего"],
-    ["daily-spending-limit", "daily-spending-used", "Расход/день"],
-  ];
-  const rows = pairs.filter(([limitKey]) => typeof limits[limitKey] === "number");
-  const noWindows = usage["quota-scopes"].every((scope) => scope["period-spending"].length === 0);
-  return (
-    <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs">
-      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <span className="font-medium text-muted-foreground">Лимиты и расход (relay)</span>
-        <span className="text-muted-foreground">{usage.range}: {usage.stats.total_calls} вызовов · {money(usage.stats.quota_cost)}</span>
-      </div>
-      {rows.length === 0 && noWindows ? <div className="mb-1 text-muted-foreground">Лимиты не заданы</div> : null}
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {rows.map(([limitKey, usedKey, label]) => (
-          <span key={limitKey}>{label}: {String(limits[usedKey] ?? 0)} / {String(limits[limitKey])}</span>
-        ))}
-        {usage["quota-scopes"].map((scope) => (
-          <span key={scope.scope} className="flex flex-wrap gap-x-3 gap-y-1">
-            {scope["period-spending"].map((period) => (
-              <span key={period.period} title={period.resets_at ? `сброс ${period.resets_at}` : undefined}>
-                {scope.scope}/{period.period}: {period.used.toFixed(2)} / {period.limit} (ост. {period.remaining.toFixed(2)}){period.resets_at ? ` ↺ ${new Date(period.resets_at).toLocaleTimeString()}` : ""}
-              </span>
-            ))}
-            <span>день: {money(scope["daily-spending-used"])}</span>
-            <span>всего: {money(scope["lifetime-spending-used"])}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void; nested?: boolean }) {
   const [open, setOpen] = useState(false);
   const [discovered, setDiscovered] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
-  const [usage, setUsage] = useState<UsageSummary | null>(null);
-  const [usageError, setUsageError] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
   const connected = useMemo(() => new Set(provider.models.map((model) => String(model.id))), [provider.models]);
   const available = (discovered ?? []).filter((id) => !connected.has(id));
@@ -200,11 +156,6 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
     );
   }, [rpc, provider.id]);
   useEffect(() => { if (open && discovered === null && !busy) discover(); }, [open, discovered, busy, discover]);
-  const loadUsage = useCallback(() => {
-    setUsageError(null);
-    rpc.call("provider_usage", { providerId: provider.id }).then(setUsage, (cause) => setUsageError(message(cause)));
-  }, [rpc, provider.id]);
-  useEffect(() => { if (open && usage === null && usageError === null) loadUsage(); }, [open, usage, usageError, loadUsage]);
   const connect = (modelId: string) => {
     if (!modelId.trim()) return;
     rpc.call("model_connect", { providerId: provider.id, modelId: modelId.trim() })
@@ -221,14 +172,12 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Обновить список моделей"
-          onClick={() => { setOpen(true); discover(); loadUsage(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
+          onClick={() => { setOpen(true); discover(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Edit" className="size-3.5" /></Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Удалить API?"
           onConfirm={() => rpc.call("provider_delete", { id: provider.id }).then(() => toast.success(`Удалён ${provider.id}`), report)} />
       </div>
       {open ? (
-        <>
-        <UsageBlock usage={usage} error={usageError} />
         <div className="grid gap-3 px-3 pb-3 md:grid-cols-2">
           <div className="rounded-lg border border-border/70 p-2">
             <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Доступные (GET /models)</div>
@@ -258,7 +207,6 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             </div>
           </div>
         </div>
-        </>
       ) : null}
     </section>
   );
@@ -325,11 +273,126 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
   );
 }
 
+/** Countdown до сброса окна: 3d2h / 5h12m / 40m. */
+function countdown(resetAt?: string): string | null {
+  if (!resetAt) return null;
+  const ms = new Date(resetAt).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const minutes = Math.floor(ms / 60000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  return days > 0 ? `${days}d${hours % 24}h` : hours > 0 ? `${hours}h${minutes % 60}m` : `${minutes}m`;
+}
+
+/** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
+function AccountCard({ account }: { account: RelayAccount }) {
+  const success = account.usage?.success_rate;
+  return (
+    <article className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+      <header className="mb-3 flex items-start justify-between gap-3">
+        <h3 className="truncate text-base font-semibold tracking-tight">{account.auth_index}</h3>
+        {account.health_status ? <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
+      </header>
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {account.plan_type ? <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase text-amber-500">{account.plan_type}</span> : null}
+        {account.provider ? <span className="flex items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 text-[11px]"><Icon name="Bot" className="size-3" />{account.provider}</span> : null}
+        {typeof account.usage?.request_total === "number" ? <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">Cycle {account.usage.request_total}</span> : null}
+        {typeof success === "number" ? (
+          <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+            Success Rate <span className={success >= 95 ? "text-emerald-400" : success >= 80 ? "text-amber-400" : "text-red-400"}>{success.toFixed(1)}%</span>
+          </span>
+        ) : null}
+        {account.restriction_summary ? <span className="flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-[11px] text-red-400"><Icon name="AlertTriangle" className="size-3" />{account.restriction_summary}</span> : null}
+      </div>
+      <div className="flex flex-col gap-3">
+        {account.quotas.map((quota) => {
+          const percent = typeof quota.percent === "number" ? Math.max(0, Math.min(100, quota.percent)) : null;
+          const reset = countdown(quota.reset_at);
+          const tone = percent === null ? "bg-muted" : percent > 20 ? "bg-emerald-400" : "bg-red-400";
+          return (
+            <div key={quota.quota_key}>
+              <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                <span className="truncate text-muted-foreground">{quota.quota_label ?? quota.quota_key}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {reset ? <span className="text-xs text-muted-foreground">↺ {reset}</span> : null}
+                  <span className={`text-base font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>
+                    {percent === null ? "—" : `${Math.round(percent)}%`}
+                  </span>
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted/60">
+                <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${percent ?? 0}%` }} />
+              </div>
+            </div>
+          );
+        })}
+        {account.quotas.length === 0 ? <p className="text-sm text-muted-foreground">Квот нет</p> : null}
+      </div>
+    </article>
+  );
+}
+
+function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: string; providerId: string; rpc: Rpc; report: Report }) {
+  const [data, setData] = useState<{ configured: boolean; items: RelayAccount[]; error?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setBusy(true);
+    rpc.call("relay_accounts", { providerId }).then(
+      (result) => { setData(result); setBusy(false); },
+      (cause) => { setBusy(false); report(cause); },
+    );
+  }, [rpc, providerId, report]);
+  useEffect(() => { load(); }, [load]);
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <Icon name="Folder" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="truncate font-mono text-xs text-muted-foreground">{baseUrl}</span>
+        <Button variant="ghost" size="icon" className="ml-auto size-7 shrink-0 text-muted-foreground" aria-label="Обновить квоты" onClick={load}>
+          <Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+      {data === null ? (
+        <div className="h-40 animate-pulse rounded-2xl bg-muted/40" />
+      ) : !data.configured ? (
+        <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
+          Management key не задан — квоты аккаунтов недоступны. Задай его один раз (ключ хранится только на сервере плагина):
+          <code className="mt-2 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementKey &lt;ключ&gt;</code>
+          <span className="mt-2 block">затем <code className="font-mono text-xs">bb plugin reload clirelay-test</code> и обнови эту вкладку.</span>
+        </div>
+      ) : data.error ? (
+        <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive" role="alert">{data.error}</div>
+      ) : data.items.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Аккаунтов нет</div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {data.items.map((account) => <AccountCard key={account.auth_index} account={account} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AccountsTab({ providers, rpc, report }: { providers: ProviderView[]; rpc: Rpc; report: Report }) {
+  const groups = groupProvidersByBaseUrl(providers);
+  if (groups.length === 0) {
+    return <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Нет адресов — добавь API во вкладке «Подключение».</div>;
+  }
+  return (
+    <div className="flex flex-col gap-5">
+      {groups.map((group) => (
+        <RelayAccountsGroup key={group.baseUrl} baseUrl={group.baseUrl} providerId={group.providers[0]!.id} rpc={rpc} report={report} />
+      ))}
+    </div>
+  );
+}
+
 function ApiModelsPage() {
   const rpc = useRpc<typeof rpcContract>();
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ editing: ProviderView | null } | null>(null);
+  const [tab, setTab] = useState<"accounts" | "connect">("accounts");
   const report = useCallback((cause: unknown) => { const text = message(cause); setError(text); toast.error(text); }, []);
   const refetch = useCallback(() => {
     rpc.call("providers_list").then(({ providers }) => { setProviders(providers as ProviderView[]); setError(null); }, report);
@@ -342,12 +405,24 @@ function ApiModelsPage() {
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Api модели</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Подключение моделей в pi (~/.pi/agent/models.json). Раскрой адрес → слева доступные, справа подключённые. pi подхватит изменения при открытии /model.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Квоты аккаунтов relay и подключение моделей pi (~/.pi/agent/models.json) в одном месте.</p>
           </div>
-          <Button onClick={() => setDialog({ editing: null })}><Icon name="Plus" className="size-4" />Добавить API</Button>
+          {tab === "connect" ? <Button onClick={() => setDialog({ editing: null })}><Icon name="Plus" className="size-4" />Добавить API</Button> : null}
+        </div>
+        <div className="mb-4 flex w-fit gap-1 rounded-lg bg-muted/40 p-1" role="tablist" aria-label="Разделы панели">
+          <button type="button" role="tab" aria-selected={tab === "accounts"} onClick={() => setTab("accounts")}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "accounts" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            <Icon name="Bot" className="size-4" />Аккаунты
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "connect"} onClick={() => setTab("connect")}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "connect" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            <Icon name="Workflow" className="size-4" />Подключение
+          </button>
         </div>
         {error ? <p className="mb-4 text-sm text-destructive" role="alert">{error}</p> : null}
-        {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : (
+        {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
+          <AccountsTab providers={providers} rpc={rpc} report={report} />
+        ) : (
           <div className="flex flex-col gap-3">
             {groupProvidersByBaseUrl(providers).map((group) =>
               group.providers.length === 1 ? (

@@ -88,19 +88,24 @@ describe("RPC", () => {
     expect(refused.ok).toBe(false);
     expect(refused.detail).toContain("openai-completions");
   });
-  it("provider_usage отдаёт summary relay без ключа в ответе", async () => {
+  it("relay_accounts: без ключа configured:false, с ключом — Bearer и квоты без утечки", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ found: true, range: "today", stats: { total_calls: 3, quota_cost: 0.1 }, limits: null, "quota-scopes": [] }), { status: 200 }));
+    const empty = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean; items: unknown[] };
+    expect(empty.configured).toBe(false);
+    expect(empty.items).toEqual([]);
+    const host2 = createFakePluginHost({ pluginId: "clirelay-test", settings: { managementKey: "test-mgmt" } });
+    await plugin(host2.bb);
+    hosts.push(host2);
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [{ auth_index: "claude:u@example.com", quotas: [{ quota_key: "5h", percent: 100 }] }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const summary = await host.harness.behavior.callRpc("provider_usage", { providerId: "p" }) as { found: boolean; stats: { total_calls: number } };
-    expect(summary.found).toBe(true);
-    expect(summary.stats.total_calls).toBe(3);
-    expect(JSON.stringify(summary)).not.toContain("test-key");
+    const result = await host2.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean; items: Array<{ auth_index: string }> };
+    expect(result.configured).toBe(true);
+    expect(result.items[0]!.auth_index).toBe("claude:u@example.com");
+    expect(JSON.stringify(result)).not.toContain("test-mgmt");
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("http://localhost:4010/v0/management/public/usage/summary");
-    expect(JSON.parse(String(init.body))).toEqual({ api_key: "test-key" });
-    await expect(host.harness.behavior.callRpc("provider_usage", { providerId: "missing" })).rejects.toThrow(/не найден/);
+    expect(url).toBe("http://localhost:4010/v0/management/ai-accounts/status");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-mgmt");
   });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
