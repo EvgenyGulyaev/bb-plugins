@@ -36,6 +36,12 @@ export function relayOrigin(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
 }
 
+// relay отдаёт success_rate долей 0..1; старые сборки могли слать проценты.
+export function successPercent(rate: number | undefined): number | undefined {
+  if (typeof rate !== "number" || !Number.isFinite(rate)) return undefined;
+  return rate <= 1 ? rate * 100 : rate;
+}
+
 export async function fetchRelayAccounts(
   baseUrl: string,
   managementKey: string,

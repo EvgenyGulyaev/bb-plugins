@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DiscoverError } from "./discover";
-import { fetchRelayAccounts, relayOrigin } from "./relay-accounts";
+import { fetchRelayAccounts, relayOrigin, successPercent } from "./relay-accounts";
 
 const SNAPSHOT = {
   items: [
@@ -24,6 +24,16 @@ describe("relayOrigin", () => {
   it("срезает /v1 и хвостовые слэши", () => {
     expect(relayOrigin("http://localhost:4010/v1/")).toBe("http://localhost:4010");
     expect(relayOrigin("http://localhost:4010")).toBe("http://localhost:4010");
+  });
+});
+
+describe("successPercent", () => {
+  it("доля 0..1 → проценты, уже проценты не трогаем", () => {
+    expect(successPercent(0.989)).toBeCloseTo(98.9);
+    expect(successPercent(1)).toBe(100);
+    expect(successPercent(0)).toBe(0);
+    expect(successPercent(98.9)).toBe(98.9);
+    expect(successPercent(undefined)).toBeUndefined();
   });
 });
 

@@ -8,6 +8,7 @@ import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
+import { successPercent } from "./lib/relay-accounts";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -286,7 +287,7 @@ function countdown(resetAt?: string): string | null {
 
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
 function AccountCard({ account }: { account: RelayAccount }) {
-  const success = account.usage?.success_rate;
+  const success = successPercent(account.usage?.success_rate);
   return (
     <article className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
       <header className="mb-3 flex items-start justify-between gap-3">
@@ -312,7 +313,7 @@ function AccountCard({ account }: { account: RelayAccount }) {
           return (
             <div key={quota.quota_key}>
               <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
-                <span className="truncate text-muted-foreground">{quota.quota_label ?? quota.quota_key}</span>
+                <span className="truncate text-muted-foreground" title={quota.quota_key}>{quota.quota_label ?? quota.quota_key}</span>
                 <span className="flex shrink-0 items-center gap-2">
                   {reset ? <span className="text-xs text-muted-foreground">↺ {reset}</span> : null}
                   <span className={`text-base font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>
