@@ -352,11 +352,14 @@ function AccountCard({ account, onToggle }: { account: RelayAccount; onToggle?: 
   return (
     <article className={`rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
       <header className="mb-3 flex items-start justify-between gap-3">
-        <h3 className="truncate text-base font-semibold tracking-tight">{account.auth_index}</h3>
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-semibold tracking-tight" title={account.auth_index}>{account.email ?? account.auth_index}</h3>
+          {account.email ? <div className="truncate font-mono text-[10px] text-muted-foreground">{account.auth_index}</div> : null}
+        </div>
         <span className="flex shrink-0 items-center gap-2">
           {account.health_status ? <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
           {onToggle && account.auth_name ? (
-            <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${account.auth_index}`} />
+            <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${account.email ?? account.auth_index}`} />
           ) : null}
         </span>
       </header>

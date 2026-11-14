@@ -19,6 +19,7 @@ export const relayAccountSchema = z.object({
   health_status: z.string().optional(),
   disabled: z.boolean().default(false),
   auth_name: z.string().optional(),
+  email: z.string().optional(),
   quotas: z.array(quotaSchema).default([]),
   usage: z
     .object({
@@ -43,7 +44,7 @@ export async function fetchAuthFileStates(
   baseUrl: string,
   managementKey: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<Map<string, { name: string; disabled: boolean }>> {
+): Promise<Map<string, { name: string; disabled: boolean; email?: string }>> {
   const url = `${relayOrigin(baseUrl)}/v0/management/auth-files`;
   let response: Response;
   try {
@@ -64,7 +65,7 @@ export async function fetchAuthFileStates(
     throw new DiscoverError("relay вернул не JSON");
   }
   const files = (body as { files?: unknown })?.files;
-  const states = new Map<string, { name: string; disabled: boolean }>();
+  const states = new Map<string, { name: string; disabled: boolean; email?: string }>();
   if (Array.isArray(files)) {
     for (const file of files) {
       if (!file || typeof file !== "object") continue;
@@ -72,7 +73,11 @@ export async function fetchAuthFileStates(
       const index = record.auth_index ?? record.authIndex;
       const name = record.name;
       if ((typeof index !== "string" && typeof index !== "number") || typeof name !== "string" || !name) continue;
-      states.set(String(index), { name, disabled: record.disabled === true });
+      states.set(String(index), {
+        name,
+        disabled: record.disabled === true,
+        email: typeof record.email === "string" && record.email ? record.email : undefined,
+      });
     }
   }
   return states;

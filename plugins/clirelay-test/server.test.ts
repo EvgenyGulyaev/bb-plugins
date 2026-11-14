@@ -156,12 +156,12 @@ describe("RPC", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ auth_index: "idx1", quotas: [] }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true, email: "u@example.com" }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true, email: "u@example.com" }] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "ok", disabled: false }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const view = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { items: Array<{ auth_index: string; disabled: boolean; auth_name?: string }> };
-    expect(view.items[0]).toMatchObject({ auth_index: "idx1", disabled: true, auth_name: "f1.json" });
+    expect(view.items[0]).toMatchObject({ auth_index: "idx1", disabled: true, auth_name: "f1.json", email: "u@example.com" });
     const toggled = await host.harness.behavior.callRpc("relay_account_toggle", { providerId: "p", authIndex: "idx1", enabled: true }) as { disabled: boolean };
     expect(toggled).toEqual({ disabled: false });
     const patchCall = fetchMock.mock.calls[4] as unknown as [string, RequestInit];

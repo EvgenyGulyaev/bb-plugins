@@ -251,12 +251,16 @@ export default async function plugin(bb: BbPluginApi) {
       try {
         const items = await withManagement(origin, async (token) => {
           const accounts = await fetchRelayAccounts(entry.baseUrl as string, token);
-          const states = await fetchAuthFileStates(entry.baseUrl as string, token).catch(() => new Map<string, { name: string; disabled: boolean }>());
+          const states = await fetchAuthFileStates(entry.baseUrl as string, token).catch(() => new Map<string, { name: string; disabled: boolean; email?: string }>());
           for (const account of accounts) {
             const state = states.get(account.auth_index);
             // shared-аккаунтов нет в auth-files: disabled берём из health_status
             account.disabled = state ? state.disabled : account.health_status === "disabled";
-            if (state) account.auth_name = state.name;
+            if (state) {
+              account.auth_name = state.name;
+              // undefined не проходит JSON-границу RPC — пишем только наявное
+              if (state.email) account.email = state.email;
+            }
           }
           return accounts;
         });
