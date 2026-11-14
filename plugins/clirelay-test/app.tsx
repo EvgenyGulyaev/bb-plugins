@@ -332,9 +332,43 @@ function AccountCard({ account }: { account: RelayAccount }) {
   );
 }
 
+function RelayCredsDialog({ providerId, rpc, report, onClose, onSaved }: { providerId: string; rpc: Rpc; report: Report; onClose: () => void; onSaved: () => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    rpc.call("relay_creds_set", { providerId, username, password })
+      .then(() => { toast.success("Креды адреса сохранены"); onSaved(); onClose(); }, report);
+  };
+  const clear = () => {
+    rpc.call("relay_creds_clear", { providerId })
+      .then(() => { toast.success("Креды адреса удалены"); onSaved(); onClose(); }, report);
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Креды админки relay</DialogTitle></DialogHeader>
+        <form className="flex flex-col gap-3" onSubmit={submit}>
+          <p className="text-xs text-muted-foreground">Свои логин/пароль для этого адреса. Хранятся только на сервере плагина; плагин сам логинится и продлевает сессию.</p>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Логин</span>
+            <Input value={username} onChange={(event) => setUsername(event.target.value)} required autoComplete="off" aria-label="логин админки relay" /></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Пароль</span>
+            <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required autoComplete="off" aria-label="пароль админки relay" /></label>
+          <DialogFooter>
+            <Button type="button" variant="outline" className="text-destructive" onClick={clear}>Очистить</Button>
+            <Button type="button" variant="outline" onClick={onClose}>Отмена</Button>
+            <Button type="submit"><Icon name="Check" className="size-3.5" />Сохранить</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: string; providerId: string; rpc: Rpc; report: Report }) {
   const [data, setData] = useState<{ configured: boolean; items: RelayAccount[]; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [credsOpen, setCredsOpen] = useState(false);
   const load = useCallback(() => {
     setBusy(true);
     rpc.call("relay_accounts", { providerId }).then(
@@ -348,7 +382,11 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
       <div className="mb-2 flex items-center gap-2">
         <Icon name="Folder" className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-mono text-xs text-muted-foreground">{baseUrl}</span>
-        <Button variant="ghost" size="icon" className="ml-auto size-7 shrink-0 text-muted-foreground" aria-label="Обновить квоты" onClick={load}>
+        {data?.configured ? <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">креды заданы</span> : null}
+        <Button variant="ghost" size="sm" className="ml-auto shrink-0 text-muted-foreground" onClick={() => setCredsOpen(true)} aria-label="Креды адреса">
+          <Icon name="Key" className="size-3.5" />Креды
+        </Button>
+        <Button variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" aria-label="Обновить квоты" onClick={load}>
           <Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} />
         </Button>
       </div>
@@ -356,7 +394,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
         <div className="h-40 animate-pulse rounded-2xl bg-muted/40" />
       ) : !data.configured ? (
         <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-          Логин и пароль админки relay не заданы — квоты аккаунтов недоступны. Задай их один раз (хранятся только на сервере плагина, плагин сам логинится и продлевает сессию):
+          Логин и пароль админки для этого адреса не заданы — квоты недоступны. Нажми «Креды» рядом с адресом (у каждого relay свои креды) или задай глобальный fallback:
           <code className="mt-2 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementUser &lt;логин&gt;</code>
           <code className="mt-1 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementPassword &lt;пароль&gt;</code>
           <span className="mt-2 block">затем <code className="font-mono text-xs">bb plugin reload clirelay-test</code> и обнови эту вкладку.</span>
@@ -370,6 +408,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
           {data.items.map((account) => <AccountCard key={account.auth_index} account={account} />)}
         </div>
       )}
+      {credsOpen ? <RelayCredsDialog providerId={providerId} rpc={rpc} report={report} onClose={() => setCredsOpen(false)} onSaved={load} /> : null}
     </section>
   );
 }

@@ -59,6 +59,18 @@ export const rpcContract = defineRpcContract({
       error: z.string().optional(),
     }),
   },
+  relay_creds_set: {
+    input: z.object({
+      providerId: providerIdSchema,
+      username: z.string().min(1).max(200),
+      password: z.string().min(1).max(500),
+    }).strict(),
+    output: z.object({ stored: z.boolean() }),
+  },
+  relay_creds_clear: {
+    input: z.object({ providerId: providerIdSchema }).strict(),
+    output: z.object({ cleared: z.boolean() }),
+  },
 });
 
 const CHANGED = "api-models-changed";
@@ -121,18 +133,20 @@ export default async function plugin(bb: BbPluginApi) {
       return testModel(entry.baseUrl, resolveApiKey(entry.apiKey), modelId);
     },
     relay_accounts: async ({ providerId }) => {
-      if (!managementUser || !managementPassword) return { configured: false, items: [] };
       const file = await readModelsFile(filePath);
       const entry = file.providers[providerId];
       if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
       if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
       const origin = relayOrigin(entry.baseUrl);
+      // креды per-URL (kv), глобальные настройки — fallback
+      const creds = (await bb.storage.kv.get<{ username: string; password: string }>(`relay-creds:${origin}`))
+        ?? (managementUser && managementPassword ? { username: managementUser, password: managementPassword } : null);
+      if (!creds) return { configured: false, items: [] };
       const cacheKey = `relay-auth:${origin}`;
       const cache = {
         get: async () => (await bb.storage.kv.get<RelaySession>(cacheKey)) ?? null,
         set: async (session: RelaySession) => { await bb.storage.kv.set(cacheKey, session); },
       };
-      const creds = { username: managementUser, password: managementPassword };
       try {
         const token = await getManagementToken({ origin, creds, cache });
         try {
@@ -149,6 +163,26 @@ export default async function plugin(bb: BbPluginApi) {
       } catch (cause) {
         return { configured: true, items: [], error: cause instanceof Error ? cause.message : String(cause) };
       }
+    },
+    relay_creds_set: async ({ providerId, username, password }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const origin = relayOrigin(entry.baseUrl);
+      await bb.storage.kv.set(`relay-creds:${origin}`, { username, password });
+      await bb.storage.kv.set(`relay-auth:${origin}`, null);
+      return { stored: true };
+    },
+    relay_creds_clear: async ({ providerId }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const origin = relayOrigin(entry.baseUrl);
+      await bb.storage.kv.set(`relay-creds:${origin}`, null);
+      await bb.storage.kv.set(`relay-auth:${origin}`, null);
+      return { cleared: true };
     },
   });
 

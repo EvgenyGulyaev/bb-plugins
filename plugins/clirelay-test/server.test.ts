@@ -113,6 +113,23 @@ describe("RPC", () => {
     expect(accountsUrl).toBe("http://localhost:4010/v0/management/ai-accounts/status");
     expect((accountsInit.headers as Record<string, string>).Authorization).toBe("Bearer test-access");
   });
+  it("relay_creds_set per-origin: login с кредами адреса, clear → configured:false", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
+    await host.harness.behavior.callRpc("relay_creds_set", { providerId: "p", username: "addr-user", password: "addr-pass" });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "test-access", expires_at: new Date(Date.now() + 3600_000).toISOString() }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean };
+    expect(result.configured).toBe(true);
+    const [, loginInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(loginInit.body))).toMatchObject({ username: "addr-user", password: "addr-pass" });
+    expect(JSON.stringify(result)).not.toContain("addr-pass");
+    await host.harness.behavior.callRpc("relay_creds_clear", { providerId: "p" });
+    const after = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean };
+    expect(after.configured).toBe(false);
+  });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });

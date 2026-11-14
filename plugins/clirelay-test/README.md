@@ -74,16 +74,22 @@ bb plugin reload clirelay-test   # настройка читается при з
 То же поле — в Settings → Installed plugins → Api модели.
 `PI_MODELS_PATH` — тестовый шов, имеет приоритет над настройкой.
 
-Логин и пароль админки relay (для вкладки «Аккаунты») — secret-настройки
-`managementUser` / `managementPassword` (файл 0600, не попадают в db/фронтенд/репо);
-задаются пользователем, плагин сам логинится (`POST {origin}/v0/auth/login`),
-кэширует сессию в server-side kv и продлевает её через `/v0/auth/refresh`:
+Логин и пароль админки relay (для вкладки «Аккаунты») задаются **per-URL**: кнопка
+«Креды» у каждой группы адреса открывает диалог (логин/пароль, сохранить/очистить).
+Креды хранятся в server-side kv плагина по origin (`relay-creds:<origin>`), сессии —
+там же (`relay-auth:<origin>`); плагин сам логинится (`POST {origin}/v0/auth/login`)
+и продлевает сессию через `/v0/auth/refresh`. Глобальные secret-настройки
+`managementUser` / `managementPassword` (файл 0600, не попадают в db/фронтенд/репо) —
+fallback для адресов без своих кредов:
 
 ```bash
 bb plugin config clirelay-test set managementUser <логин админки>
 bb plugin config clirelay-test set managementPassword <пароль админки>
 bb plugin reload clirelay-test
 ```
+
+Если у адреса нет management API (например, другой сервис вместо clirelay) —
+группа покажет ошибку HTTP, остальные адреса работают независимо.
 
 ## Секретность
 
