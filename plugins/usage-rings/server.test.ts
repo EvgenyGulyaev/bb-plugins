@@ -7,9 +7,14 @@ import { contract } from "./contract.ts";
 test("RPC returns JSON with sparse provider artwork, persists selection/order, and respects disabled providers", async () => {
   const values = new Map<string, unknown>();
   const requested: string[][] = [];
+  const hostCalls: unknown[] = [];
   let handlers: Record<string, (input: unknown, context: unknown) => Promise<unknown>>;
   const providers = [{ id: "codex", displayName: "Codex" }, { id: "claude", displayName: "Claude" }];
   const bb = {
+    hosts: { experimental_client: () => ({ call: async (method: string, input: unknown, options: unknown) => {
+      hostCalls.push({ method, input, options });
+      return { accountId: "workspace-1", email: "user@example.com", availableCount: 0, credits: [], windows: [] };
+    } }) },
     storage: { kv: { get: async (key: string) => values.get(key), set: async (key: string, value: unknown) => { values.set(key, value); } } },
     sdk: {
       system: { config: async () => ({ primaryHostId: "host-1" }) },
@@ -18,7 +23,7 @@ test("RPC returns JSON with sparse provider artwork, persists selection/order, a
         requested.push(input.providerIds);
         return { machines: [{ id: "host-1", displayName: "Laptop", status: "connected", error: null,
           providers: providers.map(p => ({ id: `${p.id}-account`, providerId: p.id, displayName: p.displayName,
-            usage: { status: "ok", accountEmail: null, planLabel: null, windows: [{ label: "Weekly limit", usedPercent: 11, resetsAt: null }] } })) }] };
+            usage: { status: "ok", accountEmail: p.id === "codex" ? "user@example.com" : null, planLabel: null, windows: [{ label: "Weekly limit", usedPercent: 11, resetsAt: null }] } })) }] };
       } },
     },
     rpc: { register: (_contract: unknown, registered: typeof handlers) => { handlers = registered; }, experimental_invalidate: () => {} },
@@ -38,5 +43,9 @@ test("RPC returns JSON with sparse provider artwork, persists selection/order, a
   const after = await call("overview", { hostId: null }) as typeof initial;
   assert.deepEqual(after.providers.map(p => [p.id, p.enabled]), [["claude", true], ["codex", false]]);
   assert.deepEqual(requested.at(-1), ["claude"]);
+  const resets = await call("resets", { hostId: "host-1", accountId: "codex-account" });
+  assert.equal((resets as { availableCount: number }).availableCount, 0);
+  assert.deepEqual(hostCalls, [{ method: "readResets", input: { expectedEmail: "user@example.com" }, options: { hostId: "host-1", signal: undefined, timeoutMs: 60_000 } }]);
+  await assert.rejects(() => call("resets", { hostId: "host-1", accountId: "claude-account" }));
   await assert.rejects(() => call("savePreferences", [{ id: "codex", enabled: true }, { id: "codex", enabled: false }]));
 });
