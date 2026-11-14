@@ -88,6 +88,20 @@ describe("RPC", () => {
     expect(refused.ok).toBe(false);
     expect(refused.detail).toContain("openai-completions");
   });
+  it("provider_usage отдаёт summary relay без ключа в ответе", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ found: true, range: "today", stats: { total_calls: 3, quota_cost: 0.1 }, limits: null, "quota-scopes": [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const summary = await host.harness.behavior.callRpc("provider_usage", { providerId: "p" }) as { found: boolean; stats: { total_calls: number } };
+    expect(summary.found).toBe(true);
+    expect(summary.stats.total_calls).toBe(3);
+    expect(JSON.stringify(summary)).not.toContain("test-key");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://localhost:4010/v0/management/public/usage/summary");
+    expect(JSON.parse(String(init.body))).toEqual({ api_key: "test-key" });
+    await expect(host.harness.behavior.callRpc("provider_usage", { providerId: "missing" })).rejects.toThrow(/не найден/);
+  });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });

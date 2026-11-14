@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
+import type { UsageSummary } from "./lib/usage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -138,11 +139,55 @@ function ModelAccordion({ providerId, model, rpc, report }: { providerId: string
   );
 }
 
+/** Лимиты и расход ключа из публичного usage API relay. */
+function UsageBlock({ usage, error }: { usage: UsageSummary | null; error: string | null }) {
+  if (error) return <div className="mx-3 mb-2 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert">Лимиты: {error}</div>;
+  if (!usage) return <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">Лимиты: загрузка…</div>;
+  if (!usage.found) return <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs text-muted-foreground">Ключ не найден в relay — лимитов нет</div>;
+  const money = (value: number) => "$" + (value >= 100 ? value.toFixed(0) : value.toFixed(2));
+  const limits = (usage.limits ?? {}) as Record<string, unknown>;
+  const pairs: Array<[string, string, string]> = [
+    ["daily-limit", "daily-used", "Вызовы/день"],
+    ["total-quota", "total-used", "Квота всего"],
+    ["spending-limit", "spending-used", "Расход всего"],
+    ["daily-spending-limit", "daily-spending-used", "Расход/день"],
+  ];
+  const rows = pairs.filter(([limitKey]) => typeof limits[limitKey] === "number");
+  const noWindows = usage["quota-scopes"].every((scope) => scope["period-spending"].length === 0);
+  return (
+    <div className="mx-3 mb-2 rounded-lg border border-border/70 px-3 py-2 text-xs">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium text-muted-foreground">Лимиты и расход (relay)</span>
+        <span className="text-muted-foreground">{usage.range}: {usage.stats.total_calls} вызовов · {money(usage.stats.quota_cost)}</span>
+      </div>
+      {rows.length === 0 && noWindows ? <div className="mb-1 text-muted-foreground">Лимиты не заданы</div> : null}
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        {rows.map(([limitKey, usedKey, label]) => (
+          <span key={limitKey}>{label}: {String(limits[usedKey] ?? 0)} / {String(limits[limitKey])}</span>
+        ))}
+        {usage["quota-scopes"].map((scope) => (
+          <span key={scope.scope} className="flex flex-wrap gap-x-3 gap-y-1">
+            {scope["period-spending"].map((period) => (
+              <span key={period.period} title={period.resets_at ? `сброс ${period.resets_at}` : undefined}>
+                {scope.scope}/{period.period}: {period.used.toFixed(2)} / {period.limit} (ост. {period.remaining.toFixed(2)}){period.resets_at ? ` ↺ ${new Date(period.resets_at).toLocaleTimeString()}` : ""}
+              </span>
+            ))}
+            <span>день: {money(scope["daily-spending-used"])}</span>
+            <span>всего: {money(scope["lifetime-spending-used"])}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void; nested?: boolean }) {
   const [open, setOpen] = useState(false);
   const [discovered, setDiscovered] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
   const connected = useMemo(() => new Set(provider.models.map((model) => String(model.id))), [provider.models]);
   const available = (discovered ?? []).filter((id) => !connected.has(id));
@@ -155,6 +200,11 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
     );
   }, [rpc, provider.id]);
   useEffect(() => { if (open && discovered === null && !busy) discover(); }, [open, discovered, busy, discover]);
+  const loadUsage = useCallback(() => {
+    setUsageError(null);
+    rpc.call("provider_usage", { providerId: provider.id }).then(setUsage, (cause) => setUsageError(message(cause)));
+  }, [rpc, provider.id]);
+  useEffect(() => { if (open && usage === null && usageError === null) loadUsage(); }, [open, usage, usageError, loadUsage]);
   const connect = (modelId: string) => {
     if (!modelId.trim()) return;
     rpc.call("model_connect", { providerId: provider.id, modelId: modelId.trim() })
@@ -171,12 +221,14 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Обновить список моделей"
-          onClick={() => { setOpen(true); discover(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
+          onClick={() => { setOpen(true); discover(); loadUsage(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Edit" className="size-3.5" /></Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Удалить API?"
           onConfirm={() => rpc.call("provider_delete", { id: provider.id }).then(() => toast.success(`Удалён ${provider.id}`), report)} />
       </div>
       {open ? (
+        <>
+        <UsageBlock usage={usage} error={usageError} />
         <div className="grid gap-3 px-3 pb-3 md:grid-cols-2">
           <div className="rounded-lg border border-border/70 p-2">
             <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Доступные (GET /models)</div>
@@ -206,6 +258,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             </div>
           </div>
         </div>
+        </>
       ) : null}
     </section>
   );

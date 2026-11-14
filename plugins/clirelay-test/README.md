@@ -31,6 +31,11 @@ BB-плагин для лёгкого подключения моделей с A
   Кнопка «Тест» шлёт минимальный реальный запрос (`POST /chat/completions`,
   `max_tokens: 8`, таймаут 30с) и показывает латентность и кусочек ответа;
   ошибки санитизируются. v1: только `openai-completions`.
+- Блок «Лимиты и расход» внутри раскрытого адреса: публичный usage API clirelay
+  (`POST {origin}/v0/management/public/usage/summary`) — вызовы/стоимость за период,
+  лимиты ключа (день/всего/расход), окна `5h/day/week/month` с остатком и временем
+  сброса, daily/lifetime spending; если лимиты не заданы — так и пишет;
+  обновляется общей кнопкой ⟳ вместе со списком моделей.
 - Форма генерится из схемы полей (`lib/schema.ts`): bool → чекбокс, int → число,
   enum → селект, multiselect → чекбоксы. v1: `name`, `reasoning`, `contextWindow`,
   `maxTokens`, `input`. Compat/Sampling/Cost — следующие итерации.

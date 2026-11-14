@@ -9,6 +9,7 @@ import {
   readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
+import { fetchUsageSummary, usageSummarySchema } from "./lib/usage";
 
 const providerViewSchema = z.object({
   id: z.string(),
@@ -48,6 +49,10 @@ export const rpcContract = defineRpcContract({
   model_test: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
     output: z.object({ ok: z.boolean(), latencyMs: z.number(), detail: z.string() }),
+  },
+  provider_usage: {
+    input: z.object({ providerId: providerIdSchema }).strict(),
+    output: usageSummarySchema,
   },
 });
 
@@ -107,6 +112,13 @@ export default async function plugin(bb: BbPluginApi) {
       const api = typeof model.api === "string" ? model.api : entry.api;
       if (api !== "openai-completions") return { ok: false, latencyMs: 0, detail: "тест поддерживается только для openai-completions" };
       return testModel(entry.baseUrl, resolveApiKey(entry.apiKey), modelId);
+    },
+    provider_usage: async ({ providerId }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      return fetchUsageSummary(entry.baseUrl, resolveApiKey(entry.apiKey));
     },
   });
 
