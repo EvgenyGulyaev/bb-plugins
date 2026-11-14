@@ -1,4 +1,4 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 const id = z.string().min(1).max(256);
@@ -26,11 +26,11 @@ export const overviewSchema = z.object({
   machineName: z.string().nullable(), error: z.string().nullable(),
 });
 const hostInput = z.object({ hostId: id.nullable() }).strict();
-export const contract = defineRpcContract({
+export const contract = {
   overview: { input: hostInput, output: overviewSchema, tags: () => ["usage-rings"] },
   savePreferences: { input: preferencesSchema, output: preferencesSchema },
   refresh: { input: hostInput, output: z.null() },
-});
+} satisfies PluginRpcContract;
 export type Overview = z.infer<typeof overviewSchema>;
 export type Provider = Overview["providers"][number];
 export type Account = Provider["accounts"][number];
