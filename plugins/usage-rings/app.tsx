@@ -9,6 +9,7 @@ import {
 import { contract, type Account, type Provider } from "./contract";
 import { remainingPercent, selectWindow, type UsageWindow } from "./limits";
 import { getRailTarget, mountRail, subscribeRail } from "./rail";
+import { ResetButton, ResetsDialog } from "./resets";
 import "./app.css";
 
 const pluginId = "usage-rings";
@@ -55,7 +56,10 @@ function accountMessage(account: Account) {
   }
 }
 
-function ProviderRing({ provider, error, hostId }: { provider: Provider; error: string | null; hostId: string | null }) {
+type ResetTarget = { hostId: string | null; accountId: string };
+function ProviderRing({ provider, error, hostId, resetOpen, onShowResets }: {
+  provider: Provider; error: string | null; hostId: string | null; resetOpen: boolean; onShowResets: (target: ResetTarget) => void;
+}) {
   const account = provider.accounts.find(a => a.usage?.status === "ok") ?? provider.accounts[0];
   const window = account?.usage?.status === "ok" ? selectWindow(account.usage.windows) : null;
   const percent = window && !error ? remainingPercent(window) : null;
@@ -63,6 +67,7 @@ function ProviderRing({ provider, error, hostId }: { provider: Provider; error: 
   const refreshError = refresh.error ? "Не удалось обновить лимиты." : null;
   const title = `${provider.displayName}: ${percent === null ? "лимит недоступен" : `${windowLabel(window!)} — осталось ${percent}%`}`;
   const tone = percent === null ? "unknown" : percent <= 5 ? "critical" : percent <= 20 ? "warning" : "normal";
+  const resetTarget = account ? { hostId, accountId: account.id } : null;
   return <Popover.Root>
     <Popover.Trigger asChild>
       <button type="button" className="usage-ring-button" data-provider-id={provider.id} data-tone={tone} aria-label={title} title={title}>
@@ -78,9 +83,11 @@ function ProviderRing({ provider, error, hostId }: { provider: Provider; error: 
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content className="usage-rings-popover" side="right" align="end" sideOffset={12} collisionPadding={12}
+        onInteractOutside={event => { if (resetOpen) event.preventDefault(); }}
         data-bb-plugin-root="" data-bb-plugin={pluginId} data-usage-rings-owned="" aria-label={`Лимиты ${provider.displayName}`}>
         <div className="usage-rings-heading"><ProviderIcon providerKind="agent" provider={provider} className="usage-rings-heading-logo" /><strong>{provider.displayName}</strong>
           <span className="usage-rings-spacer" />
+          {provider.id === "codex" && resetTarget && <ResetButton target={resetTarget} onOpen={() => onShowResets(resetTarget)} />}
           <button type="button" className="usage-rings-action" aria-label="Обновить лимиты" disabled={refresh.isPending} onClick={async () => {
             try { await refresh.mutate({ hostId }); } catch { /* The mutation hook exposes the error above. */ }
           }}><Icon name="RotateCcw" className="usage-rings-small-icon" /></button>
@@ -105,13 +112,17 @@ function ProviderRing({ provider, error, hostId }: { provider: Provider; error: 
 function Rings() {
   const target = useSyncExternalStore(subscribeRail, getRailTarget, () => null);
   const query = useOverview();
-  if (!target || !query.data) return null;
-  const providers = query.data.providers.filter(p => p.enabled);
-  const error = query.error?.message ?? query.data.error;
-  if (!providers.length) return null;
-  return createPortal(<div className="usage-rings-list" aria-label="Остатки лимитов провайдеров">
-    {providers.map(provider => <ProviderRing key={`${query.hostId}-${provider.id}`} provider={provider} error={error} hostId={query.hostId} />)}
-  </div>, target);
+  const [resetTarget, setResetTarget] = useState<ResetTarget | null>(null);
+  const refresh = experimental_useRpcMutation({ contract, method: "refresh" });
+  useEffect(() => { setResetTarget(null); }, [query.hostId]);
+  const providers = query.data?.providers.filter(p => p.enabled) ?? [];
+  const error = query.error?.message ?? query.data?.error ?? null;
+  return <>
+    {target && providers.length > 0 && createPortal(<div className="usage-rings-list" aria-label="Остатки лимитов провайдеров">
+      {providers.map(provider => <ProviderRing key={`${query.hostId}-${provider.id}`} provider={provider} error={error} hostId={query.hostId} resetOpen={resetTarget !== null} onShowResets={setResetTarget} />)}
+    </div>, target)}
+    {resetTarget && <ResetsDialog target={resetTarget} onClose={() => setResetTarget(null)} onUsed={() => { void refresh.mutate({ hostId: resetTarget.hostId }).catch(() => {}); }} />}
+  </>;
 }
 
 function Settings() {

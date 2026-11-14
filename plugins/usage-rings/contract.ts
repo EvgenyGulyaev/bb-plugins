@@ -26,10 +26,36 @@ export const overviewSchema = z.object({
   machineName: z.string().nullable(), error: z.string().nullable(),
 });
 const hostInput = z.object({ hostId: id.nullable() }).strict();
+export const resetCreditSchema = z.object({
+  id, resetType: z.string(), status: z.string(), grantedAt: z.number().int().min(0).max(8640000000000),
+  expiresAt: z.number().int().min(0).max(8640000000000).nullable(), title: z.string().nullable(), description: z.string().nullable(),
+});
+export const resetsSchema = z.object({
+  accountId: id, email: z.string(), availableCount: z.number().int().nonnegative(),
+  credits: z.array(resetCreditSchema).nullable(),
+  windows: z.array(z.object({ label: z.string(), remaining: z.number(), resetsAt: z.number().nullable() })),
+});
+const resetAccount = z.object({ hostId: id.nullable(), accountId: id }).strict();
+const consumeFields = {
+  creditId: id, expectedAccountId: id, idempotencyKey: z.string().uuid(), confirmed: z.literal(true),
+};
+export const resetOutcomeSchema = z.enum(["reset", "nothingToReset", "noCredit", "alreadyRedeemed"]);
+export const resetHostContract = {
+  readResets: { input: z.object({ expectedEmail: z.string().min(1) }).strict(), output: resetsSchema },
+  consumeReset: { input: z.object({ expectedEmail: z.string().min(1), ...consumeFields }).strict(), output: resetOutcomeSchema },
+} satisfies PluginRpcContract;
+export type Resets = z.infer<typeof resetsSchema>;
+export type ResetCredit = z.infer<typeof resetCreditSchema>;
+export function availableCredits(data: Resets, now = Date.now()) {
+  return data.credits?.filter(c => c.status === "available" && (c.expiresAt === null || c.expiresAt * 1000 > now))
+    .sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity)) ?? [];
+}
 export const contract = {
   overview: { input: hostInput, output: overviewSchema, tags: () => ["usage-rings"] },
   savePreferences: { input: preferencesSchema, output: preferencesSchema },
   refresh: { input: hostInput, output: z.null() },
+  resets: { input: resetAccount, output: resetsSchema },
+  consumeReset: { input: resetAccount.extend(consumeFields).strict(), output: resetOutcomeSchema },
 } satisfies PluginRpcContract;
 export type Overview = z.infer<typeof overviewSchema>;
 export type Provider = Overview["providers"][number];

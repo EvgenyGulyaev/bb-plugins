@@ -1,8 +1,19 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { contract, preferencesSchema, usageResponseSchema, type Overview } from "./contract.ts";
+import { contract, resetHostContract, preferencesSchema, usageResponseSchema, type Overview } from "./contract.ts";
 import { orderedProviders } from "./limits.ts";
 
 export default function plugin(bb: BbPluginApi) {
+  const host = bb.hosts.experimental_client({ contract: resetHostContract });
+  async function resetTarget(input: { hostId: string | null; accountId: string }, signal?: AbortSignal) {
+    const hostId = input.hostId ?? (await bb.sdk.system.config()).primaryHostId;
+    if (!hostId) throw new Error("Выберите компьютер с установленным Codex CLI.");
+    const data = await read(hostId, false, signal);
+    if (data.error) throw new Error(data.error);
+    const account = data.providers.find(p => p.id === "codex")?.accounts.find(a => a.id === input.accountId);
+    const email = account?.usage?.status === "ok" ? account.usage.accountEmail : null;
+    if (!email) throw new Error("Аккаунт Codex не определён. Обновите лимиты и проверьте вход.");
+    return { hostId, email };
+  }
   async function preferences() {
     return preferencesSchema.parse(await bb.storage.kv.get("providers") ?? []);
   }
@@ -45,6 +56,19 @@ export default function plugin(bb: BbPluginApi) {
     return { providers: orderedProviders(providers, saved), preferences: saved, machineName: machine?.displayName ?? null, error };
   }
   bb.rpc.register(contract, {
+    async resets(input, context) {
+      const target = await resetTarget(input, context.experimental_signal);
+      return host.call("readResets", { expectedEmail: target.email }, { hostId: target.hostId, signal: context.experimental_signal, timeoutMs: 60_000 });
+    },
+    async consumeReset(input, context) {
+      const target = await resetTarget(input, context.experimental_signal);
+      try {
+        return await host.call("consumeReset", {
+          expectedEmail: target.email, expectedAccountId: input.expectedAccountId,
+          creditId: input.creditId, idempotencyKey: input.idempotencyKey, confirmed: input.confirmed,
+        }, { hostId: target.hostId, signal: context.experimental_signal, timeoutMs: 60_000 });
+      } finally { bb.rpc.experimental_invalidate(["usage-rings"]); }
+    },
     overview: ({ hostId }, context) => read(hostId, false, context.experimental_signal),
     async savePreferences(rows) {
       await bb.storage.kv.set("providers", rows);
