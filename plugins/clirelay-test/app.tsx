@@ -7,9 +7,11 @@ import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import { groupByFamily } from "./lib/model-groups";
+import { shouldAutoLoad } from "./lib/auto-load";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { successPercent } from "./lib/relay-accounts";
+import { quotaLabel } from "./lib/quota-labels";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -178,7 +180,11 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
       (cause) => { setBusy(false); setDiscoverError(message(cause)); },
     );
   }, [rpc, provider.id]);
-  useEffect(() => { if (open && discovered === null && !busy) discover(); }, [open, discovered, busy, discover]);
+  // Автозагрузка один раз: после ошибки не ретраим сам (иначе бесконечный цикл
+  // на недоступном эндпоинте); повтор — только кнопкой ⟳.
+  useEffect(() => {
+    if (shouldAutoLoad({ open, loaded: discovered !== null, busy, error: discoverError })) discover();
+  }, [open, discovered, busy, discoverError, discover]);
   const connect = (modelId: string) => {
     if (!modelId.trim()) return;
     rpc.call("model_connect", { providerId: provider.id, modelId: modelId.trim() })
@@ -368,7 +374,7 @@ function AccountCard({ account }: { account: RelayAccount }) {
           return (
             <div key={quota.quota_key}>
               <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
-                <span className="truncate text-muted-foreground" title={quota.quota_key}>{quota.quota_label ?? quota.quota_key}</span>
+                <span className="truncate text-muted-foreground" title={quota.quota_key}>{quotaLabel(quota)}</span>
                 <span className="flex shrink-0 items-center gap-2">
                   {reset ? <span className="text-xs text-muted-foreground">↺ {reset}</span> : null}
                   <span className={`text-base font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>

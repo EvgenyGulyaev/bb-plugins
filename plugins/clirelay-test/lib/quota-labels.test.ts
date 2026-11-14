@@ -15,6 +15,10 @@ describe("quotaLabel", () => {
     expect(quotaLabel({ quota_key: "x", quota_label: "Gemini Models" })).toBe("Модели Gemini");
     expect(quotaLabel({ quota_key: "x", quota_label: "Claude and GPT models" })).toBe("Модели Claude и GPT");
   });
+  it("label-как-ключ разбирается как ключ", () => {
+    expect(quotaLabel({ quota_key: "m_quota.code_weekly", quota_label: "m_quota.code_weekly" })).toBe("Код · неделя");
+    expect(quotaLabel({ quota_key: "x", quota_label: "m_quota.code_5h" })).toBe("Код · 5 ч");
+  });
   it("неизвестный label сохраняется, неизвестный ключ причёсывается", () => {
     expect(quotaLabel({ quota_key: "x", quota_label: "Custom Quota" })).toBe("Custom Quota");
     expect(quotaLabel({ quota_key: "session_limit" })).toBe("Session · лимит");
