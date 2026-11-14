@@ -133,6 +133,20 @@ describe("RPC", () => {
     view = (await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ models: Array<Record<string, unknown>>; disabled: Array<Record<string, unknown>> }> }).providers[0]!;
     expect(view.disabled).toEqual([]);
   });
+  it("relay_accounts: label fallback когда email нет", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });
+    await host.harness.behavior.callRpc("relay_creds_set", { providerId: "p", username: "u", password: "p" });
+    const session = { access_token: "test-access", expires_at: new Date(Date.now() + 3600_000).toISOString() };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ auth_index: "k1", provider: "kimi", quotas: [] }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "kimi-1.json", auth_index: "k1", label: "kimi" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { items: Array<{ label?: string; email?: string }> };
+    expect(view.items[0]!.label).toBe("kimi");
+    expect(view.items[0]!.email).toBeUndefined();
+  });
   it("relay_accounts: health_status disabled без auth-files записи → disabled:true без тумблера", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });

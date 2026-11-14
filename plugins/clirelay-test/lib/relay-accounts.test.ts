@@ -29,10 +29,10 @@ describe("relayOrigin", () => {
 
 describe("fetchAuthFileStates", () => {
   it("мапит auth_index → name/disabled", async () => {
-    const fetchImpl = vi.fn(ok({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true, email: "u@example.com" }, { name: "f2.json", auth_index: "idx2" }, { name: "no-index.json" }] }));
+    const fetchImpl = vi.fn(ok({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true, email: "u@example.com", label: "my-label" }, { name: "f2.json", auth_index: "idx2" }, { name: "no-index.json" }] }));
     const states = await fetchAuthFileStates("http://localhost:4010/v1", "test-mgmt", fetchImpl);
-    expect(states.get("idx1")).toEqual({ name: "f1.json", disabled: true, email: "u@example.com" });
-    expect(states.get("idx2")).toEqual({ name: "f2.json", disabled: false, email: undefined });
+    expect(states.get("idx1")).toEqual({ name: "f1.json", disabled: true, email: "u@example.com", label: "my-label" });
+    expect(states.get("idx2")).toEqual({ name: "f2.json", disabled: false, email: undefined, label: undefined });
     expect(states.size).toBe(2);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("http://localhost:4010/v0/management/auth-files");

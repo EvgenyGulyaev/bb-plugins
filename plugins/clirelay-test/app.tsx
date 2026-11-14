@@ -349,12 +349,13 @@ function countdown(resetAt?: string): string | null {
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
 function AccountCard({ account, onToggle }: { account: RelayAccount; onToggle?: (enabled: boolean) => void }) {
   const success = successPercent(account.usage?.success_rate);
+  const displayName = account.email ?? (account.label && account.label !== account.provider ? account.label : undefined) ?? account.auth_index;
   return (
     <article className={`rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
       <header className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold tracking-tight" title={account.auth_index}>{account.email ?? account.auth_index}</h3>
-          {account.email ? <div className="truncate font-mono text-[10px] text-muted-foreground">{account.auth_index}</div> : null}
+          <h3 className="truncate text-base font-semibold tracking-tight" title={account.auth_index}>{displayName}</h3>
+          {displayName !== account.auth_index ? <div className="truncate font-mono text-[10px] text-muted-foreground">{account.auth_index}</div> : null}
         </div>
         <span className="flex shrink-0 items-center gap-2">
           {account.health_status ? <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
@@ -466,10 +467,10 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
         <div className="h-40 animate-pulse rounded-2xl bg-muted/40" />
       ) : !data.configured ? (
         <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-          Логин и пароль админки для этого адреса не заданы — квоты недоступны. Нажми «Креды» рядом с адресом (у каждого relay свои креды) или задай глобальный fallback:
-          <code className="mt-2 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementUser &lt;логин&gt;</code>
-          <code className="mt-1 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementPassword &lt;пароль&gt;</code>
-          <span className="mt-2 block">затем <code className="font-mono text-xs">bb plugin reload clirelay-test</code> и обнови эту вкладку.</span>
+          Креды админки для этого адреса не заданы — квоты аккаунтов недоступны.
+          <div className="mt-3">
+            <Button size="sm" onClick={() => setCredsOpen(true)}><Icon name="Key" className="size-3.5" />Задать креды</Button>
+          </div>
         </div>
       ) : data.error ? (
         <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive" role="alert">{data.error}</div>
