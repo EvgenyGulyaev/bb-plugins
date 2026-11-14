@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Translator } from "./translator.js";
+import { DICTIONARY } from "./dictionary.js";
 
 const DICT = {
   Settings: "Настройки",
@@ -37,6 +38,38 @@ function start(
 }
 
 describe("перевод подписей", () => {
+  it("переводит реальные фрагменты окна контекста и инструкции TestFlight", () => {
+    html(`<section><span>Окно контекста</span><span id="used"></span>` +
+      `<span id="tokens"></span><span id="left"></span></section>` +
+      `<p>Install <a href="https://apps.apple.com/app/testflight/id899247664">TestFlight</a>, then join the bb beta to install the app on your iPhone.</p>` +
+      `<button aria-label="Context window 87% used"></button>` +
+      `<div data-message-column>87% used</div>`);
+    const used = root.querySelector("#used")!;
+    const tokens = root.querySelector("#tokens")!;
+    const left = root.querySelector("#left")!;
+    // React хранит числа и подписи в разных текстовых узлах.
+    used.append("87", "% used");
+    tokens.append("412k", " / ", "475k", " tokens");
+    left.append("13", "% left");
+    const original = root.innerHTML;
+    const instance = start({ dictionary: DICTIONARY });
+
+    expect(used.textContent).toBe("87% использовано");
+    expect(tokens.textContent).toBe("412k / 475k токенов");
+    expect(left.textContent).toBe("13% осталось");
+    expect(root.querySelector("p")?.textContent).toBe(
+      "Установить TestFlight, затем присоединиться к бета-тестированию bb, чтобы установить приложение на iPhone.",
+    );
+    expect(root.querySelector("a")?.getAttribute("href")).toBe(
+      "https://apps.apple.com/app/testflight/id899247664",
+    );
+    expect(root.querySelector("button")?.getAttribute("aria-label")).toBe(
+      "Окно контекста: использовано 87%",
+    );
+    expect(root.querySelector("[data-message-column]")?.textContent).toBe("87% used");
+    instance.stop();
+    expect(root.innerHTML).toBe(original);
+  });
   it("переводит текстовые узлы интерфейса", () => {
     html(`<button>Settings</button><span> New thread </span>`);
     start();
