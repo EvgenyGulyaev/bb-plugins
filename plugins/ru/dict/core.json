@@ -2138,5 +2138,93 @@
   {
     "en": "Updating…",
     "ru": "Обновление…"
+  },
+  {
+    "en": "% used",
+    "ru": "% использовано"
+  },
+  {
+    "en": "% left",
+    "ru": "% осталось"
+  },
+  {
+    "en": "tokens",
+    "ru": "токенов"
+  },
+  {
+    "en": "Use bb from your phone",
+    "ru": "Пользуйся bb с телефона"
+  },
+  {
+    "en": "Mobile app downloads",
+    "ru": "Загрузка мобильных приложений"
+  },
+  {
+    "en": "Accessing bb from your phone",
+    "ru": "Доступ к bb с телефона"
+  },
+  {
+    "en": "Manual",
+    "ru": "Вручную"
+  },
+  {
+    "en": "Connection method",
+    "ru": "Способ подключения"
+  },
+  {
+    "en": "Connection method: Manual - Use your own domain or network address.",
+    "ru": "Способ подключения: вручную — свой домен или сетевой адрес."
+  },
+  {
+    "en": "Use your own domain or network address.",
+    "ru": "Используй свой домен или сетевой адрес."
+  },
+  {
+    "en": "Server address",
+    "ru": "Адрес сервера"
+  },
+  {
+    "en": "Use your own domain or an address on a shared network. Your devices must be able to reach this address; localhost won’t work.",
+    "ru": "Используй свой домен или адрес в общей сети. Этот адрес должен быть доступен с твоих устройств; localhost не подойдёт."
+  },
+  {
+    "en": "Available through TestFlight",
+    "ru": "Доступно через TestFlight"
+  },
+  {
+    "en": ", then join the bb beta to install the app on your iPhone.",
+    "ru": ", затем присоединиться к бета-тестированию bb, чтобы установить приложение на iPhone."
+  },
+  {
+    "en": "Join iOS TestFlight",
+    "ru": "Присоединиться к TestFlight для iOS"
+  },
+  {
+    "en": "Direct download for Android phones",
+    "ru": "Прямая загрузка для телефонов Android"
+  },
+  {
+    "en": "Download the APK and open it on your phone to install. Allow installation from your browser if prompted.",
+    "ru": "Скачай APK и открой его на телефоне для установки. Если появится запрос, разреши установку из браузера."
+  },
+  {
+    "en": "Google Play access is under review. For now, return here for updates.",
+    "ru": "Публикация в Google Play проходит проверку. Пока обновления можно найти здесь."
+  },
+  {
+    "en": "Updated",
+    "ru": "Обновлено"
+  },
+  {
+    "en": "Download size",
+    "ru": "Размер загрузки"
+  },
+  {
+    "en": "Download Android APK",
+    "ru": "Скачать APK для Android"
+  },
+  {
+    "en": "Global variables are available to BB-managed processes on every connected machine. Project variables override them for work in that project.",
+    "ru": "Глобальные переменные доступны процессам под управлением BB на всех подключённых машинах. Переменные проекта переопределяют их при работе в этом проекте."
   }
 ]

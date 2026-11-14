@@ -1,6 +1,9 @@
 **/node_modules/
 **/dist/
 **/.bb/
+!/.bb/
+/.bb/*
+!/.bb/plugins.json
 *.db
 *.sqlite
 *.sqlite3

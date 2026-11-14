@@ -38,6 +38,16 @@ describe("isCandidateString", () => {
 });
 
 describe("translateValue", () => {
+  it("переводит динамическую подсказку контекстного окна", () => {
+    expect(translateValue(DICT, "Context window 87% used")).toBe(
+      "Окно контекста: использовано 87%",
+    );
+    expect(translateValue(DICT, "Context window 0% used")).toBe(
+      "Окно контекста: использовано 0%",
+    );
+    expect(translateValue(DICT, "Context window unlimited used")).toBeNull();
+    expect(missingKey(DICT, "Context window 87% used")).toBeNull();
+  });
   it("переводит точное совпадение", () => {
     expect(translateValue(DICT, "Settings")).toBe("Настройки");
   });
