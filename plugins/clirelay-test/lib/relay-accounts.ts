@@ -138,6 +138,14 @@ export function groupAccountsByProvider(accounts: RelayAccount[]): Array<{ provi
   });
 }
 
+// Под-аккордеоны провайдеров нужны только когда фильтры «Все»+«Все»,
+// либо аккаунтов много (>20) — иначе плоский список компактнее.
+export const PROVIDER_GROUP_THRESHOLD = 20;
+
+export function shouldGroupByProvider(opts: { providerFilter: string | null; stateFilter: "all" | "on" | "off"; count: number }): boolean {
+  return (opts.providerFilter === null && opts.stateFilter === "all") || opts.count > PROVIDER_GROUP_THRESHOLD;
+}
+
 // Секции с квотой отдельно; аккаунты без квот — одним списком под общий аккордеон.
 export function partitionByQuota(groups: Array<{ provider: string; accounts: RelayAccount[] }>): {
   quotaGroups: Array<{ provider: string; accounts: RelayAccount[] }>;

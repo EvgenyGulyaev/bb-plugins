@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DiscoverError } from "./discover";
-import { fetchAuthFileStates, fetchRelayAccounts, groupAccountsByProvider, partitionByQuota, relayOrigin, setAuthFileDisabled, successPercent } from "./relay-accounts";
+import { fetchAuthFileStates, fetchRelayAccounts, groupAccountsByProvider, partitionByQuota, relayOrigin, setAuthFileDisabled, shouldGroupByProvider, successPercent } from "./relay-accounts";
 
 const SNAPSHOT = {
   items: [
@@ -24,6 +24,16 @@ describe("relayOrigin", () => {
   it("срезает /v1 и хвостовые слэши", () => {
     expect(relayOrigin("http://localhost:4010/v1/")).toBe("http://localhost:4010");
     expect(relayOrigin("http://localhost:4010")).toBe("http://localhost:4010");
+  });
+});
+
+describe("shouldGroupByProvider", () => {
+  it("под-аккордеоны только при фильтрах Все+Все или >20 аккаунтов", () => {
+    expect(shouldGroupByProvider({ providerFilter: null, stateFilter: "all", count: 5 })).toBe(true);
+    expect(shouldGroupByProvider({ providerFilter: "claude", stateFilter: "all", count: 5 })).toBe(false);
+    expect(shouldGroupByProvider({ providerFilter: null, stateFilter: "on", count: 5 })).toBe(false);
+    expect(shouldGroupByProvider({ providerFilter: "claude", stateFilter: "on", count: 21 })).toBe(true);
+    expect(shouldGroupByProvider({ providerFilter: null, stateFilter: "on", count: 20 })).toBe(false);
   });
 });
 

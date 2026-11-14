@@ -10,7 +10,7 @@ import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
-import { successPercent, groupAccountsByProvider, partitionByQuota } from "./lib/relay-accounts";
+import { successPercent, groupAccountsByProvider, partitionByQuota, shouldGroupByProvider } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -352,7 +352,9 @@ function AccountCard({ account, onToggle, compact = false }: { account: RelayAcc
   const displayName = account.email ?? (account.label && account.label !== account.provider ? account.label : undefined) ?? account.auth_index;
   const controls = (
     <span className="flex shrink-0 items-center gap-2">
-      {account.health_status ? <span className="rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
+      {account.health_status && !(onToggle && account.auth_name && ["ok", "active", "disabled"].includes(account.health_status)) ? (
+        <span className="rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground">{account.health_status}</span>
+      ) : null}
       {onToggle && account.auth_name ? (
         <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${displayName}`} />
       ) : null}
@@ -501,6 +503,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
             items={data.items.filter((a) => stateFilter === "all" || (stateFilter === "on" ? !a.disabled : a.disabled))}
             filter={providerFilter}
             onFilter={setProviderFilter}
+            stateFilter={stateFilter}
             onToggle={(authIndex, enabled) => rpc.call("relay_account_toggle", { providerId, authIndex, enabled })
               .then(() => { toast.success(enabled ? `Аккаунт включён` : `Аккаунт выключен`); load(); }, report)}
           />
@@ -512,13 +515,15 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
 }
 
 /** Секции аккаунтов по провайдеру + фильтр-чипы. */
-function ProviderSections({ items, filter, onFilter, onToggle }: { items: RelayAccount[]; filter: string | null; onFilter: (provider: string | null) => void; onToggle: (authIndex: string, enabled: boolean) => void }) {
+function ProviderSections({ items, filter, onFilter, stateFilter, onToggle }: { items: RelayAccount[]; filter: string | null; onFilter: (provider: string | null) => void; stateFilter: "all" | "on" | "off"; onToggle: (authIndex: string, enabled: boolean) => void }) {
   const groups = groupAccountsByProvider(items);
   const active = groups.some((group) => group.provider === filter) ? filter : null;
   const visible = active ? groups.filter((group) => group.provider === active) : groups;
   const { quotaGroups, quotaless } = partitionByQuota(visible);
+  const withQuota = quotaGroups.flatMap((group) => group.accounts);
+  const grouped = shouldGroupByProvider({ providerFilter: active, stateFilter, count: visible.length });
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-1" role="group" aria-label="Фильтр по провайдеру">
         <button type="button" onClick={() => onFilter(null)} aria-pressed={active === null}
           className={`rounded-full px-2.5 py-1 text-[11px] transition ${active === null ? "bg-background font-medium shadow-sm" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
@@ -531,20 +536,60 @@ function ProviderSections({ items, filter, onFilter, onToggle }: { items: RelayA
           </button>
         ))}
       </div>
-      {quotaGroups.map((group) => (
-        <AccountProviderSection key={group.provider} group={group} onToggle={onToggle} />
-      ))}
+      {withQuota.length > 0 ? (
+        <QuotaAccordion title="С квотой" icon="Target" accounts={withQuota} groups={quotaGroups} grouped={grouped} onToggle={onToggle} />
+      ) : null}
       {quotaless.length > 0 ? (
-        <AccountProviderSection
-          group={{ provider: "Без квот", accounts: quotaless }}
-          onToggle={onToggle}
-          defaultOpen={false}
+        <QuotaAccordion
+          title="Без квот"
           icon="Archive"
+          accounts={quotaless}
+          groups={visible.filter((group) => !group.accounts.some((account) => account.quotas.length > 0))}
+          grouped={grouped}
           compact
+          defaultOpen={false}
+          onToggle={onToggle}
         />
       ) : null}
       {visible.length === 0 ? <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Ничего по фильтру</div> : null}
     </div>
+  );
+}
+
+/** Верхний аккордеон «С квотой» / «Без квот»; внутри — провайдерские под-аккордеоны только когда нужно. */
+function QuotaAccordion({ title, icon, accounts, groups, grouped, compact = false, defaultOpen = true, onToggle }: {
+  title: string; icon: string; accounts: RelayAccount[]; groups: Array<{ provider: string; accounts: RelayAccount[] }>;
+  grouped: boolean; compact?: boolean; defaultOpen?: boolean; onToggle: (authIndex: string, enabled: boolean) => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="rounded-xl border border-border/60 bg-muted/20 p-3">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="flex w-full items-center gap-2 text-left" aria-label={`Свернуть или развернуть ${title}`}>
+        <Icon name="ChevronDown" className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
+        <Icon name={icon} className="size-4 shrink-0 text-muted-foreground" />
+        <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{accounts.length}</span>
+        <span className="h-px flex-1 bg-border/60" />
+      </button>
+      {open ? (
+        <div className="mt-3">
+          {grouped ? (
+            <div className="flex flex-col gap-3">
+              {groups.map((group) => <AccountProviderSection key={group.provider} group={group} onToggle={onToggle} compact={compact} />)}
+            </div>
+          ) : compact ? (
+            <div className="flex flex-col gap-1.5">
+              {accounts.map((account) => <AccountCard key={account.auth_index} account={account} compact onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
+            </div>
+          ) : (
+            <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {accounts.map((account) => <AccountCard key={account.auth_index} account={account} onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -567,7 +612,7 @@ function AccountProviderSection({ group, onToggle, defaultOpen = true, icon = "B
             {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} compact onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
             {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
           </div>
         )
