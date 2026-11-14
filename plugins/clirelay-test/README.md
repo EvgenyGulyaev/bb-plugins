@@ -12,7 +12,7 @@ BB-плагин для лёгкого подключения моделей с A
   строки квот с баром остатка (`percent`), countdown до сброса (`reset_at`);
   бар зелёный при остатке >20%, красный ≤20%. Карточки сгруппированы по адресу
   relay, обновление кнопкой ⟳ на группу. Данные: management API clirelay
-  `GET {origin}/v0/management/ai-accounts/status` (нужен `managementKey`, см. ниже).
+  `GET {origin}/v0/management/ai-accounts/status` (нужны логин/пароль админки relay, см. ниже).
   Без ключа — карточка-подсказка с командой настройки; при ошибке ключа — понятный текст.
 - **«Подключение»** — управление моделями pi:
 
@@ -74,18 +74,22 @@ bb plugin reload clirelay-test   # настройка читается при з
 То же поле — в Settings → Installed plugins → Api модели.
 `PI_MODELS_PATH` — тестовый шов, имеет приоритет над настройкой.
 
-Management key relay (для вкладки «Аккаунты») — secret-настройка `managementKey`
-(файл 0600, не попадает в db/фронтенд/репо); задаётся пользователем:
+Логин и пароль админки relay (для вкладки «Аккаунты») — secret-настройки
+`managementUser` / `managementPassword` (файл 0600, не попадают в db/фронтенд/репо);
+задаются пользователем, плагин сам логинится (`POST {origin}/v0/auth/login`),
+кэширует сессию в server-side kv и продлевает её через `/v0/auth/refresh`:
 
 ```bash
-bb plugin config clirelay-test set managementKey <админ-ключ relay>
+bb plugin config clirelay-test set managementUser <логин админки>
+bb plugin config clirelay-test set managementPassword <пароль админки>
 bb plugin reload clirelay-test
 ```
 
 ## Секретность
 
-Ключи и адреса живут только в `~/.pi/agent/models.json` (вне репо), management key —
-в secret-настройке плагина. В коде, тестах и доках — только выдуманные `localhost`.
+Ключи и адреса живут только в `~/.pi/agent/models.json` (вне репо), креды админки —
+в secret-настройках плагина, сессии — в server-side kv. В коде, тестах и доках —
+только выдуманные `localhost`.
 `apiKey` и `headers` никогда не возвращаются фронтенду; ошибки discovery и
 management API санитизируются (без URL).
 Запись файла атомарная (tmp + rename) с ротацией `.bak`; неизвестные поля сохраняются.

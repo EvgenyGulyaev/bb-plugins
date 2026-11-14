@@ -88,24 +88,30 @@ describe("RPC", () => {
     expect(refused.ok).toBe(false);
     expect(refused.detail).toContain("openai-completions");
   });
-  it("relay_accounts: без ключа configured:false, с ключом — Bearer и квоты без утечки", async () => {
+  it("relay_accounts: без кредов configured:false, с кредами — login + Bearer и квоты без утечки", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
     const empty = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean; items: unknown[] };
     expect(empty.configured).toBe(false);
     expect(empty.items).toEqual([]);
-    const host2 = createFakePluginHost({ pluginId: "clirelay-test", settings: { managementKey: "test-mgmt" } });
+    const host2 = createFakePluginHost({ pluginId: "clirelay-test", settings: { managementUser: "admin", managementPassword: "test-pass" } });
     await plugin(host2.bb);
     hosts.push(host2);
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [{ auth_index: "claude:u@example.com", quotas: [{ quota_key: "5h", percent: 100 }] }] }), { status: 200 }));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "test-access", refresh_token: "test-refresh", expires_at: new Date(Date.now() + 3600_000).toISOString() }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ auth_index: "claude:u@example.com", quotas: [{ quota_key: "5h", percent: 100 }] }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await host2.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean; items: Array<{ auth_index: string }> };
     expect(result.configured).toBe(true);
     expect(result.items[0]!.auth_index).toBe("claude:u@example.com");
-    expect(JSON.stringify(result)).not.toContain("test-mgmt");
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("http://localhost:4010/v0/management/ai-accounts/status");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-mgmt");
+    expect(JSON.stringify(result)).not.toContain("test-pass");
+    expect(JSON.stringify(result)).not.toContain("test-access");
+    const [loginUrl, loginInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(loginUrl).toBe("http://localhost:4010/v0/auth/login");
+    expect(JSON.parse(String(loginInit.body))).toMatchObject({ username: "admin", password: "test-pass" });
+    const [accountsUrl, accountsInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(accountsUrl).toBe("http://localhost:4010/v0/management/ai-accounts/status");
+    expect((accountsInit.headers as Record<string, string>).Authorization).toBe("Bearer test-access");
   });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();

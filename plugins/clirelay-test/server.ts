@@ -9,7 +9,8 @@ import {
   readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
-import { fetchRelayAccounts, relayAccountSchema } from "./lib/relay-accounts";
+import { fetchRelayAccounts, relayAccountSchema, relayOrigin } from "./lib/relay-accounts";
+import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
 
 const providerViewSchema = z.object({
   id: z.string(),
@@ -68,9 +69,10 @@ export default async function plugin(bb: BbPluginApi) {
   // загрузке — после смены нужен `bb plugin reload clirelay-test`.
   const settings = bb.settings.define({
     modelsPath: { type: "string", label: "Путь к models.json pi (пусто = ~/.pi/agent/models.json)", default: "" },
-    managementKey: { type: "string", label: "Management key clirelay (админ-ключ relay для квот аккаунтов)", secret: true },
+    managementUser: { type: "string", label: "Логин админки clirelay (для квот аккаунтов)", secret: true },
+    managementPassword: { type: "string", label: "Пароль админки clirelay", secret: true },
   });
-  const { modelsPath, managementKey } = await settings.get();
+  const { modelsPath, managementUser, managementPassword } = await settings.get();
   // PI_MODELS_PATH — тестовый шов, важнее настройки.
   const filePath = resolveModelsPath(process.env, modelsPath, homedir());
 
@@ -119,13 +121,31 @@ export default async function plugin(bb: BbPluginApi) {
       return testModel(entry.baseUrl, resolveApiKey(entry.apiKey), modelId);
     },
     relay_accounts: async ({ providerId }) => {
-      if (!managementKey) return { configured: false, items: [] };
+      if (!managementUser || !managementPassword) return { configured: false, items: [] };
       const file = await readModelsFile(filePath);
       const entry = file.providers[providerId];
       if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
       if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const origin = relayOrigin(entry.baseUrl);
+      const cacheKey = `relay-auth:${origin}`;
+      const cache = {
+        get: async () => (await bb.storage.kv.get<RelaySession>(cacheKey)) ?? null,
+        set: async (session: RelaySession) => { await bb.storage.kv.set(cacheKey, session); },
+      };
+      const creds = { username: managementUser, password: managementPassword };
       try {
-        return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, managementKey) };
+        const token = await getManagementToken({ origin, creds, cache });
+        try {
+          return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, token) };
+        } catch (cause) {
+          // сессию отозвали посреди жизни — один повторный логин
+          if (cause instanceof Error && /логин и пароль/.test(cause.message)) {
+            const session = await loginRelay(origin, creds);
+            await cache.set(session);
+            return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, session.access_token) };
+          }
+          throw cause;
+        }
       } catch (cause) {
         return { configured: true, items: [], error: cause instanceof Error ? cause.message : String(cause) };
       }

@@ -52,7 +52,7 @@ export async function fetchRelayAccounts(
     if (cause instanceof Error && cause.name === "AbortError") throw new DiscoverError("таймаут 10с: relay не ответил");
     throw new DiscoverError("не удалось соединиться с relay");
   }
-  if (response.status === 401 || response.status === 403) throw new DiscoverError("management key неверный или не задан");
+  if (response.status === 401 || response.status === 403) throw new DiscoverError("management-доступ отклонён: проверь логин и пароль");
   if (!response.ok) throw new DiscoverError(`relay ответил HTTP ${response.status}`);
   let body: unknown;
   try {

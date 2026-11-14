@@ -47,7 +47,7 @@ describe("fetchRelayAccounts", () => {
         (cause: Error) => cause,
       );
       expect(error).toBeInstanceOf(DiscoverError);
-      expect(error.message).toContain("management key");
+      expect(error.message).toContain("логин и пароль");
       expect(error.message).not.toContain("localhost");
     }
   });

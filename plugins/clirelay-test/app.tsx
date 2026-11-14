@@ -356,8 +356,9 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
         <div className="h-40 animate-pulse rounded-2xl bg-muted/40" />
       ) : !data.configured ? (
         <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-          Management key не задан — квоты аккаунтов недоступны. Задай его один раз (ключ хранится только на сервере плагина):
-          <code className="mt-2 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementKey &lt;ключ&gt;</code>
+          Логин и пароль админки relay не заданы — квоты аккаунтов недоступны. Задай их один раз (хранятся только на сервере плагина, плагин сам логинится и продлевает сессию):
+          <code className="mt-2 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementUser &lt;логин&gt;</code>
+          <code className="mt-1 block rounded-md bg-muted/60 px-3 py-2 font-mono text-xs">bb plugin config clirelay-test set managementPassword &lt;пароль&gt;</code>
           <span className="mt-2 block">затем <code className="font-mono text-xs">bb plugin reload clirelay-test</code> и обнови эту вкладку.</span>
         </div>
       ) : data.error ? (
