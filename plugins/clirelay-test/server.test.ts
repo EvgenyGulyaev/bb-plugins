@@ -113,6 +113,26 @@ describe("RPC", () => {
     expect(accountsUrl).toBe("http://localhost:4010/v0/management/ai-accounts/status");
     expect((accountsInit.headers as Record<string, string>).Authorization).toBe("Bearer test-access");
   });
+  it("model_toggle выкл/вкл сохраняет настройки; update/disconnect работают с выключенными", async () => {
+    const { host, path } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });
+    await host.harness.behavior.callRpc("model_connect", { providerId: "p", modelId: "m1" });
+    await host.harness.behavior.callRpc("model_update", { providerId: "p", modelId: "m1", patch: { reasoning: true, contextWindow: 400000 } });
+    expect(await host.harness.behavior.callRpc("model_toggle", { providerId: "p", modelId: "m1", enabled: false })).toEqual({ enabled: false });
+    let view = (await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ models: Array<Record<string, unknown>>; disabled: Array<Record<string, unknown>> }> }).providers[0]!;
+    expect(view.models).toEqual([]);
+    expect(view.disabled[0]).toMatchObject({ id: "m1", reasoning: true, contextWindow: 400000 });
+    expect(JSON.parse(await readFile(path, "utf8")).providers.p.models).toEqual([]);
+    await host.harness.behavior.callRpc("model_update", { providerId: "p", modelId: "m1", patch: { maxTokens: 999 } });
+    expect(await host.harness.behavior.callRpc("model_toggle", { providerId: "p", modelId: "m1", enabled: true })).toEqual({ enabled: true });
+    view = (await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ models: Array<Record<string, unknown>>; disabled: Array<Record<string, unknown>> }> }).providers[0]!;
+    expect(view.disabled).toEqual([]);
+    expect(view.models[0]).toMatchObject({ id: "m1", reasoning: true, contextWindow: 400000, maxTokens: 999 });
+    await host.harness.behavior.callRpc("model_toggle", { providerId: "p", modelId: "m1", enabled: false });
+    expect(await host.harness.behavior.callRpc("model_disconnect", { providerId: "p", modelId: "m1" })).toEqual({ removed: true });
+    view = (await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ models: Array<Record<string, unknown>>; disabled: Array<Record<string, unknown>> }> }).providers[0]!;
+    expect(view.disabled).toEqual([]);
+  });
   it("relay_creds_set per-origin: login с кредами адреса, clear → configured:false", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });

@@ -5,8 +5,9 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { discoverModels, resolveApiKey, testModel } from "./lib/discover";
 import {
-  connectModel, deleteProvider, disconnectModel, listProviders,
-  readModelsFile, resolveModelsPath, updateModel, upsertProvider, writeModelsFile, type ModelsFile,
+  addModelEntry, connectModel, deleteProvider, disconnectModel, hasModel, listProviders,
+  readModelsFile, removeModelEntry, resolveModelsPath, updateModel, upsertProvider, writeModelsFile,
+  type ModelEntry, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchRelayAccounts, relayAccountSchema, relayOrigin } from "./lib/relay-accounts";
@@ -19,6 +20,7 @@ const providerViewSchema = z.object({
   api: z.string(),
   apiKeySet: z.boolean(),
   models: z.array(z.looseObject({ id: z.string() })),
+  disabled: z.array(z.looseObject({ id: z.string() })),
 });
 
 export const rpcContract = defineRpcContract({
@@ -42,6 +44,10 @@ export const rpcContract = defineRpcContract({
   model_disconnect: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
     output: z.object({ removed: z.boolean() }),
+  },
+  model_toggle: {
+    input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema, enabled: z.boolean() }).strict(),
+    output: z.object({ enabled: z.boolean() }),
   },
   model_update: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema, patch: modelPatchSchema }).strict(),
@@ -90,20 +96,30 @@ export default async function plugin(bb: BbPluginApi) {
 
   // ponytail: внутрипроцессный lock (очередь промисов). Апгрейд при multi-process — файловые блокировки.
   let queue: Promise<unknown> = Promise.resolve();
+  function locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = queue.then(fn);
+    queue = run.catch(() => undefined);
+    return run;
+  }
   function mutate<T>(fn: (file: ModelsFile) => T): Promise<T> {
-    const run = queue.then(async () => {
+    return locked(async () => {
       const file = await readModelsFile(filePath);
       const result = fn(file);
       await writeModelsFile(filePath, file);
       bb.realtime.publish(CHANGED, {});
       return result;
     });
-    queue = run.catch(() => undefined);
-    return run;
   }
+  const disabledKey = (providerId: string) => `disabled-models:${providerId}`;
+  const readDisabled = async (providerId: string): Promise<ModelEntry[]> =>
+    (await bb.storage.kv.get<ModelEntry[]>(disabledKey(providerId))) ?? [];
 
   bb.rpc.register(rpcContract, {
-    providers_list: async () => ({ providers: listProviders(await readModelsFile(filePath)) }),
+    providers_list: async () => {
+      const views = listProviders(await readModelsFile(filePath));
+      for (const view of views) view.disabled = await readDisabled(view.id);
+      return { providers: views };
+    },
     provider_save: async (input) =>
       mutate((file) => {
         upsertProvider(file, input);
@@ -118,8 +134,71 @@ export default async function plugin(bb: BbPluginApi) {
       return { models: await discoverModels(entry.baseUrl, resolveApiKey(entry.apiKey)) };
     },
     model_connect: async ({ providerId, modelId }) => ({ connected: await mutate((file) => connectModel(file, providerId, modelId)) }),
-    model_disconnect: async ({ providerId, modelId }) => ({ removed: await mutate((file) => disconnectModel(file, providerId, modelId)) }),
-    model_update: async ({ providerId, modelId, patch }) => mutate((file) => updateModel(file, providerId, modelId, patch)),
+    model_disconnect: async ({ providerId, modelId }) => ({
+      removed: await locked(async () => {
+        const file = await readModelsFile(filePath);
+        let removed = disconnectModel(file, providerId, modelId);
+        if (removed) {
+          await writeModelsFile(filePath, file);
+        } else {
+          const disabled = await readDisabled(providerId);
+          const next = disabled.filter((model) => model.id !== modelId);
+          removed = next.length !== disabled.length;
+          if (removed) await bb.storage.kv.set(disabledKey(providerId), next);
+        }
+        if (removed) bb.realtime.publish(CHANGED, {});
+        return removed;
+      }),
+    }),
+    model_toggle: async ({ providerId, modelId, enabled }) => ({
+      enabled: await locked(async () => {
+        const disabled = await readDisabled(providerId);
+        const file = await readModelsFile(filePath);
+        let fileChanged = false;
+        if (!enabled) {
+          const entry = removeModelEntry(file, providerId, modelId);
+          if (entry) {
+            disabled.push(entry);
+            fileChanged = true;
+          } else if (!disabled.some((model) => model.id === modelId)) {
+            throw new Error(`Модель не найдена: ${modelId}`);
+          }
+        } else {
+          const index = disabled.findIndex((model) => model.id === modelId);
+          if (index >= 0) {
+            const [entry] = disabled.splice(index, 1);
+            addModelEntry(file, providerId, entry!);
+            fileChanged = true;
+          } else if (!hasModel(file, providerId, modelId)) {
+            throw new Error(`Модель не найдена: ${modelId}`);
+          }
+        }
+        await bb.storage.kv.set(disabledKey(providerId), disabled);
+        if (fileChanged) await writeModelsFile(filePath, file);
+        bb.realtime.publish(CHANGED, {});
+        return enabled;
+      }),
+    }),
+    model_update: async ({ providerId, modelId, patch }) =>
+      locked(async () => {
+        const file = await readModelsFile(filePath);
+        if (hasModel(file, providerId, modelId)) {
+          const result = updateModel(file, providerId, modelId, patch);
+          await writeModelsFile(filePath, file);
+          bb.realtime.publish(CHANGED, {});
+          return result;
+        }
+        const disabled = await readDisabled(providerId);
+        const entry = disabled.find((model) => model.id === modelId);
+        if (!entry) throw new Error(`Модель не найдена: ${modelId}`);
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === null) delete entry[key];
+          else if (value !== undefined) entry[key] = value;
+        }
+        await bb.storage.kv.set(disabledKey(providerId), disabled);
+        bb.realtime.publish(CHANGED, {});
+        return entry;
+      }),
     model_test: async ({ providerId, modelId }) => {
       const file = await readModelsFile(filePath);
       const entry = file.providers[providerId];

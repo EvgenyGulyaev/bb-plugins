@@ -6,6 +6,7 @@ import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
+import { groupByFamily } from "./lib/model-groups";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { successPercent } from "./lib/relay-accounts";
@@ -19,6 +20,17 @@ type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type Report = (cause: unknown) => void;
 
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+
+/** Тумблер вкл/выкл модели (role=switch, без новых зависимостей). */
+function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label}
+      onClick={(event) => { event.stopPropagation(); onChange(!checked); }}
+      className={`relative h-4.5 w-8 shrink-0 rounded-full transition-colors ${checked ? "bg-emerald-500" : "bg-muted-foreground/30"}`}>
+      <span className={`absolute top-0.5 left-0.5 size-3.5 rounded-full bg-background shadow-sm transition-transform ${checked ? "translate-x-3.5" : ""}`} />
+    </button>
+  );
+}
 
 /** Двухшаговое подтверждение destructive-действия без модальных диалогов. */
 function ConfirmButton({ label, confirmLabel, onConfirm, icon }: { label: string; confirmLabel: string; onConfirm: () => void; icon: string }) {
@@ -105,7 +117,7 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
   );
 }
 
-function ModelAccordion({ providerId, model, rpc, report }: { providerId: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
+function ModelAccordion({ providerId, model, enabled, onToggle, rpc, report }: { providerId: string; model: Record<string, unknown>; enabled: boolean; onToggle: (value: boolean) => void; rpc: Rpc; report: Report }) {
   const [open, setOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const modelId = String(model.id);
@@ -122,13 +134,15 @@ function ModelAccordion({ providerId, model, rpc, report }: { providerId: string
     );
   };
   return (
-    <div className="rounded-lg border border-border/70">
+    <div className={`rounded-lg border border-border/70 transition-opacity ${enabled ? "" : "opacity-60"}`}>
       <div className="flex items-center gap-1 px-2 py-1.5">
         <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm" onClick={() => setOpen(!open)} aria-expanded={open}>
           <Icon name="ChevronDown" className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
           <span className="truncate font-mono text-xs">{modelId}</span>
           {typeof model.name === "string" ? <span className="truncate text-xs text-muted-foreground">{model.name}</span> : null}
+          {!enabled ? <span className="shrink-0 rounded-full border border-border px-1.5 text-[10px] text-muted-foreground">выкл</span> : null}
         </button>
+        <Switch checked={enabled} onChange={onToggle} label={`${enabled ? "Выключить" : "Включить"} ${modelId}`} />
         <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" disabled={testing} onClick={runTest} aria-label={`Тест ${modelId}`}>
           <Icon name={testing ? "Loading" : "Target"} className={`size-3.5 ${testing ? "animate-spin" : ""}`} />Тест
         </Button>
@@ -146,8 +160,16 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
   const [busy, setBusy] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
+  const [filter, setFilter] = useState<"all" | "on" | "off">("all");
   const connected = useMemo(() => new Set(provider.models.map((model) => String(model.id))), [provider.models]);
   const available = (discovered ?? []).filter((id) => !connected.has(id));
+  const leftGroups = groupByFamily(available.map((id) => ({ id })));
+  const rightItems = [
+    ...(filter === "off" ? [] : provider.models.map((entry) => ({ entry, on: true, id: String(entry.id) }))),
+    ...(filter === "on" ? [] : provider.disabled.map((entry) => ({ entry, on: false, id: String(entry.id) }))),
+  ];
+  const rightGroups = groupByFamily(rightItems);
+  const counts = { all: provider.models.length + provider.disabled.length, on: provider.models.length, off: provider.disabled.length };
   const discover = useCallback(() => {
     setBusy(true);
     setDiscoverError(null);
@@ -185,12 +207,21 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             {busy ? <div className="px-1 py-2 text-xs text-muted-foreground">Загрузка…</div> : null}
             {discoverError ? <div className="mb-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" role="alert">{discoverError}</div> : null}
             <div className="flex flex-col gap-1">
-              {available.map((id) => (
-                <div key={id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-muted/60">
-                  <span className="truncate font-mono text-xs">{id}</span>
-                  <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(id)} aria-label={`Подключить ${id}`}>
-                    <Icon name="Plus" className="size-3.5" />Подключить
-                  </Button>
+              {leftGroups.map((group, groupIndex) => (
+                <div key={group.family}>
+                  <div className={`mb-1 flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${groupIndex === 0 ? "" : "mt-2"}`}>
+                    {group.family}<span className="font-normal">{group.items.length}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {group.items.map(({ id }) => (
+                      <div key={id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-muted/60">
+                        <span className="truncate font-mono text-xs">{id}</span>
+                        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(id)} aria-label={`Подключить ${id}`}>
+                          <Icon name="Plus" className="size-3.5" />Подключить
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
               {!busy && !discoverError && available.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{discovered === null ? "Раскрой адрес — список загрузится сам" : "Все доступные уже подключены"}</div> : null}
@@ -201,10 +232,34 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             </form>
           </div>
           <div className="rounded-lg border border-border/70 p-2">
-            <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Подключённые (в pi)</div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
+              <span className="text-xs font-medium text-muted-foreground">Подключённые (в pi)</span>
+              <div className="flex gap-0.5 rounded-md bg-muted/40 p-0.5" role="group" aria-label="Фильтр по состоянию">
+                {([["all", "Все"], ["on", "Вкл"], ["off", "Выкл"]] as const).map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => setFilter(id)} aria-pressed={filter === id}
+                    className={`rounded px-2 py-0.5 text-[11px] transition ${filter === id ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+                    {label} {counts[id]}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="flex flex-col gap-1.5">
-              {provider.models.map((model) => <ModelAccordion key={String(model.id)} providerId={provider.id} model={model} rpc={rpc} report={report} />)}
-              {provider.models.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">Пока пусто — подключи слева</div> : null}
+              {rightGroups.map((group, groupIndex) => (
+                <div key={group.family}>
+                  <div className={`mb-1 flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${groupIndex === 0 ? "" : "mt-2"}`}>
+                    {group.family}<span className="font-normal">{group.items.length}</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {group.items.map(({ entry, on }) => (
+                      <ModelAccordion key={String(entry.id)} providerId={provider.id} model={entry} enabled={on}
+                        onToggle={(value) => rpc.call("model_toggle", { providerId: provider.id, modelId: String(entry.id), enabled: value })
+                          .then(() => toast.success(value ? `Включена ${entry.id}` : `Выключена ${entry.id} — настройки сохранены`), report)}
+                        rpc={rpc} report={report} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {rightItems.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{filter === "all" ? "Пока пусто — подключи слева" : "Ничего по фильтру"}</div> : null}
             </div>
           </div>
         </div>
