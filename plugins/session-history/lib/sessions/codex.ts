@@ -44,7 +44,7 @@ interface ThreadRow {
  * JSON `source` and threads without a visible preview are hidden, matching
  * Codex's own list.
  */
-async function listFromStateDb(): Promise<SessionSummary[] | null> {
+async function listFromStateDb(isCurrent: () => boolean): Promise<SessionSummary[] | null> {
   if (!existsSync(STATE_DB)) return null;
   let sqlite: typeof import("node:sqlite");
   try {
@@ -52,6 +52,7 @@ async function listFromStateDb(): Promise<SessionSummary[] | null> {
   } catch {
     return null;
   }
+  if (!isCurrent()) return [];
   const db = new sqlite.DatabaseSync(STATE_DB, { readOnly: true });
   try {
     const rows = db
@@ -64,6 +65,7 @@ async function listFromStateDb(): Promise<SessionSummary[] | null> {
       .all() as unknown as ThreadRow[];
     const sessions = await mapLimit(rows, 16, async (row) => {
       const info = await statFile(row.rollout_path);
+      if (!isCurrent()) return null;
       const title = await codexSessionTitle(row.name, row.title, row.first_user_message, row.rollout_path);
       const summary: SessionSummary = {
         agent: "codex",
@@ -80,7 +82,7 @@ async function listFromStateDb(): Promise<SessionSummary[] | null> {
         sizeBytes: info?.size ?? 0,
       };
       return info === null ? null : summary;
-    });
+    }, isCurrent);
     return sessions.filter((session): session is SessionSummary => session !== null);
   } finally {
     db.close();
@@ -90,7 +92,8 @@ async function listFromStateDb(): Promise<SessionSummary[] | null> {
 const rolloutCache = new FileCache<SessionSummary>();
 
 /** Fallback for Codex builds without state_5.sqlite: names from session_index.jsonl. */
-async function listFromRollouts(): Promise<SessionSummary[]> {
+async function listFromRollouts(isCurrent: () => boolean): Promise<SessionSummary[]> {
+  if (!isCurrent()) return [];
   const names = new Map<string, string>();
   await scanJsonl(path.join(CODEX_HOME, "session_index.jsonl"), null, (record) => {
     if (typeof record.id === "string" && typeof record.thread_name === "string") {
@@ -99,11 +102,17 @@ async function listFromRollouts(): Promise<SessionSummary[]> {
   });
   const files: string[] = [];
   for (const root of ["sessions", "archived_sessions"]) {
+    if (!isCurrent()) return [];
     const base = path.join(CODEX_HOME, root);
     files.push(...(await listJsonl(base)));
     for (const year of await listDirs(base)) {
+      if (!isCurrent()) return [];
       for (const month of await listDirs(year)) {
-        for (const day of await listDirs(month)) files.push(...(await listJsonl(day)));
+        if (!isCurrent()) return [];
+        for (const day of await listDirs(month)) {
+          if (!isCurrent()) return [];
+          files.push(...(await listJsonl(day)));
+        }
       }
     }
   }
@@ -139,13 +148,14 @@ async function listFromRollouts(): Promise<SessionSummary[]> {
         sizeBytes: info.size,
       };
       return summary;
-    }),
+    }, isCurrent), isCurrent,
   );
   return sessions.filter((session): session is SessionSummary => session !== null);
 }
 
-export async function listCodexSessions(): Promise<SessionSummary[]> {
-  return (await listFromStateDb()) ?? (await listFromRollouts());
+export async function listCodexSessions(isCurrent: () => boolean = () => true): Promise<SessionSummary[]> {
+  if (!isCurrent()) return [];
+  return (await listFromStateDb(isCurrent)) ?? (await listFromRollouts(isCurrent));
 }
 
 /** Injected context Codex stores as user messages in older rollouts. */

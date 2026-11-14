@@ -2,7 +2,7 @@
   "name": "bb-plugin-session-history",
   "version": "0.1.1",
   "private": true,
-  "description": "Past Claude Code, Codex, Qwen Code and Pi sessions in BB, including enrolled machines.",
+  "description": "Selectable Claude Code, Codex, Qwen Code, Pi and Command Code histories in BB, including enrolled machines.",
   "license": "MIT",
   "author": "Nikolai Marchenko (https://github.com/neonick)",
   "homepage": "https://github.com/neonick/bb-plugin-session-history#readme",
@@ -27,7 +27,7 @@
   },
   "bb": {
     "name": "Session History",
-    "description": "Browse past Claude, Codex, Qwen and Pi sessions from this and connected machines, and continue conversations directly in BB.",
+    "description": "Choose CLI histories, browse past Claude, Codex, Qwen, Pi and Command Code sessions, and continue conversations in BB.",
     "branding": {
       "icon": "Clock"
     },

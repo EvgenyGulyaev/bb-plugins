@@ -1,6 +1,9 @@
-export type Agent = "claude" | "codex" | "qwen" | "pi";
+export const AGENTS = ["claude", "codex", "qwen", "pi", "command-code"] as const;
+export type Agent = typeof AGENTS[number];
 
-export const AGENTS: readonly Agent[] = ["claude", "codex", "qwen", "pi"];
+export function isAgent(value: unknown): value is Agent {
+  return AGENTS.some((agent) => agent === value);
+}
 
 export interface SessionSummary {
   agent: Agent;

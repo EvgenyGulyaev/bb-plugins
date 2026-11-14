@@ -22,10 +22,11 @@ function slug(cwd: string): string {
   return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-async function filesIn(root: string): Promise<string[]> {
+async function filesIn(root: string, isCurrent: () => boolean): Promise<string[]> {
   const out: string[] = [];
   const { readdir } = await import("node:fs/promises");
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!isCurrent()) break;
     const file = path.join(root, entry.name);
     if (entry.isFile() && entry.name.endsWith(".jsonl")) out.push(file);
     if (entry.isDirectory()) {
@@ -86,23 +87,25 @@ async function summarize(file: string, info: { mtimeMs: number; size: number }):
   };
 }
 
-export async function listPiSessions(): Promise<SessionSummary[]> {
-  const files = await filesIn(ROOT);
+export async function listPiSessions(isCurrent: () => boolean = () => true): Promise<SessionSummary[]> {
+  if (!isCurrent()) return [];
+  const files = await filesIn(ROOT, isCurrent);
   const stats = await mapLimit(files, 16, async (file) => {
     const { stat } = await import("node:fs/promises");
     const info = await stat(file).catch(() => null);
     return info ? { file, mtimeMs: info.mtimeMs, size: info.size } : null;
-  });
+  }, isCurrent);
   const summaries = await mapLimit(
     stats.filter((value): value is { file: string; mtimeMs: number; size: number } => value !== null)
       .sort((a, b) => b.mtimeMs - a.mtimeMs),
     8,
-    ({ file, mtimeMs, size }) => cache.get(file, () => summarize(file, { mtimeMs, size })),
+    ({ file, mtimeMs, size }) => cache.get(file, () => summarize(file, { mtimeMs, size }), isCurrent),
+    isCurrent,
   );
   return summaries.filter((summary): summary is SessionSummary => summary !== null);
 }
 
-function activeBranch(rows: Record<string, unknown>[], version: number): Record<string, unknown>[] {
+export function activeBranch(rows: Record<string, unknown>[], version: number): Record<string, unknown>[] {
   if (version === 1) return rows;
   const byId = new Map<string, Record<string, unknown>>();
   let leaf: Record<string, unknown> | undefined;

@@ -1,7 +1,7 @@
 # Session History for BB
 
-A [BB](https://getbb.app) plugin that lists your past Claude Code, Codex, Qwen Code and Pi
-Qwen Code sessions — the ones you ran in a terminal or VS Code — with the titles
+A [BB](https://getbb.app) plugin that lists your past Claude Code, Codex, Qwen Code,
+Pi and Command Code sessions — the ones you ran in a terminal or VS Code — with the titles
 the agents gave them, and lets you continue any of them in BB below the original transcript.
 
 - **Past sessions** on the new-thread screen, limited to the selected project's
@@ -28,6 +28,30 @@ The interface follows the browser language: Russian or English.
 | Codex       | `~/.codex/state_5.sqlite` (`threads`)     | thread name → generated title → first prompt; subagents hidden |
 | Qwen Code   | `~/.qwen/projects/<slug>/chats/*.jsonl`   | first prompt (Qwen Code stores no title)                      |
 | Pi          | `~/.pi/agent/sessions/*.jsonl`            | session name → first prompt                                  |
+| Command Code | `~/.commandcode/projects/*/*.jsonl`      | `.meta.json` title → session name → first prompt              |
+
+## Choose which CLI histories to show
+
+Open **Settings → Plugins → Session History** and toggle Claude Code, Codex,
+Qwen Code, Pi or Command Code. All five are enabled by default. Disabled CLI
+histories are not scanned on local or connected machines, their cached results
+are hidden, and their filter buttons disappear. Changes refresh open lists;
+disabling every CLI shows an empty list without deleting any session files.
+
+The same settings are available from the terminal, for example:
+
+```sh
+bb plugin config session-history set showQwen false
+bb plugin config session-history set showCommandCode true
+bb session-history list --agent command-code --limit 20
+```
+
+Command Code supports both current Pi-compatible v3 sessions and legacy v2
+message records. Checkpoint files are excluded. Legacy v2 sessions do not store
+a working directory, so they appear under **Unknown folder** and can be found
+with **All folders**; project-directory slugs are not decoded into guessed paths.
+The copied terminal command uses `cmd --session <transcript-path>`. To continue
+inside BB with Command Code, install a BB provider with id `command-code`.
 
 Сессии с подключённых машин читаются через соединение BB; в списке указывается имя машины. Для удалённого чтения нужен macOS или Linux с оболочкой POSIX.
 

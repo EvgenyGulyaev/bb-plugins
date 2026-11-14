@@ -61,6 +61,13 @@ test("a bounded transcript cannot be misrepresented as complete context", () => 
   assert.throws(() => fullTranscript(session, { entries: [], truncated: true }), /complete transcript/);
 });
 
+test("Command Code continuation titles are preserved when continued with Codex", async () => {
+  const original = { ...session, agent: "command-code" as const, title: "Command Code history" };
+  const text = fullTranscript(original, { entries: [], truncated: false });
+  const prompt = continuationContext(original, text);
+  assert.equal(await codexSessionTitle(null, prompt, prompt, "/missing"), original.title);
+});
+
 
 test("continuation titles survive direct and chunked context, including existing sessions", async () => {
   const titled = { ...session, title: 'История сессий "Claude" в BB' };

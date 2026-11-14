@@ -77,11 +77,12 @@ async function summarize(
   };
 }
 
-export async function listQwenSessions(): Promise<SessionSummary[]> {
+export async function listQwenSessions(isCurrent: () => boolean = () => true): Promise<SessionSummary[]> {
+  if (!isCurrent()) return [];
   const chatDirs = (await listDirs(ROOT)).map((dir) => path.join(dir, "chats"));
-  const files = (await mapLimit(chatDirs, 8, listJsonl)).flat();
+  const files = (await mapLimit(chatDirs, 8, listJsonl, isCurrent)).flat();
   const summaries = await mapLimit(files, 8, (file) =>
-    cache.get(file, (info) => summarize(file, info)),
+    cache.get(file, (info) => summarize(file, info), isCurrent), isCurrent,
   );
   return summaries.filter((summary): summary is SessionSummary => summary !== null);
 }

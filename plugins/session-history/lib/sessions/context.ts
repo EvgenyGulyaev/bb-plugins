@@ -9,6 +9,7 @@ const AGENT_NAMES: Record<SessionSummary["agent"], string> = {
   codex: "Codex",
   qwen: "Qwen Code",
   pi: "Pi",
+  "command-code": "Command Code",
 };
 
 function render(entry: TranscriptEntry): string {

@@ -1,4 +1,4 @@
-// bb-plugin-session-history — lists past Claude Code, Codex and Qwen Code
+// bb-plugin-session-history — lists past CLI agent sessions
 // sessions from their local stores, with the titles those agents show
 // themselves, renders a read-only transcript, and continues a session as a BB
 // thread that receives the transcript as agent-only context. Session files are
@@ -23,6 +23,7 @@ import {
   type SessionSummary,
 } from "./lib/sessions/index.js";
 import { CONTEXT_BUDGET, continuationContext, fullTranscript, transcriptParts } from "./lib/sessions/context.js";
+import { enabledAgents } from "./lib/sessions/settings.js";
 import {
   listRemoteSessions,
   removeRemoteSession,
@@ -33,10 +34,10 @@ import {
   type RemoteSummaryCache,
 } from "./lib/remote.js";
 
-const agentSchema = z.enum(AGENTS as [string, ...string[]]).transform((value) => value as SessionSummary["agent"]);
+const agentSchema = z.enum(AGENTS);
 
 const sessionSchema = z.object({
-  agent: z.enum(["claude", "codex", "qwen", "pi"]),
+  agent: agentSchema,
   id: z.string(),
   title: z.string(),
   firstPrompt: z.string(),
@@ -122,6 +123,7 @@ const PROVIDER_FOR: Record<Agent, string> = {
   codex: "codex",
   qwen: "qwen",
   pi: "pi",
+  "command-code": "command-code",
 };
 
 const linkKey = (agent: Agent, id: string, hostId?: string) => `link:${hostId ?? "primary"}:${agent}:${id}`;
@@ -155,13 +157,27 @@ const AGENT_LABELS: Record<SessionSummary["agent"], string> = {
   codex: "Codex",
   qwen: "Qwen",
   pi: "Pi",
+  "command-code": "Command Code",
 };
 
 export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    showClaude: { type: "boolean", default: true, label: "Claude Code" },
+    showCodex: { type: "boolean", default: true, label: "Codex" },
+    showQwen: { type: "boolean", default: true, label: "Qwen Code" },
+    showPi: { type: "boolean", default: true, label: "Pi" },
+    showCommandCode: { type: "boolean", default: true, label: "Command Code" },
+  });
   const warn = (message: string) => bb.log.warn(message);
   let primaryHostId = "primary";
   let primaryHostName = "Primary";
   const combinedCache = new Map<string, { at: number; sessions: SessionSummary[] }>();
+  let settingsGeneration = 0;
+  settings.onChange(() => {
+    settingsGeneration += 1;
+    combinedCache.clear();
+    clearSessionCaches();
+  });
   const refreshing = new Map<string, Promise<void>>();
   let remoteHostsCache: { at: number; hosts: RemoteHost[] } | null = null;
   let hostDirectoryCache: {
@@ -202,38 +218,44 @@ export default async function plugin(bb: BbPluginApi) {
     return hostFilter === undefined || host.id === hostFilter || host.name === hostFilter;
   }
 
-  async function listCachedSessions(agentFilter?: Agent, hostFilter?: string): Promise<SessionSummary[]> {
+  async function listCachedSessions(agentFilter: Agent | undefined, hostFilter: string | undefined, enabled: readonly Agent[], generation: number): Promise<SessionSummary[]> {
     const connected = await readHostDirectory();
+    if (generation !== settingsGeneration) return [];
     const remoteHostIds = connected.filter((host) => hostMatches(host, hostFilter)).map((host) => host.id);
     const hostNames = new Map(connected.map((host) => [host.id, host.name]));
-    const local = (await listSessions(warn, agentFilter))
+    const local = (await listSessions(warn, agentFilter, enabled, () => generation === settingsGeneration))
       .filter(() => hostFilter === undefined || hostFilter === primaryHostId || hostFilter === primaryHostName)
       .map((session) => ({ ...session, hostId: primaryHostId, hostName: primaryHostName }));
     const remote = remoteSummaryCache
       .list(remoteHostIds, agentFilter)
+      .filter((session) => enabled.includes(session.agent))
       .map((session) => ({ ...session, hostName: hostNames.get(session.hostId ?? "") ?? session.hostName }));
     return [...local, ...remote].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
-  async function refreshSessionCache(agentFilter?: Agent, hostFilter?: string): Promise<void> {
-    const cacheKey = `${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
-    const local = (await listSessions(warn, agentFilter))
+  async function refreshSessionCache(agentFilter: Agent | undefined, hostFilter: string | undefined, enabled: readonly Agent[], generation: number): Promise<void> {
+    const isCurrent = () => generation === settingsGeneration;
+    if (!isCurrent()) return;
+    const cacheKey = `${generation}|${enabled.join(",")}|${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
+    const local = (await listSessions(warn, agentFilter, enabled, isCurrent))
       .filter(() => hostFilter === undefined || hostFilter === primaryHostId || hostFilter === primaryHostName)
       .map((session) => ({
         ...session,
         hostId: primaryHostId,
         hostName: primaryHostName,
       }));
+    if (!isCurrent()) return;
     const remotes = (await refreshHosts()).filter((host) => hostFilter === undefined || host.id === hostFilter || host.name === hostFilter);
-    const remote = (await Promise.all(remotes.map((host) => listRemoteSessions(bb, host, warn, agentFilter, remoteSummaryCache)))).flat();
+    if (!isCurrent()) return;
+    const remote = (await Promise.all(remotes.map((host) => listRemoteSessions(bb, host, warn, agentFilter, remoteSummaryCache, enabled, isCurrent)))).flat();
     const sessions = [...local, ...remote].sort((a, b) => b.updatedAt - a.updatedAt);
-    combinedCache.set(cacheKey, { at: Date.now(), sessions });
+    if (isCurrent()) combinedCache.set(cacheKey, { at: Date.now(), sessions });
   }
 
-  function scheduleSessionRefresh(agentFilter?: Agent, hostFilter?: string): boolean {
-    const cacheKey = `${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
+  function scheduleSessionRefresh(agentFilter: Agent | undefined, hostFilter: string | undefined, enabled: readonly Agent[], generation: number): boolean {
+    const cacheKey = `${generation}|${enabled.join(",")}|${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
     if (refreshing.has(cacheKey)) return true;
-    const promise = refreshSessionCache(agentFilter, hostFilter).catch((error) => {
+    const promise = refreshSessionCache(agentFilter, hostFilter, enabled, generation).catch((error) => {
       warn(`session refresh: ${error instanceof Error ? error.message : String(error)}`);
     });
     refreshing.set(cacheKey, promise);
@@ -242,14 +264,19 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   async function listAllSessions(agentFilter?: Agent, hostFilter?: string): Promise<{ sessions: SessionSummary[]; refreshing: boolean }> {
-    const cacheKey = `${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
+    const generation = settingsGeneration;
+    const enabled = enabledAgents(await settings.get());
+    if (generation !== settingsGeneration || enabled.length === 0 || (agentFilter !== undefined && !enabled.includes(agentFilter))) return { sessions: [], refreshing: false };
+    const cacheKey = `${generation}|${enabled.join(",")}|${agentFilter ?? "*"}|${hostFilter ?? "*"}`;
     let cached = combinedCache.get(cacheKey);
     if (!cached || Date.now() - cached.at >= 15_000) {
-      const sessions = await listCachedSessions(agentFilter, hostFilter);
+      const sessions = await listCachedSessions(agentFilter, hostFilter, enabled, generation);
+      if (generation !== settingsGeneration) return { sessions: [], refreshing: false };
       cached = { at: Date.now(), sessions };
       combinedCache.set(cacheKey, cached);
     }
-    scheduleSessionRefresh(agentFilter, hostFilter);
+    if (generation !== settingsGeneration) return { sessions: [], refreshing: false };
+    scheduleSessionRefresh(agentFilter, hostFilter, enabled, generation);
     return { sessions: cached.sessions, refreshing: refreshing.has(cacheKey) };
   }
 
@@ -514,18 +541,18 @@ export default async function plugin(bb: BbPluginApi) {
 
   const usage = [
     "Usage:",
-    "  bb session-history list [--agent claude|codex|qwen|pi] [--host <id>] [--cwd <path>] [--limit <n>] [--json]",
+    "  bb session-history list [--agent claude|codex|qwen|pi|command-code] [--host <id>] [--cwd <path>] [--limit <n>] [--json]",
     "  bb session-history show <agent> <session-id> [--host <id>] [--json]",
   ].join("\n");
 
   bb.cli.register({
     name: "session-history",
-    summary: "List past Claude Code, Codex, Qwen Code and Pi sessions and read their transcripts",
+    summary: "List past CLI agent sessions and read their transcripts",
     commands: [
       {
         name: "list",
         summary: "List past sessions, newest first",
-        usage: "bb session-history list [--agent claude|codex|qwen|pi] [--host <id>] [--cwd <path>] [--limit <n>] [--json]",
+        usage: "bb session-history list [--agent claude|codex|qwen|pi|command-code] [--host <id>] [--cwd <path>] [--limit <n>] [--json]",
       },
       {
         name: "show",

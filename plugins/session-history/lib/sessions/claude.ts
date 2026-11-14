@@ -140,10 +140,11 @@ async function summarize(
   };
 }
 
-export async function listClaudeSessions(): Promise<SessionSummary[]> {
-  const files = (await mapLimit(await listDirs(ROOT), 8, listJsonl)).flat();
+export async function listClaudeSessions(isCurrent: () => boolean = () => true): Promise<SessionSummary[]> {
+  if (!isCurrent()) return [];
+  const files = (await mapLimit(await listDirs(ROOT), 8, listJsonl, isCurrent)).flat();
   const summaries = await mapLimit(files, 8, (file) =>
-    cache.get(file, (info) => summarize(file, info)),
+    cache.get(file, (info) => summarize(file, info), isCurrent), isCurrent,
   );
   return summaries.filter((summary): summary is SessionSummary => summary !== null);
 }
