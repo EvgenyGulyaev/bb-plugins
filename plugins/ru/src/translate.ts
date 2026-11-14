@@ -118,6 +118,10 @@ const TRAILING_PUNCTUATION = /^(.*?[^\s.:!?…])(\.\.\.|[.:!?…])$/;
  * произвольный текст пользователя.
  */
 const DYNAMIC_UI_PATTERNS: readonly [RegExp, (match: RegExpExecArray) => string][] = [
+  [
+    /^Context window (\d+(?:\.\d+)?)% used$/,
+    (match) => `Окно контекста: использовано ${match[1]}%`,
+  ],
   [/^Disable ([a-z0-9][a-z0-9-]*)$/, (match) => `Отключить ${match[1]}`],
   [/^Enable ([a-z0-9][a-z0-9-]*)$/, (match) => `Включить ${match[1]}`],
   [
