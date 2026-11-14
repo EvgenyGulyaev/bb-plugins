@@ -1,0 +1,13 @@
+{
+  "$schema": "https://getbb.app/schemas/plugins.schema.json",
+  "schemaVersion": 1,
+  "name": "deicer-plugins",
+  "plugins": [
+    { "name": "session-history", "source": "./plugins/session-history" },
+    { "name": "file-manager-multi-host", "source": "./plugins/file-manager-multi-host" },
+    { "name": "kanban-board", "source": "./plugins/kanban-board" },
+    { "name": "clirelay-test", "source": "./plugins/clirelay-test" },
+    { "name": "usage-rings", "source": "./plugins/usage-rings" },
+    { "name": "ru", "source": "./plugins/ru" }
+  ]
+}
