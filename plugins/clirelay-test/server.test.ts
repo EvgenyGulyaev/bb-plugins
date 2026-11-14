@@ -133,6 +133,42 @@ describe("RPC", () => {
     view = (await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ models: Array<Record<string, unknown>>; disabled: Array<Record<string, unknown>> }> }).providers[0]!;
     expect(view.disabled).toEqual([]);
   });
+  it("relay_accounts: health_status disabled без auth-files записи → disabled:true без тумблера", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });
+    await host.harness.behavior.callRpc("relay_creds_set", { providerId: "p", username: "u", password: "p" });
+    const session = { access_token: "test-access", expires_at: new Date(Date.now() + 3600_000).toISOString() };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ auth_index: "shared1", health_status: "disabled", quotas: [] }, { auth_index: "own1", health_status: "ok", quotas: [] }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "own1.json", auth_index: "own1", disabled: false }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { items: Array<{ auth_index: string; disabled: boolean; auth_name?: string }> };
+    expect(view.items[0]).toMatchObject({ auth_index: "shared1", disabled: true });
+    expect(view.items[0]!.auth_name).toBeUndefined();
+    expect(view.items[1]).toMatchObject({ auth_index: "own1", disabled: false, auth_name: "own1.json" });
+  });
+  it("relay_accounts мержит disabled/auth_name; relay_account_toggle патчит auth-files", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });
+    await host.harness.behavior.callRpc("relay_creds_set", { providerId: "p", username: "u", password: "p" });
+    const session = { access_token: "test-access", expires_at: new Date(Date.now() + 3600_000).toISOString() };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ auth_index: "idx1", quotas: [] }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "ok", disabled: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const view = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { items: Array<{ auth_index: string; disabled: boolean; auth_name?: string }> };
+    expect(view.items[0]).toMatchObject({ auth_index: "idx1", disabled: true, auth_name: "f1.json" });
+    const toggled = await host.harness.behavior.callRpc("relay_account_toggle", { providerId: "p", authIndex: "idx1", enabled: true }) as { disabled: boolean };
+    expect(toggled).toEqual({ disabled: false });
+    const patchCall = fetchMock.mock.calls[4] as unknown as [string, RequestInit];
+    expect(patchCall[0]).toBe("http://localhost:4010/v0/management/auth-files/status");
+    expect(patchCall[1].method).toBe("PATCH");
+    expect(JSON.parse(String(patchCall[1].body))).toEqual({ name: "f1.json", disabled: false });
+  });
   it("relay_creds_set per-origin: login с кредами адреса, clear → configured:false", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });

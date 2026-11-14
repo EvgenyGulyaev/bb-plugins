@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DiscoverError } from "./discover";
-import { fetchRelayAccounts, relayOrigin, successPercent } from "./relay-accounts";
+import { fetchAuthFileStates, fetchRelayAccounts, groupAccountsByProvider, relayOrigin, setAuthFileDisabled, successPercent } from "./relay-accounts";
 
 const SNAPSHOT = {
   items: [
@@ -24,6 +24,60 @@ describe("relayOrigin", () => {
   it("срезает /v1 и хвостовые слэши", () => {
     expect(relayOrigin("http://localhost:4010/v1/")).toBe("http://localhost:4010");
     expect(relayOrigin("http://localhost:4010")).toBe("http://localhost:4010");
+  });
+});
+
+describe("fetchAuthFileStates", () => {
+  it("мапит auth_index → name/disabled", async () => {
+    const fetchImpl = vi.fn(ok({ files: [{ name: "f1.json", auth_index: "idx1", disabled: true }, { name: "f2.json", auth_index: "idx2" }, { name: "no-index.json" }] }));
+    const states = await fetchAuthFileStates("http://localhost:4010/v1", "test-mgmt", fetchImpl);
+    expect(states.get("idx1")).toEqual({ name: "f1.json", disabled: true });
+    expect(states.get("idx2")).toEqual({ name: "f2.json", disabled: false });
+    expect(states.size).toBe(2);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://localhost:4010/v0/management/auth-files");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-mgmt");
+  });
+});
+
+describe("setAuthFileDisabled", () => {
+  it("PATCH status с name/disabled", async () => {
+    const fetchImpl = vi.fn(ok({ status: "ok", disabled: true }));
+    expect(await setAuthFileDisabled("http://localhost:4010/v1", "test-mgmt", "f1.json", true, fetchImpl)).toBe(true);
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("http://localhost:4010/v0/management/auth-files/status");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ name: "f1.json", disabled: true });
+  });
+  it("401 → ошибка про логин/пароль", async () => {
+    const fail = async () => new Response("{}", { status: 401 });
+    await expect(setAuthFileDisabled("http://localhost:4010/v1", "bad", "f1.json", true, fail)).rejects.toThrow(/логин и пароль/);
+  });
+});
+
+describe("groupAccountsByProvider", () => {
+  it("секции по провайдеру, алфавит, «Другие» последние", () => {
+    const groups = groupAccountsByProvider([
+      { auth_index: "a1", provider: "xai", quotas: [], disabled: false },
+      { auth_index: "a2", provider: "claude", quotas: [], disabled: false },
+      { auth_index: "a3", provider: "xai", quotas: [], disabled: false },
+      { auth_index: "a4", quotas: [], disabled: false },
+    ]);
+    expect(groups.map((g) => g.provider)).toEqual(["claude", "xai", "Другие"]);
+    expect(groups[1]!.accounts.map((a) => a.auth_index)).toEqual(["a1", "a3"]);
+  });
+  it("секции и аккаунты с квотой — первыми, выключенные после включённых", () => {
+    const groups = groupAccountsByProvider([
+      { auth_index: "noq", provider: "aaa", quotas: [], disabled: false },
+      { auth_index: "q-dis", provider: "bbb", quotas: [{ quota_key: "k" }], disabled: true },
+      { auth_index: "q-on", provider: "bbb", quotas: [{ quota_key: "k" }], disabled: false },
+      { auth_index: "q2", provider: "ccc", quotas: [{ quota_key: "k" }], disabled: false },
+    ]);
+    expect(groups.map((g) => g.provider)).toEqual(["bbb", "ccc", "aaa"]);
+    expect(groups[0]!.accounts.map((a) => a.auth_index)).toEqual(["q-on", "q-dis"]);
+  });
+  it("пустой список → пусто", () => {
+    expect(groupAccountsByProvider([])).toEqual([]);
   });
 });
 

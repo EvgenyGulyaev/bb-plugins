@@ -10,7 +10,7 @@ import {
   type ModelEntry, type ModelsFile,
 } from "./lib/models-file";
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
-import { fetchRelayAccounts, relayAccountSchema, relayOrigin } from "./lib/relay-accounts";
+import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
 
 const providerViewSchema = z.object({
@@ -77,6 +77,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ providerId: providerIdSchema }).strict(),
     output: z.object({ cleared: z.boolean() }),
   },
+  relay_account_toggle: {
+    input: z.object({ providerId: providerIdSchema, authIndex: z.string().min(1).max(200), enabled: z.boolean() }).strict(),
+    output: z.object({ disabled: z.boolean() }),
+  },
 });
 
 const CHANGED = "api-models-changed";
@@ -113,6 +117,32 @@ export default async function plugin(bb: BbPluginApi) {
   const disabledKey = (providerId: string) => `disabled-models:${providerId}`;
   const readDisabled = async (providerId: string): Promise<ModelEntry[]> =>
     (await bb.storage.kv.get<ModelEntry[]>(disabledKey(providerId))) ?? [];
+
+  // Management-доступ: креды per-origin (kv) → глобальный fallback; токен из
+  // кэша сессии, при отзыве — один повторный логин.
+  const credsFor = async (origin: string) =>
+    (await bb.storage.kv.get<{ username: string; password: string }>(`relay-creds:${origin}`))
+    ?? (managementUser && managementPassword ? { username: managementUser, password: managementPassword } : null);
+  async function withManagement<T>(origin: string, fn: (token: string) => Promise<T>): Promise<T> {
+    const creds = await credsFor(origin);
+    if (!creds) throw new Error("креды админки не заданы");
+    const cacheKey = `relay-auth:${origin}`;
+    const cache = {
+      get: async () => (await bb.storage.kv.get<RelaySession>(cacheKey)) ?? null,
+      set: async (session: RelaySession) => { await bb.storage.kv.set(cacheKey, session); },
+    };
+    const token = await getManagementToken({ origin, creds, cache });
+    try {
+      return await fn(token);
+    } catch (cause) {
+      if (cause instanceof Error && /логин и пароль/.test(cause.message)) {
+        const session = await loginRelay(origin, creds);
+        await cache.set(session);
+        return fn(session.access_token);
+      }
+      throw cause;
+    }
+  }
 
   bb.rpc.register(rpcContract, {
     providers_list: async () => {
@@ -217,31 +247,37 @@ export default async function plugin(bb: BbPluginApi) {
       if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
       if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
       const origin = relayOrigin(entry.baseUrl);
-      // креды per-URL (kv), глобальные настройки — fallback
-      const creds = (await bb.storage.kv.get<{ username: string; password: string }>(`relay-creds:${origin}`))
-        ?? (managementUser && managementPassword ? { username: managementUser, password: managementPassword } : null);
-      if (!creds) return { configured: false, items: [] };
-      const cacheKey = `relay-auth:${origin}`;
-      const cache = {
-        get: async () => (await bb.storage.kv.get<RelaySession>(cacheKey)) ?? null,
-        set: async (session: RelaySession) => { await bb.storage.kv.set(cacheKey, session); },
-      };
+      if (!(await credsFor(origin))) return { configured: false, items: [] };
       try {
-        const token = await getManagementToken({ origin, creds, cache });
-        try {
-          return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, token) };
-        } catch (cause) {
-          // сессию отозвали посреди жизни — один повторный логин
-          if (cause instanceof Error && /логин и пароль/.test(cause.message)) {
-            const session = await loginRelay(origin, creds);
-            await cache.set(session);
-            return { configured: true, items: await fetchRelayAccounts(entry.baseUrl, session.access_token) };
+        const items = await withManagement(origin, async (token) => {
+          const accounts = await fetchRelayAccounts(entry.baseUrl as string, token);
+          const states = await fetchAuthFileStates(entry.baseUrl as string, token).catch(() => new Map<string, { name: string; disabled: boolean }>());
+          for (const account of accounts) {
+            const state = states.get(account.auth_index);
+            // shared-аккаунтов нет в auth-files: disabled берём из health_status
+            account.disabled = state ? state.disabled : account.health_status === "disabled";
+            if (state) account.auth_name = state.name;
           }
-          throw cause;
-        }
+          return accounts;
+        });
+        return { configured: true, items };
       } catch (cause) {
         return { configured: true, items: [], error: cause instanceof Error ? cause.message : String(cause) };
       }
+    },
+    relay_account_toggle: async ({ providerId, authIndex, enabled }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const origin = relayOrigin(entry.baseUrl);
+      const disabled = await withManagement(origin, async (token) => {
+        const states = await fetchAuthFileStates(entry.baseUrl as string, token);
+        const state = states.get(authIndex);
+        if (!state) throw new Error(`Аккаунт не найден в auth-files: ${authIndex}`);
+        return setAuthFileDisabled(entry.baseUrl as string, token, state.name, !enabled);
+      });
+      return { disabled };
     },
     relay_creds_set: async ({ providerId, username, password }) => {
       const file = await readModelsFile(filePath);

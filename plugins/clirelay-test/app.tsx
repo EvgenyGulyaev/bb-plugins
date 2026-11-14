@@ -10,7 +10,7 @@ import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
-import { successPercent } from "./lib/relay-accounts";
+import { successPercent, groupAccountsByProvider } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -347,13 +347,18 @@ function countdown(resetAt?: string): string | null {
 }
 
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
-function AccountCard({ account }: { account: RelayAccount }) {
+function AccountCard({ account, onToggle }: { account: RelayAccount; onToggle?: (enabled: boolean) => void }) {
   const success = successPercent(account.usage?.success_rate);
   return (
-    <article className="rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm">
+    <article className={`rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
       <header className="mb-3 flex items-start justify-between gap-3">
         <h3 className="truncate text-base font-semibold tracking-tight">{account.auth_index}</h3>
-        {account.health_status ? <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
+        <span className="flex shrink-0 items-center gap-2">
+          {account.health_status ? <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
+          {onToggle && account.auth_name ? (
+            <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${account.auth_index}`} />
+          ) : null}
+        </span>
       </header>
       <div className="mb-4 flex flex-wrap gap-1.5">
         {account.plan_type ? <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase text-amber-500">{account.plan_type}</span> : null}
@@ -431,6 +436,8 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
   const [data, setData] = useState<{ configured: boolean; items: RelayAccount[]; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [credsOpen, setCredsOpen] = useState(false);
+  const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [stateFilter, setStateFilter] = useState<"all" | "on" | "off">("on");
   const load = useCallback(() => {
     setBusy(true);
     rpc.call("relay_accounts", { providerId }).then(
@@ -466,11 +473,77 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
       ) : data.items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Аккаунтов нет</div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {data.items.map((account) => <AccountCard key={account.auth_index} account={account} />)}
-        </div>
+        <>
+          <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label="Фильтр по состоянию аккаунтов">
+            {([["all", "Все"], ["on", "Вкл"], ["off", "Выкл"]] as const).map(([id, label]) => {
+              const count = id === "all" ? data.items.length : id === "on" ? data.items.filter((a) => !a.disabled).length : data.items.filter((a) => a.disabled).length;
+              return (
+                <button key={id} type="button" onClick={() => setStateFilter(id)} aria-pressed={stateFilter === id}
+                  className={`rounded-full px-2.5 py-1 text-[11px] transition ${stateFilter === id ? "bg-background font-medium shadow-sm" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+                  {label} {count}
+                </button>
+              );
+            })}
+          </div>
+          <ProviderSections
+            items={data.items.filter((a) => stateFilter === "all" || (stateFilter === "on" ? !a.disabled : a.disabled))}
+            filter={providerFilter}
+            onFilter={setProviderFilter}
+            onToggle={(authIndex, enabled) => rpc.call("relay_account_toggle", { providerId, authIndex, enabled })
+              .then(() => { toast.success(enabled ? `Аккаунт включён` : `Аккаунт выключен`); load(); }, report)}
+          />
+        </>
       )}
       {credsOpen ? <RelayCredsDialog providerId={providerId} rpc={rpc} report={report} onClose={() => setCredsOpen(false)} onSaved={load} /> : null}
+    </section>
+  );
+}
+
+/** Секции аккаунтов по провайдеру + фильтр-чипы. */
+function ProviderSections({ items, filter, onFilter, onToggle }: { items: RelayAccount[]; filter: string | null; onFilter: (provider: string | null) => void; onToggle: (authIndex: string, enabled: boolean) => void }) {
+  const groups = groupAccountsByProvider(items);
+  const active = groups.some((group) => group.provider === filter) ? filter : null;
+  const visible = active ? groups.filter((group) => group.provider === active) : groups;
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Фильтр по провайдеру">
+        <button type="button" onClick={() => onFilter(null)} aria-pressed={active === null}
+          className={`rounded-full px-2.5 py-1 text-[11px] transition ${active === null ? "bg-background font-medium shadow-sm" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+          Все {items.length}
+        </button>
+        {groups.map((group) => (
+          <button key={group.provider} type="button" onClick={() => onFilter(group.provider)} aria-pressed={active === group.provider}
+            className={`rounded-full px-2.5 py-1 text-[11px] transition ${active === group.provider ? "bg-background font-medium shadow-sm" : "bg-muted/40 text-muted-foreground hover:text-foreground"}`}>
+            {group.provider} {group.accounts.length}
+          </button>
+        ))}
+      </div>
+      {visible.map((group) => (
+        <AccountProviderSection key={group.provider} group={group} onToggle={onToggle} />
+      ))}
+      {visible.length === 0 ? <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Ничего по фильтру</div> : null}
+    </div>
+  );
+}
+
+/** Сворачиваемая секция провайдера. */
+function AccountProviderSection({ group, onToggle }: { group: { provider: string; accounts: RelayAccount[] }; onToggle: (authIndex: string, enabled: boolean) => void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section>
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="mb-2 flex w-full items-center gap-2 text-left" aria-label={`Свернуть или развернуть ${group.provider}`}>
+        <Icon name="ChevronDown" className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
+        <Icon name="Bot" className="size-4 shrink-0 text-muted-foreground" />
+        <h3 className="text-sm font-semibold capitalize tracking-tight">{group.provider}</h3>
+        <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{group.accounts.length}</span>
+        <span className="h-px flex-1 bg-border/60" />
+      </button>
+      {open ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
+        </div>
+      ) : null}
     </section>
   );
 }

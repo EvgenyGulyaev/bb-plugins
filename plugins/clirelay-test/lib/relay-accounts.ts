@@ -17,6 +17,8 @@ export const relayAccountSchema = z.object({
   plan_type: z.string().nullable().optional(),
   restriction_summary: z.string().nullable().optional(),
   health_status: z.string().optional(),
+  disabled: z.boolean().default(false),
+  auth_name: z.string().optional(),
   quotas: z.array(quotaSchema).default([]),
   usage: z
     .object({
@@ -34,6 +36,99 @@ const snapshotSchema = z.object({ items: z.array(relayAccountSchema).default([])
 // ponytail: origin = baseUrl без хвостового /v1; апгрейд — явная настройка origin.
 export function relayOrigin(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+// Состояния аккаунтов: GET /auth-files → auth_index → {name, disabled}.
+export async function fetchAuthFileStates(
+  baseUrl: string,
+  managementKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Map<string, { name: string; disabled: boolean }>> {
+  const url = `${relayOrigin(baseUrl)}/v0/management/auth-files`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      headers: { Authorization: `Bearer ${managementKey}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === "AbortError") throw new DiscoverError("таймаут 10с: relay не ответил");
+    throw new DiscoverError("не удалось соединиться с relay");
+  }
+  if (response.status === 401 || response.status === 403) throw new DiscoverError("management-доступ отклонён: проверь логин и пароль");
+  if (!response.ok) throw new DiscoverError(`relay ответил HTTP ${response.status}`);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new DiscoverError("relay вернул не JSON");
+  }
+  const files = (body as { files?: unknown })?.files;
+  const states = new Map<string, { name: string; disabled: boolean }>();
+  if (Array.isArray(files)) {
+    for (const file of files) {
+      if (!file || typeof file !== "object") continue;
+      const record = file as Record<string, unknown>;
+      const index = record.auth_index ?? record.authIndex;
+      const name = record.name;
+      if ((typeof index !== "string" && typeof index !== "number") || typeof name !== "string" || !name) continue;
+      states.set(String(index), { name, disabled: record.disabled === true });
+    }
+  }
+  return states;
+}
+
+// Вкл/выкл аккаунта: PATCH /auth-files/status {name, disabled}.
+export async function setAuthFileDisabled(
+  baseUrl: string,
+  managementKey: string,
+  name: string,
+  disabled: boolean,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const url = `${relayOrigin(baseUrl)}/v0/management/auth-files/status`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${managementKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, disabled }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (cause) {
+    if (cause instanceof Error && cause.name === "AbortError") throw new DiscoverError("таймаут 10с: relay не ответил");
+    throw new DiscoverError("не удалось соединиться с relay");
+  }
+  if (response.status === 401 || response.status === 403) throw new DiscoverError("management-доступ отклонён: проверь логин и пароль");
+  if (!response.ok) throw new DiscoverError(`relay ответил HTTP ${response.status}`);
+  const body = (await response.json().catch(() => null)) as { disabled?: unknown } | null;
+  return body?.disabled === true ? true : disabled;
+}
+
+// Секции аккаунтов по провайдеру: сначала с квотой, внутри — включённые
+// перед выключенными; секции без квот в конце, «Другие» последние.
+export function groupAccountsByProvider(accounts: RelayAccount[]): Array<{ provider: string; accounts: RelayAccount[] }> {
+  const byProvider = new Map<string, { provider: string; accounts: RelayAccount[] }>();
+  for (const account of accounts) {
+    const provider = account.provider?.trim() || "Другие";
+    let group = byProvider.get(provider);
+    if (!group) {
+      group = { provider, accounts: [] };
+      byProvider.set(provider, group);
+    }
+    group.accounts.push(account);
+  }
+  const rank = (account: RelayAccount) => (account.quotas.length > 0 ? 0 : 1) * 2 + (account.disabled ? 1 : 0);
+  for (const group of byProvider.values()) {
+    group.accounts.sort((a, b) => rank(a) - rank(b) || a.auth_index.localeCompare(b.auth_index));
+  }
+  return [...byProvider.values()].sort((a, b) => {
+    const tier = (g: { accounts: RelayAccount[] }) => (g.accounts.some((x) => x.quotas.length > 0) ? 0 : 1);
+    if (tier(a) !== tier(b)) return tier(a) - tier(b);
+    if (a.provider === "Другие") return 1;
+    if (b.provider === "Другие") return -1;
+    return a.provider.localeCompare(b.provider);
+  });
 }
 
 // relay отдаёт success_rate долей 0..1; старые сборки могли слать проценты.

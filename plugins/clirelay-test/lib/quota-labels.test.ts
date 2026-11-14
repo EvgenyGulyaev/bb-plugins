@@ -15,6 +15,13 @@ describe("quotaLabel", () => {
     expect(quotaLabel({ quota_key: "x", quota_label: "Gemini Models" })).toBe("Модели Gemini");
     expect(quotaLabel({ quota_key: "x", quota_label: "Claude and GPT models" })).toBe("Модели Claude и GPT");
   });
+  it("составные ключи claude/xai → читаемый русский", () => {
+    expect(quotaLabel({ quota_key: "claude_five_hour" })).toBe("Claude · 5 ч");
+    expect(quotaLabel({ quota_key: "claude_seven_day" })).toBe("Claude · 7 дн");
+    expect(quotaLabel({ quota_key: "claude_model_weekly::fable" })).toBe("Claude · модели · неделя · Fable");
+    expect(quotaLabel({ quota_key: "xai_pay_as_you_go_label" })).toBe("Xai · оплата по факту · тариф");
+    expect(quotaLabel({ quota_key: "xai_month_credits" })).toBe("Xai · месяц · кредиты");
+  });
   it("label-как-ключ разбирается как ключ", () => {
     expect(quotaLabel({ quota_key: "m_quota.code_weekly", quota_label: "m_quota.code_weekly" })).toBe("Код · неделя");
     expect(quotaLabel({ quota_key: "x", quota_label: "m_quota.code_5h" })).toBe("Код · 5 ч");
