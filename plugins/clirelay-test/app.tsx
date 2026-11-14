@@ -10,7 +10,7 @@ import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
-import { successPercent, groupAccountsByProvider } from "./lib/relay-accounts";
+import { successPercent, groupAccountsByProvider, partitionByQuota } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -347,57 +347,72 @@ function countdown(resetAt?: string): string | null {
 }
 
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
-function AccountCard({ account, onToggle }: { account: RelayAccount; onToggle?: (enabled: boolean) => void }) {
+function AccountCard({ account, onToggle, compact = false }: { account: RelayAccount; onToggle?: (enabled: boolean) => void; compact?: boolean }) {
   const success = successPercent(account.usage?.success_rate);
   const displayName = account.email ?? (account.label && account.label !== account.provider ? account.label : undefined) ?? account.auth_index;
+  const controls = (
+    <span className="flex shrink-0 items-center gap-2">
+      {account.health_status ? <span className="rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
+      {onToggle && account.auth_name ? (
+        <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${displayName}`} />
+      ) : null}
+    </span>
+  );
+  const badges = (
+    <>
+      {account.plan_type ? <span className="rounded bg-amber-500/15 px-1.5 py-0 text-[10px] font-semibold uppercase text-amber-500">{account.plan_type}</span> : null}
+      {account.provider ? <span className="flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0 text-[10px]"><Icon name="Bot" className="size-2.5" />{account.provider}</span> : null}
+      {typeof account.usage?.request_total === "number" ? <span className="rounded bg-muted/60 px-1.5 py-0 text-[10px] text-muted-foreground">Cycle {account.usage.request_total}</span> : null}
+      {typeof success === "number" ? (
+        <span className="rounded bg-muted/60 px-1.5 py-0 text-[10px] text-muted-foreground">
+          Success Rate <span className={success >= 95 ? "text-emerald-400" : success >= 80 ? "text-amber-400" : "text-red-400"}>{success.toFixed(1)}%</span>
+        </span>
+      ) : null}
+      {account.restriction_summary ? <span className="flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0 text-[10px] text-red-400"><Icon name="AlertTriangle" className="size-2.5" />{account.restriction_summary}</span> : null}
+    </>
+  );
+  if (compact) {
+    return (
+      <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border/60 bg-background/80 px-3 py-1.5 transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
+        <span className="min-w-0 truncate text-xs font-medium" title={account.auth_index}>{displayName}</span>
+        <span className="flex flex-wrap items-center gap-1">{badges}</span>
+        <span className="ml-auto">{controls}</span>
+      </div>
+    );
+  }
   return (
-    <article className={`rounded-2xl border border-border/60 bg-background/80 p-4 shadow-sm transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
-      <header className="mb-3 flex items-start justify-between gap-3">
+    <article className={`rounded-xl border border-border/60 bg-background/80 p-3 shadow-sm transition-opacity ${account.disabled ? "opacity-60" : ""}`}>
+      <header className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-base font-semibold tracking-tight" title={account.auth_index}>{displayName}</h3>
+          <h3 className="truncate text-sm font-semibold tracking-tight" title={account.auth_index}>{displayName}</h3>
           {displayName !== account.auth_index ? <div className="truncate font-mono text-[10px] text-muted-foreground">{account.auth_index}</div> : null}
         </div>
-        <span className="flex shrink-0 items-center gap-2">
-          {account.health_status ? <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{account.health_status}</span> : null}
-          {onToggle && account.auth_name ? (
-            <Switch checked={!account.disabled} onChange={onToggle} label={`${account.disabled ? "Включить" : "Выключить"} аккаунт ${account.email ?? account.auth_index}`} />
-          ) : null}
-        </span>
+        {controls}
       </header>
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {account.plan_type ? <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase text-amber-500">{account.plan_type}</span> : null}
-        {account.provider ? <span className="flex items-center gap-1 rounded-md bg-muted/60 px-2 py-0.5 text-[11px]"><Icon name="Bot" className="size-3" />{account.provider}</span> : null}
-        {typeof account.usage?.request_total === "number" ? <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">Cycle {account.usage.request_total}</span> : null}
-        {typeof success === "number" ? (
-          <span className="rounded-md bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
-            Success Rate <span className={success >= 95 ? "text-emerald-400" : success >= 80 ? "text-amber-400" : "text-red-400"}>{success.toFixed(1)}%</span>
-          </span>
-        ) : null}
-        {account.restriction_summary ? <span className="flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-0.5 text-[11px] text-red-400"><Icon name="AlertTriangle" className="size-3" />{account.restriction_summary}</span> : null}
-      </div>
-      <div className="flex flex-col gap-3">
+      <div className="mb-2 flex flex-wrap gap-1">{badges}</div>
+      <div className="flex flex-col gap-2">
         {account.quotas.map((quota) => {
           const percent = typeof quota.percent === "number" ? Math.max(0, Math.min(100, quota.percent)) : null;
           const reset = countdown(quota.reset_at);
           const tone = percent === null ? "bg-muted" : percent > 20 ? "bg-emerald-400" : "bg-red-400";
           return (
             <div key={quota.quota_key}>
-              <div className="mb-1 flex items-baseline justify-between gap-2 text-sm">
-                <span className="truncate text-muted-foreground" title={quota.quota_key}>{quotaLabel(quota)}</span>
-                <span className="flex shrink-0 items-center gap-2">
-                  {reset ? <span className="text-xs text-muted-foreground">↺ {reset}</span> : null}
-                  <span className={`text-base font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>
+              <div className="mb-0.5 flex items-baseline justify-between gap-2">
+                <span className="truncate text-xs text-muted-foreground" title={quota.quota_key}>{quotaLabel(quota)}</span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {reset ? <span className="text-[10px] text-muted-foreground">↺ {reset}</span> : null}
+                  <span className={`text-sm font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>
                     {percent === null ? "—" : `${Math.round(percent)}%`}
                   </span>
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted/60">
+              <div className="h-1 overflow-hidden rounded-full bg-muted/60">
                 <div className={`h-full rounded-full ${tone} transition-all`} style={{ width: `${percent ?? 0}%` }} />
               </div>
             </div>
           );
         })}
-        {account.quotas.length === 0 ? <p className="text-sm text-muted-foreground">Квот нет</p> : null}
+        {account.quotas.length === 0 ? <p className="text-xs text-muted-foreground">Квот нет</p> : null}
       </div>
     </article>
   );
@@ -455,7 +470,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
       <div className="mb-2 flex items-center gap-2">
         <Icon name="Folder" className="size-4 shrink-0 text-muted-foreground" />
         <span className="truncate font-mono text-xs text-muted-foreground">{baseUrl}</span>
-        {data?.configured ? <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">креды заданы</span> : null}
+        {data ? <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{data.configured ? "креды заданы" : "креды не заданы"}</span> : null}
         <Button variant="ghost" size="sm" className="ml-auto shrink-0 text-muted-foreground" onClick={() => setCredsOpen(true)} aria-label="Креды адреса">
           <Icon name="Key" className="size-3.5" />Креды
         </Button>
@@ -465,14 +480,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
       </div>
       {data === null ? (
         <div className="h-40 animate-pulse rounded-2xl bg-muted/40" />
-      ) : !data.configured ? (
-        <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm text-muted-foreground">
-          Креды админки для этого адреса не заданы — квоты аккаунтов недоступны.
-          <div className="mt-3">
-            <Button size="sm" onClick={() => setCredsOpen(true)}><Icon name="Key" className="size-3.5" />Задать креды</Button>
-          </div>
-        </div>
-      ) : data.error ? (
+      ) : !data.configured ? null : data.error ? (
         <div className="rounded-2xl bg-destructive/10 p-4 text-sm text-destructive" role="alert">{data.error}</div>
       ) : data.items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Аккаунтов нет</div>
@@ -508,6 +516,7 @@ function ProviderSections({ items, filter, onFilter, onToggle }: { items: RelayA
   const groups = groupAccountsByProvider(items);
   const active = groups.some((group) => group.provider === filter) ? filter : null;
   const visible = active ? groups.filter((group) => group.provider === active) : groups;
+  const { quotaGroups, quotaless } = partitionByQuota(visible);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-1" role="group" aria-label="Фильтр по провайдеру">
@@ -522,31 +531,46 @@ function ProviderSections({ items, filter, onFilter, onToggle }: { items: RelayA
           </button>
         ))}
       </div>
-      {visible.map((group) => (
+      {quotaGroups.map((group) => (
         <AccountProviderSection key={group.provider} group={group} onToggle={onToggle} />
       ))}
+      {quotaless.length > 0 ? (
+        <AccountProviderSection
+          group={{ provider: "Без квот", accounts: quotaless }}
+          onToggle={onToggle}
+          defaultOpen={false}
+          icon="Archive"
+          compact
+        />
+      ) : null}
       {visible.length === 0 ? <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Ничего по фильтру</div> : null}
     </div>
   );
 }
 
 /** Сворачиваемая секция провайдера. */
-function AccountProviderSection({ group, onToggle }: { group: { provider: string; accounts: RelayAccount[] }; onToggle: (authIndex: string, enabled: boolean) => void }) {
-  const [open, setOpen] = useState(true);
+function AccountProviderSection({ group, onToggle, defaultOpen = true, icon = "Bot", compact = false }: { group: { provider: string; accounts: RelayAccount[] }; onToggle: (authIndex: string, enabled: boolean) => void; defaultOpen?: boolean; icon?: string; compact?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <section>
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
         className="mb-2 flex w-full items-center gap-2 text-left" aria-label={`Свернуть или развернуть ${group.provider}`}>
         <Icon name="ChevronDown" className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "" : "-rotate-90"}`} />
-        <Icon name="Bot" className="size-4 shrink-0 text-muted-foreground" />
+        <Icon name={icon} className="size-4 shrink-0 text-muted-foreground" />
         <h3 className="text-sm font-semibold capitalize tracking-tight">{group.provider}</h3>
         <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{group.accounts.length}</span>
         <span className="h-px flex-1 bg-border/60" />
       </button>
       {open ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
-        </div>
+        compact ? (
+          <div className="flex flex-col gap-1.5">
+            {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} compact onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {group.accounts.map((account) => <AccountCard key={account.auth_index} account={account} onToggle={(enabled) => onToggle(account.auth_index, enabled)} />)}
+          </div>
+        )
       ) : null}
     </section>
   );

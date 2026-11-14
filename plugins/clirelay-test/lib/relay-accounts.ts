@@ -138,6 +138,18 @@ export function groupAccountsByProvider(accounts: RelayAccount[]): Array<{ provi
   });
 }
 
+// Секции с квотой отдельно; аккаунты без квот — одним списком под общий аккордеон.
+export function partitionByQuota(groups: Array<{ provider: string; accounts: RelayAccount[] }>): {
+  quotaGroups: Array<{ provider: string; accounts: RelayAccount[] }>;
+  quotaless: RelayAccount[];
+} {
+  const hasQuota = (group: { accounts: RelayAccount[] }) => group.accounts.some((account) => account.quotas.length > 0);
+  return {
+    quotaGroups: groups.filter(hasQuota),
+    quotaless: groups.filter((group) => !hasQuota(group)).flatMap((group) => group.accounts),
+  };
+}
+
 // relay отдаёт success_rate долей 0..1; старые сборки могли слать проценты.
 export function successPercent(rate: number | undefined): number | undefined {
   if (typeof rate !== "number" || !Number.isFinite(rate)) return undefined;

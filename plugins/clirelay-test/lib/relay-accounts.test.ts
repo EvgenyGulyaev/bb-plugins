@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DiscoverError } from "./discover";
-import { fetchAuthFileStates, fetchRelayAccounts, groupAccountsByProvider, relayOrigin, setAuthFileDisabled, successPercent } from "./relay-accounts";
+import { fetchAuthFileStates, fetchRelayAccounts, groupAccountsByProvider, partitionByQuota, relayOrigin, setAuthFileDisabled, successPercent } from "./relay-accounts";
 
 const SNAPSHOT = {
   items: [
@@ -24,6 +24,25 @@ describe("relayOrigin", () => {
   it("срезает /v1 и хвостовые слэши", () => {
     expect(relayOrigin("http://localhost:4010/v1/")).toBe("http://localhost:4010");
     expect(relayOrigin("http://localhost:4010")).toBe("http://localhost:4010");
+  });
+});
+
+describe("partitionByQuota", () => {
+  it("секции с квотой отдельно, без квот — одним списком", () => {
+    const groups = groupAccountsByProvider([
+      { auth_index: "q1", provider: "claude", quotas: [{ quota_key: "k" }], disabled: false },
+      { auth_index: "n1", provider: "gemini", quotas: [], disabled: false },
+      { auth_index: "n2", provider: "openrouter", quotas: [], disabled: false },
+      { auth_index: "q2", provider: "claude", quotas: [{ quota_key: "k" }], disabled: false },
+    ]);
+    const { quotaGroups, quotaless } = partitionByQuota(groups);
+    expect(quotaGroups.map((g) => g.provider)).toEqual(["claude"]);
+    expect(quotaless.map((a) => a.auth_index)).toEqual(["n1", "n2"]);
+  });
+  it("все без квот → пустые секции, весь список в quotaless", () => {
+    const { quotaGroups, quotaless } = partitionByQuota(groupAccountsByProvider([{ auth_index: "n1", quotas: [], disabled: false }]));
+    expect(quotaGroups).toEqual([]);
+    expect(quotaless).toHaveLength(1);
   });
 });
 
