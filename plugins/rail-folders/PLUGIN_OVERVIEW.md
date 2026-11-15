@@ -18,8 +18,19 @@ another folder or onto a single icon to place it before or after — the
 insertion line follows which half of the target the pointer is over — so a
 folder can sit between single icons. Drag it onto the free rail to move it to
 the end of the whole rail. Icons the user hid stay reachable from the "More"
-menu instead of disappearing; that menu also holds "Customize rail…", which
-opens bb's own rail editor.
+menu instead of disappearing.
+
+"Customize rail…" in that menu opens the plugin's own editor — one modal with
+the whole arrangement in it. Its "Folders" section lists every folder with its
+icon, name and member count, arrows that step it through the mixed rail order,
+and buttons to rename it through the same icon picker or delete it after a
+confirmation; when there are no folders it says to start one from an icon's
+context menu. Its "Single icons" section lists the ungrouped icons in the rail
+order, hidden ones included: arrows move an icon past a neighbour (a folder or
+another icon alike) and a checkbox calls the host's `setVisible`, so hidden
+rows are dimmed with the switch off and visibility never lands in the plugin's
+storage. The footer keeps bb's own editor one click away ("Редактор BB…") and a
+"Готово" button closes the modal.
 
 Settings → Rail Folders creates folders and manages their name, BB icon name,
 position in the rail, member order and removal. Folder and member arrow buttons

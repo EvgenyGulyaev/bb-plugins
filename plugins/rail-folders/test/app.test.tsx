@@ -265,15 +265,17 @@ describe("rail layout", () => {
     expect(folderButton.getAttribute("aria-label")).toBe("Работа");
   });
 
-  it("opens bb's rail editor from the overflow menu", async () => {
+  it("opens the plugin's rail editor from the overflow menu, not bb's", async () => {
     const slot = mount();
     fireEvent.click(slot.getByRole("button", { name: "Ещё" }));
     fireEvent.click(
       await screen.findByRole("menuitem", { name: /Настроить рейл/ }),
     );
-    expect(slot.inspection.sidebarNavigationCalls).toEqual([
-      { method: "openCustomize" },
-    ]);
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("heading", { name: "Настроить рейл" }),
+    ).toBeTruthy();
+    expect(slot.inspection.sidebarNavigationCalls).toEqual([]);
   });
 
   it("keeps the rail editor reachable when nothing is hidden", async () => {
@@ -1379,5 +1381,246 @@ describe("settings section", () => {
     expect(
       await screen.findByText(/Папок пока нет/),
     ).toBeTruthy();
+  });
+});
+
+describe("customize dialog", () => {
+  async function openCustomize(
+    options: Parameters<typeof mount>[0] = {},
+  ): Promise<{ slot: RenderedSlot; dialog: HTMLElement }> {
+    const slot = mount(options);
+    fireEvent.click(slot.getByRole("button", { name: "Ещё" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Настроить рейл/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    return { slot, dialog };
+  }
+
+  it("is a labelled modal dialog with a description and a close path", async () => {
+    const { dialog } = await openCustomize();
+
+    const titleId = dialog.getAttribute("aria-labelledby");
+    const descriptionId = dialog.getAttribute("aria-describedby");
+    expect(titleId).toBeTruthy();
+    expect(descriptionId).toBeTruthy();
+    expect(document.getElementById(titleId!)?.textContent).toBe(
+      "Настроить рейл",
+    );
+    expect(document.getElementById(descriptionId!)?.textContent).toMatch(
+      /Папки и одиночные иконки/,
+    );
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Готово" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes on Escape", async () => {
+    const { dialog } = await openCustomize();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("traps focus inside the modal", async () => {
+    const { dialog } = await openCustomize();
+    const done = within(dialog).getByRole("button", { name: "Готово" });
+    done.focus();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(document.activeElement!, { key: "Tab" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it("lists folders with their icon, name and member count", async () => {
+    const { dialog } = await openCustomize({ state: folderState() });
+
+    const folders = within(dialog).getByRole("list", { name: "Папки" });
+    const row = folders.querySelector<HTMLElement>(
+      '[data-customize-folder="folder_a"]',
+    )!;
+    expect(row.textContent).toContain("Работа");
+    expect(row.textContent).toContain("Иконок: 1");
+  });
+
+  it("explains how to make the first folder when there are none", async () => {
+    const { dialog } = await openCustomize();
+    expect(
+      within(dialog).getByText(
+        "Папок нет — создай через правый клик по иконке рейла.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps the empty state while the arrangement is loading", async () => {
+    const { dialog } = await openCustomize({
+      rpc: { rail_state: () => new Promise(() => {}) },
+    });
+    expect(within(dialog).getByRole("status").textContent).toBe(
+      "Загрузка папок…",
+    );
+  });
+
+  it("moves a folder through the mixed order with the arrows", async () => {
+    const { slot, dialog } = await openCustomize({ state: twoFolders() });
+
+    const up = within(dialog).getByRole("button", { name: "Выше: Работа" }) as HTMLButtonElement;
+    expect(up.disabled).toBe(true);
+    expect(
+      (within(dialog).getByRole("button", { name: "Ниже: Инструменты" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ниже: Работа" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_move")).toEqual([
+        { method: "folders_move", input: { id: "folder_a", direction: "down" } },
+      ]),
+    );
+  });
+
+  it("lists single icons in rail order and steps one over a folder", async () => {
+    const { slot, dialog } = await openCustomize({
+      state: {
+        ...twoFolders(),
+        order: [NEW_THREAD.id, "folder_a", "folder_b"],
+      },
+    });
+
+    const list = within(dialog).getByRole("list", { name: "Одиночные иконки" });
+    expect(
+      Array.from(list.querySelectorAll("[data-customize-item]")).map(
+        (element) => (element as HTMLElement).dataset.customizeItem,
+      ),
+    ).toEqual([NEW_THREAD.id, PANEL_B.id, HIDDEN.id, DISABLED.id]);
+
+    expect(
+      (within(dialog).getByRole("button", { name: "Выше: Новый поток" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (within(dialog).getByRole("button", { name: "Ниже: Отключена" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ниже: Новый поток" }),
+    );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              "folder_b",
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("shows a hidden icon dimmed with its switch off", async () => {
+    const { dialog } = await openCustomize();
+
+    const row = dialog.querySelector<HTMLElement>(
+      `[data-customize-item="${HIDDEN.id}"]`,
+    )!;
+    expect(row.getAttribute("data-hidden")).toBe("");
+    expect(row.className).toContain("opacity-60");
+    expect(
+      (within(row).getByRole("checkbox") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(
+      (within(dialog).getByRole("checkbox", { name: "Показывать «Панель B»" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("hides and shows an icon through the host, never through kv", async () => {
+    const { slot, dialog } = await openCustomize();
+
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: "Показывать «Панель B»" }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", { name: "Показывать «Скрытая»" }),
+    );
+
+    expect(slot.inspection.sidebarNavigationCalls).toEqual([
+      { method: "setVisible", itemId: PANEL_B.id, isVisible: false },
+      { method: "setVisible", itemId: HIDDEN.id, isVisible: true },
+    ]);
+    expect(slot.inspection.rpcCalls.map((call) => call.method)).not.toContain(
+      "folders_set_visible",
+    );
+  });
+
+  it("renames a folder from the dialog through the icon-picker modal", async () => {
+    const { slot, dialog } = await openCustomize({ state: folderState() });
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Переименовать" }),
+    );
+    const rename = await screen.findByRole("dialog", {
+      name: "Переименовать папку",
+    });
+    fireEvent.change(within(rename).getByRole("textbox", { name: "Название папки" }), {
+      target: { value: "Дом" },
+    });
+    fireEvent.click(within(rename).getByRole("radio", { name: "House" }));
+    fireEvent.click(within(rename).getByRole("button", { name: "Сохранить" }));
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_rename")).toEqual([
+        { method: "folders_rename", input: { id: "folder_a", name: "Дом" } },
+      ]),
+    );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_set_icon")).toEqual([
+        { method: "folders_set_icon", input: { id: "folder_a", icon: "House" } },
+      ]),
+    );
+  });
+
+  it("deletes a folder only after confirmation", async () => {
+    const { slot, dialog } = await openCustomize({ state: folderState() });
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Удалить папку Работа" }),
+    );
+    const confirm = await screen.findByRole("dialog", {
+      name: "Удалить папку?",
+    });
+    expect(rpcCalls(slot, "folders_delete")).toEqual([]);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Удалить папку" }));
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_delete")).toEqual([
+        { method: "folders_delete", input: { id: "folder_a" } },
+      ]),
+    );
+  });
+
+  it("hands over to bb's editor and closes itself", async () => {
+    const { slot } = await openCustomize();
+
+    fireEvent.click(screen.getByRole("button", { name: /Редактор BB/ }));
+
+    expect(slot.inspection.sidebarNavigationCalls).toEqual([
+      { method: "openCustomize" },
+    ]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps a grouped icon out of the single icon list", async () => {
+    const { dialog } = await openCustomize({ state: folderState() });
+    expect(
+      dialog.querySelector(`[data-customize-item="${PANEL_A.id}"]`),
+    ).toBeNull();
   });
 });

@@ -49,6 +49,7 @@ import {
   RenameFolderDialog,
 } from "./FolderDialogs";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
+import { RailCustomizeDialog } from "./RailCustomizeDialog";
 import {
   RailMenuRow,
   dropSideFor,
@@ -107,11 +108,13 @@ function MoreItemsButton({
   activeItemId,
   showShortcut,
   menu,
+  onCustomize,
 }: {
   items: readonly ExperimentalSidebarNavigationItem[];
   activeItemId: string | null;
   showShortcut: boolean;
   menu: ItemMenuActions;
+  onCustomize: () => void;
 }) {
   const { actions } = experimental_useSidebarNavigation();
   const [open, setOpen] = useState(false);
@@ -166,7 +169,7 @@ function MoreItemsButton({
           role="menuitem"
           onClick={() => {
             setOpen(false);
-            actions.openCustomize();
+            onCustomize();
           }}
           className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-state-hover focus-visible:bg-state-hover"
         >
@@ -548,10 +551,11 @@ function RailItemButton({
 export function RailFolders() {
   const { items, activeItemId, isShortcutModifierHeld, actions } =
     experimental_useSidebarNavigation();
-  const { state, error, mutate } = useRailFolders();
+  const { state, isLoaded, error, mutate } = useRailFolders();
   const [renameTarget, setRenameTarget] = useState<Folder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
 
   const itemsById = useMemo(
@@ -709,6 +713,7 @@ export function RailFolders() {
             activeItemId={activeItemId}
             showShortcut={isShortcutModifierHeld}
             menu={menu}
+            onCustomize={() => setCustomizeOpen(true)}
           />
           {error === null ? null : (
             <p
@@ -746,6 +751,25 @@ export function RailFolders() {
           if (deleteTarget !== null) {
             void mutate("folders_delete", { id: deleteTarget.id });
           }
+        }}
+      />
+      <RailCustomizeDialog
+        open={customizeOpen}
+        onClose={() => setCustomizeOpen(false)}
+        state={state}
+        isLoaded={isLoaded}
+        items={items}
+        actions={actions}
+        onMoveFolder={(folder, direction) => {
+          void mutate("folders_move", { id: folder.id, direction });
+        }}
+        onRenameFolder={setRenameTarget}
+        onDeleteFolder={setDeleteTarget}
+        onSetOrder={(order) => {
+          void mutate("rail_set_order", { order });
+        }}
+        onSetVisible={(itemId, isVisible) => {
+          actions.setVisible(itemId, isVisible);
         }}
       />
     </>
