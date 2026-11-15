@@ -143,7 +143,7 @@ function SingleIconRow({
           type="checkbox"
           className="size-3.5 cursor-pointer accent-foreground"
           checked={item.isVisible}
-          aria-label={`Показывать «${item.label}»`}
+          aria-label={`Показывать «${label}»`}
           onChange={(event) => onSetVisible(item.id, event.target.checked)}
         />
         Видно
@@ -152,7 +152,7 @@ function SingleIconRow({
         type="button"
         size="icon"
         variant="ghost"
-        aria-label={`Выше: ${item.label}`}
+        aria-label={`Выше: ${label}`}
         disabled={!canMoveUp}
         onClick={() => onMove(item, "up")}
         className="size-7"
@@ -163,7 +163,7 @@ function SingleIconRow({
         type="button"
         size="icon"
         variant="ghost"
-        aria-label={`Ниже: ${item.label}`}
+        aria-label={`Ниже: ${label}`}
         disabled={!canMoveDown}
         onClick={() => onMove(item, "down")}
         className="size-7"

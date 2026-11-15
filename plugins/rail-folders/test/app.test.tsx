@@ -1524,6 +1524,22 @@ describe("customize dialog", () => {
     );
   });
 
+  it("names a row's controls with the same label the row shows", async () => {
+    const { dialog } = await openCustomize();
+    // PANEL_A carries a badge, so its accessible name folds the badge in, just
+    // like the rail's own icons.
+    const labelled = "Панель A, 3 открытые задачи";
+    expect(
+      within(dialog).getByRole("checkbox", { name: `Показывать «${labelled}»` }),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: `Выше: ${labelled}` }),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: `Ниже: ${labelled}` }),
+    ).toBeTruthy();
+  });
+
   it("shows a hidden icon dimmed with its switch off", async () => {
     const { dialog } = await openCustomize();
 
