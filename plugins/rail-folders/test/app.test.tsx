@@ -1329,6 +1329,51 @@ describe("settings section", () => {
     );
   });
 
+  it("steps a folder the saved order forgot out of the drawn tail", async () => {
+    const slot = mount({
+      state: { ...twoFolders(), order: ["folder_a"] },
+      settings: true,
+    });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    // A forgotten folder is drawn after every single icon (`railEditableSequence`
+    // appends it), so its arrows must follow that drawn slot, not a missing
+    // saved one.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Выше: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Ниже: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Выше: Инструменты" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              "folder_b",
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
   it("steps a folder through the mixed order with the arrows", async () => {
     const slot = mount({
       state: {
@@ -1559,6 +1604,50 @@ describe("customize dialog", () => {
               "folder_b",
               PANEL_B.id,
               HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("steps a folder the saved order forgot out of the drawn tail", async () => {
+    const { slot, dialog } = await openCustomize({
+      state: { ...twoFolders(), order: ["folder_a"] },
+    });
+
+    // The forgotten folder sits at the end of the drawn sequence, so it can
+    // step up over the last single icon and has nowhere left to go down.
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Выше: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Ниже: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Выше: Инструменты" }),
+    );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              "folder_b",
               DISABLED.id,
             ],
           },
