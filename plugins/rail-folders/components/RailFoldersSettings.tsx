@@ -28,16 +28,16 @@ function moveMember(
 
 function FolderRow({
   folder,
-  index,
-  count,
+  canMoveUp,
+  canMoveDown,
   onSave,
   onMove,
   onReorderItems,
   onDelete,
 }: {
   folder: Folder;
-  index: number;
-  count: number;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   onSave: (folder: Folder, name: string, icon: string) => void;
   onMove: (folder: Folder, direction: "up" | "down") => void;
   onReorderItems: (folder: Folder, itemIds: string[]) => void;
@@ -94,7 +94,7 @@ function FolderRow({
         size="icon"
         variant="ghost"
         aria-label={`Выше: ${folder.name}`}
-        disabled={index === 0}
+        disabled={!canMoveUp}
         onClick={() => onMove(folder, "up")}
         className="size-8"
       >
@@ -105,7 +105,7 @@ function FolderRow({
         size="icon"
         variant="ghost"
         aria-label={`Ниже: ${folder.name}`}
-        disabled={index === count - 1}
+        disabled={!canMoveDown}
         onClick={() => onMove(folder, "down")}
         className="size-8"
       >
@@ -264,27 +264,34 @@ export function RailFoldersSettings() {
         </p>
       ) : (
         <ul className="flex flex-col gap-2" aria-label="Папки">
-          {folders.map((folder, index) => (
-            <FolderRow
-              key={folder.id}
-              folder={folder}
-              index={index}
-              count={folders.length}
-              onSave={(target, name, icon) => {
-                void save(target, name, icon);
-              }}
-              onMove={(target, direction) => {
-                void mutate("folders_move", { id: target.id, direction });
-              }}
-              onReorderItems={(target, itemIds) => {
-                void mutate("folders_reorder_items", {
-                  id: target.id,
-                  itemIds,
-                });
-              }}
-              onDelete={setDeleteTarget}
-            />
-          ))}
+          {folders.map((folder) => {
+            // The arrows step through the mixed rail order, so a folder can
+            // cross a single icon anchor as well as a sibling folder.
+            const position = state.order.indexOf(folder.id);
+            return (
+              <FolderRow
+                key={folder.id}
+                folder={folder}
+                canMoveUp={position > 0}
+                canMoveDown={
+                  position >= 0 && position < state.order.length - 1
+                }
+                onSave={(target, name, icon) => {
+                  void save(target, name, icon);
+                }}
+                onMove={(target, direction) => {
+                  void mutate("folders_move", { id: target.id, direction });
+                }}
+                onReorderItems={(target, itemIds) => {
+                  void mutate("folders_reorder_items", {
+                    id: target.id,
+                    itemIds,
+                  });
+                }}
+                onDelete={setDeleteTarget}
+              />
+            );
+          })}
         </ul>
       )}
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -724,6 +724,25 @@ describe("drag and drop", () => {
     return element;
   }
 
+  // jsdom has no DragEvent, so `fireEvent.dragOver` falls back to a plain
+  // Event and drops `clientY`. A real MouseEvent keeps the pointer position
+  // that decides the insertion half.
+  function dragOverAt(
+    element: HTMLElement,
+    data: ReturnType<typeof transfer>,
+    clientY: number,
+  ) {
+    const event = new MouseEvent("dragover", {
+      bubbles: true,
+      cancelable: true,
+      clientY,
+    });
+    Object.defineProperty(event, "dataTransfer", { value: data });
+    act(() => {
+      element.dispatchEvent(event);
+    });
+  }
+
   it("drops a rail icon on a folder and adds it there", async () => {
     const slot = mount({
       state: createFolder(EMPTY_RAIL_STATE, {
@@ -940,16 +959,103 @@ describe("drag and drop", () => {
     fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
 
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_reorder",
-          input: { id: "folder_a", index: 1 },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
   });
 
-  it("shifts the folder index when dragging it below a later sibling", async () => {
+  it("places a folder between single icons by dropping on one", async () => {
+    const slot = mount({ state: twoFolders() });
+    await screen.findByRole("button", { name: /^Работа/ });
+    const source = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+    const target = withRect(
+      slot.container.querySelector<HTMLElement>(
+        `[data-rail-entry="item:${PANEL_B.id}"]`,
+      )!,
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    dragOverAt(target, data, 19);
+    expect(
+      target.querySelector('[data-folder-drop-line="after"]'),
+    ).not.toBeNull();
+    expect(
+      slot.container.querySelector('[data-folder-drop-line="after"]'),
+    ).not.toBeNull();
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              "folder_a",
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("places a folder before a single icon when dropped on its upper half", async () => {
+    const slot = mount({ state: twoFolders() });
+    await screen.findByRole("button", { name: /^Работа/ });
+    const source = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+    const target = withRect(
+      slot.container.querySelector<HTMLElement>(
+        `[data-rail-entry="item:${PANEL_B.id}"]`,
+      )!,
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    dragOverAt(target, data, 5);
+    expect(
+      target.querySelector('[data-folder-drop-line="before"]'),
+    ).not.toBeNull();
+    fireEvent.drop(target, { dataTransfer: data, clientY: 5 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              NEW_THREAD.id,
+              "folder_a",
+              PANEL_B.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("moves a folder below a later sibling", async () => {
     const slot = mount({
       state: createFolder(twoFolders(), {
         id: "folder_c",
@@ -971,10 +1077,19 @@ describe("drag and drop", () => {
     fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
 
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_reorder",
-          input: { id: "folder_a", index: 1 },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              "folder_c",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
@@ -997,10 +1112,18 @@ describe("drag and drop", () => {
     fireEvent.drop(dropZone, { dataTransfer: data });
 
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_reorder",
-          input: { id: "folder_a", index: 1 },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              DISABLED.id,
+              "folder_a",
+            ],
+          },
         },
       ]),
     );
@@ -1159,6 +1282,43 @@ describe("settings section", () => {
         {
           method: "folders_move",
           input: { id: "folder_a", direction: "down" },
+        },
+      ]),
+    );
+  });
+
+  it("steps a folder through the mixed order with the arrows", async () => {
+    const slot = mount({
+      state: {
+        ...twoFolders(),
+        order: [PANEL_B.id, "folder_a", "folder_b"],
+      },
+      settings: true,
+    });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    expect(
+      (screen.getByRole("button", { name: "Выше: Работа" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Ниже: Работа" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Ниже: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Выше: Работа" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_move")).toEqual([
+        {
+          method: "folders_move",
+          input: { id: "folder_a", direction: "up" },
         },
       ]),
     );

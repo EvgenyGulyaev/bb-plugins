@@ -35,9 +35,11 @@ import {
   folderMembers,
   folderOfItem,
   layoutRail,
-  orderedFolders,
+  placeInOrder,
+  railSequence,
   type Folder,
   type InsertionSide,
+  type RailFoldersState,
 } from "@/lib/folders";
 import { cn } from "@/lib/utils";
 
@@ -191,7 +193,7 @@ function FolderButton({
   onRename,
   onDelete,
   onDropItem,
-  onReorderFolder,
+  onPlaceFolder,
   onReorderItems,
 }: {
   folder: Folder;
@@ -203,9 +205,9 @@ function FolderButton({
   onRename: (folder: Folder) => void;
   onDelete: (folder: Folder) => void;
   onDropItem: (folderId: string, itemId: string) => void;
-  onReorderFolder: (
+  onPlaceFolder: (
     draggedFolderId: string,
-    targetFolderId: string,
+    targetId: string | null,
     side: InsertionSide,
   ) => void;
   onReorderItems: (folderId: string, itemIds: string[]) => void;
@@ -330,7 +332,7 @@ function FolderButton({
                     event.dataTransfer.getData(RAIL_FOLDER_DRAG_MIME);
                   clearDrop();
                   if (draggedFolderId !== "") {
-                    onReorderFolder(draggedFolderId, folder.id, side);
+                    onPlaceFolder(draggedFolderId, folder.id, side);
                     return;
                   }
                   const itemId = event.dataTransfer.getData(
@@ -422,20 +424,29 @@ function RailItemButton({
   showShortcut,
   actions,
   menu,
+  onPlaceFolder,
 }: {
   item: ExperimentalSidebarNavigationItem;
   isActive: boolean;
   showShortcut: boolean;
   actions: ExperimentalSidebarNavigationActions;
   menu: ItemMenuActions;
+  onPlaceFolder: (
+    draggedFolderId: string,
+    targetId: string | null,
+    side: InsertionSide,
+  ) => void;
 }) {
   const split = experimental_useSidebarNavigationSplit(item.id);
   const [dragging, setDragging] = useState(false);
+  const [folderDrop, setFolderDrop] = useState<InsertionSide | null>(null);
   const unavailable = item.isDisabled || item.isLoading;
   const label = railItemLabel(item);
 
   return (
     // The wrapper owns the native drag so the button keeps the split gesture.
+    // It is also a drop target for a folder, which then lands before or after
+    // this single icon.
     <div
       draggable
       data-rail-entry={`item:${item.id}`}
@@ -445,9 +456,54 @@ function RailItemButton({
         event.dataTransfer.effectAllowed = "move";
         setDragging(true);
       }}
-      onDragEnd={() => setDragging(false)}
-      className={cn("shrink-0 rounded-md transition", dragging && "opacity-40")}
+      onDragEnd={() => {
+        setDragging(false);
+        setFolderDrop(null);
+      }}
+      onDragOver={(event) => {
+        if (!carriesRailFolder(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        setFolderDrop(dropSideFor(event));
+      }}
+      onDragLeave={(event) => {
+        if (!carriesRailFolder(event.dataTransfer)) return;
+        event.stopPropagation();
+        if (
+          event.currentTarget.contains(event.relatedTarget as Node | null)
+        ) {
+          return;
+        }
+        setFolderDrop(null);
+      }}
+      onDrop={(event) => {
+        if (!carriesRailFolder(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const side = folderDrop ?? dropSideFor(event);
+        const draggedFolderId =
+          event.dataTransfer.getData(RAIL_FOLDER_DRAG_MIME);
+        setFolderDrop(null);
+        if (draggedFolderId !== "") {
+          onPlaceFolder(draggedFolderId, item.id, side);
+        }
+      }}
+      className={cn(
+        "relative shrink-0 rounded-md transition",
+        dragging && "opacity-40",
+      )}
     >
+      {folderDrop === null ? null : (
+        <span
+          data-folder-drop-line={folderDrop}
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-primary",
+            folderDrop === "before" ? "-top-px" : "-bottom-px",
+          )}
+        />
+      )}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
@@ -525,24 +581,31 @@ export function RailFolders() {
   const reorderItems = (folderId: string, itemIds: string[]) => {
     void mutate("folders_reorder_items", { id: folderId, itemIds });
   };
-  // The index is the folder's final slot after removing it, so a drop below a
-  // later sibling needs the same shift an array splice would do.
-  const reorderFolderBeside = (
+  // A folder lands where the pointer is: before or after the hovered folder or
+  // single icon, or at the end of the whole rail for a drop on free space. The
+  // frontend materializes the drawn sequence and sends it as one new order.
+  const placeFolder = (
     draggedFolderId: string,
-    targetFolderId: string,
+    targetId: string | null,
     side: InsertionSide,
   ) => {
-    const ids = orderedFolders(state).map((folder) => folder.id);
-    const from = ids.indexOf(draggedFolderId);
-    const target = ids.indexOf(targetFolderId);
-    if (from < 0 || target < 0) return;
+    const sequence = railSequence(state, items);
+    const target = targetId === null ? -1 : sequence.indexOf(targetId);
+    if (targetId !== null && target < 0) return;
+    const beforeId =
+      targetId === null
+        ? null
+        : side === "after"
+          ? sequence[target + 1] ?? null
+          : targetId;
 
-    let index = target + (side === "after" ? 1 : 0);
-    if (from < index) index -= 1;
-    void mutate("folders_reorder", {
-      id: draggedFolderId,
-      index: Math.max(0, Math.min(index, ids.length - 1)),
-    });
+    const materialized: RailFoldersState = {
+      folders: state.folders,
+      order: sequence,
+    };
+    const next = placeInOrder(materialized, items, draggedFolderId, beforeId);
+    if (next === materialized) return;
+    void mutate("rail_set_order", { order: next.order });
   };
 
   const menu: ItemMenuActions = {
@@ -584,13 +647,10 @@ export function RailFolders() {
             event.preventDefault();
             setDropActive(false);
             const folderId = event.dataTransfer.getData(RAIL_FOLDER_DRAG_MIME);
-            // A folder dropped on the free rail goes to the end of the folder
+            // A folder dropped on the free rail goes to the end of the whole
             // order; an icon row dropped there leaves its folder.
             if (folderId !== "" && folderById(state, folderId) !== null) {
-              void mutate("folders_reorder", {
-                id: folderId,
-                index: Math.max(orderedFolders(state).length - 1, 0),
-              });
+              placeFolder(folderId, null, "after");
               return;
             }
             const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
@@ -629,7 +689,7 @@ export function RailFolders() {
                 onRename={setRenameTarget}
                 onDelete={setDeleteTarget}
                 onDropItem={addToFolder}
-                onReorderFolder={reorderFolderBeside}
+                onPlaceFolder={placeFolder}
                 onReorderItems={reorderItems}
               />
             ) : (
@@ -640,6 +700,7 @@ export function RailFolders() {
                 showShortcut={isShortcutModifierHeld}
                 actions={actions}
                 menu={menu}
+                onPlaceFolder={placeFolder}
               />
             ),
           )}

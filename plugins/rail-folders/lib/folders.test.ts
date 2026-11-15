@@ -14,11 +14,14 @@ import {
   moveFolderToIndex,
   normalizeState,
   orderedFolders,
+  placeInOrder,
   railFoldersStateSchema,
+  railSequence,
   removeItemFromFolder,
   renameFolder,
   reorderItems,
   setFolderIcon,
+  setRailOrder,
 } from "./folders";
 
 const STATE = () =>
@@ -207,22 +210,31 @@ describe("editing folders", () => {
     expect(deleteFolder(state, "folder_a")).toBe(state);
   });
 
-  it("moves a folder past the nearest folder, leaving item slots alone", () => {
+  it("moves a folder one slot through the mixed order, past icons and folders", () => {
     const state = {
       ...STATE(),
       order: ["__bb__/new-thread", "folder_a", "plugin-a/panel", "folder_b"],
     };
     expect(moveFolder(state, "folder_b", "up").order).toEqual([
       "__bb__/new-thread",
+      "folder_a",
       "folder_b",
       "plugin-a/panel",
-      "folder_a",
     ]);
-    expect(moveFolder(state, "folder_a", "up").order).toEqual(
-      state.order,
-    );
-    expect(moveFolder(state, "folder_a", "up")).toBe(state);
+    expect(moveFolder(state, "folder_a", "up").order).toEqual([
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "folder_b",
+    ]);
+    expect(moveFolder(state, "folder_a", "down").order).toEqual([
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "folder_a",
+      "folder_b",
+    ]);
     expect(moveFolder(state, "folder_b", "down")).toBe(state);
+    expect(moveFolder(state, "folder_gone", "up")).toBe(state);
   });
 });
 
@@ -294,14 +306,14 @@ describe("moveFolderToIndex", () => {
     order: ["__bb__/new-thread", "folder_a", "plugin-a/panel", "folder_b"],
   });
 
-  it("moves a folder to an absolute slot and keeps item slots in place", () => {
+  it("moves a folder to an absolute slot in the mixed order", () => {
     const before = state();
     const after = moveFolderToIndex(before, "folder_b", 0);
     expect(after.order).toEqual([
-      "__bb__/new-thread",
       "folder_b",
-      "plugin-a/panel",
+      "__bb__/new-thread",
       "folder_a",
+      "plugin-a/panel",
     ]);
     expect(after.folders.map((folder) => folder.id)).toEqual([
       "folder_b",
@@ -310,18 +322,16 @@ describe("moveFolderToIndex", () => {
   });
 
   it("clamps an index below zero or past the end", () => {
-    expect(
-      moveFolderToIndex(state(), "folder_b", -5).order,
-    ).toEqual([
-      "__bb__/new-thread",
+    expect(moveFolderToIndex(state(), "folder_b", -5).order).toEqual([
       "folder_b",
-      "plugin-a/panel",
+      "__bb__/new-thread",
       "folder_a",
+      "plugin-a/panel",
     ]);
     expect(moveFolderToIndex(state(), "folder_a", 99).order).toEqual([
       "__bb__/new-thread",
-      "folder_b",
       "plugin-a/panel",
+      "folder_b",
       "folder_a",
     ]);
   });
@@ -339,8 +349,8 @@ describe("moveFolderToIndex", () => {
 
   it("is a no-op at the current position or for an unknown folder", () => {
     const before = state();
-    expect(moveFolderToIndex(before, "folder_a", 0)).toBe(before);
-    expect(moveFolderToIndex(before, "folder_b", 1)).toBe(before);
+    expect(moveFolderToIndex(before, "folder_a", 1)).toBe(before);
+    expect(moveFolderToIndex(before, "folder_b", 3)).toBe(before);
     expect(moveFolderToIndex(before, "folder_gone", 0)).toBe(before);
   });
 });
@@ -359,7 +369,7 @@ describe("orderedFolders", () => {
 });
 
 describe("layoutRail", () => {
-  it("places folders by order and ungrouped items by the hook order", () => {
+  it("places folders and single icons by the mixed order", () => {
     const state = {
       ...STATE(),
       order: ["plugin-b/tools", "folder_b", "plugin-a/panel"],
@@ -368,8 +378,23 @@ describe("layoutRail", () => {
       { kind: "item", itemId: "plugin-b/tools" },
       { kind: "folder", folder: folderById(state, "folder_b") },
       { kind: "item", itemId: "plugin-a/panel" },
-      { kind: "folder", folder: folderById(state, "folder_a") },
       { kind: "item", itemId: "__bb__/new-thread" },
+      { kind: "folder", folder: folderById(state, "folder_a") },
+    ]);
+  });
+
+  it("keeps an old folders-only order looking the same", () => {
+    const state = STATE();
+    expect(
+      layoutRail(state, ITEMS).map((entry) =>
+        entry.kind === "folder" ? entry.folder.id : entry.itemId,
+      ),
+    ).toEqual([
+      "folder_a",
+      "folder_b",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-b/tools",
     ]);
   });
 
@@ -399,5 +424,118 @@ describe("layoutRail", () => {
       kind: "folder",
       folder: folderById(STATE(), "folder_a"),
     });
+  });
+});
+
+describe("railSequence", () => {
+  it("lists the ids the rail draws, folders and items alike", () => {
+    const state = {
+      ...STATE(),
+      order: ["plugin-b/tools", "folder_b", "plugin-a/panel"],
+    };
+    expect(railSequence(state, ITEMS)).toEqual([
+      "plugin-b/tools",
+      "folder_b",
+      "plugin-a/panel",
+      "__bb__/new-thread",
+      "folder_a",
+    ]);
+  });
+});
+
+describe("placeInOrder", () => {
+  const anchored = () => ({
+    ...STATE(),
+    order: ["folder_a", "folder_b"],
+  });
+
+  it("materializes the drawn order to place a folder before a single icon", () => {
+    const state = anchored();
+    expect(
+      placeInOrder(state, ITEMS, "folder_b", "plugin-b/tools").order,
+    ).toEqual([
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "folder_b",
+      "plugin-b/tools",
+    ]);
+  });
+
+  it("puts a folder at the very end for a null target", () => {
+    expect(placeInOrder(anchored(), ITEMS, "folder_a", null).order).toEqual([
+      "folder_b",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-b/tools",
+      "folder_a",
+    ]);
+  });
+
+  it("moves among anchored entries without materializing stale anchors", () => {
+    const state = {
+      ...STATE(),
+      order: ["folder_a", "gone/panel", "folder_b"],
+    };
+    expect(
+      placeInOrder(state, ITEMS, "folder_b", "folder_a").order,
+    ).toEqual(["folder_b", "folder_a", "gone/panel"]);
+  });
+
+  it("returns the same state for a no-op, a self drop or an unknown id", () => {
+    const atEnd = {
+      ...STATE(),
+      order: [
+        "folder_a",
+        "plugin-a/panel",
+        "__bb__/new-thread",
+        "plugin-b/tools",
+        "folder_b",
+      ],
+    };
+    expect(placeInOrder(atEnd, ITEMS, "folder_b", null)).toBe(atEnd);
+    expect(placeInOrder(atEnd, ITEMS, "folder_a", "folder_a")).toBe(atEnd);
+    expect(placeInOrder(atEnd, ITEMS, "gone/panel", null)).toBe(atEnd);
+  });
+});
+
+describe("setRailOrder", () => {
+  const state = () => ({
+    ...STATE(),
+    order: ["folder_a", "folder_b"],
+  });
+
+  it("saves a mixed order of folders and item anchors", () => {
+    const before = state();
+    const after = setRailOrder(before, [
+      "plugin-b/tools",
+      "folder_b",
+      "folder_a",
+      "plugin-a/panel",
+    ]);
+    expect(after.order).toEqual([
+      "plugin-b/tools",
+      "folder_b",
+      "folder_a",
+      "plugin-a/panel",
+    ]);
+    expect(after.folders).toBe(before.folders);
+  });
+
+  it("returns the same state when the order did not change", () => {
+    const before = state();
+    expect(setRailOrder(before, ["folder_a", "folder_b"])).toBe(before);
+  });
+
+  it("rejects a missing folder, a repeat and a blank entry", () => {
+    expect(() => setRailOrder(state(), ["folder_a"])).toThrow(
+      /missing folder folder_b/,
+    );
+    expect(() =>
+      setRailOrder(state(), ["folder_a", "folder_a", "folder_b"]),
+    ).toThrow(/repeat folder_a/);
+    expect(() =>
+      setRailOrder(state(), ["folder_a", "folder_b", "  "]),
+    ).toThrow(/blank/);
   });
 });

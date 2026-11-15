@@ -369,7 +369,99 @@ describe("rail state", () => {
       "folders_reorder",
       "folders_reorder_items",
       "folders_set_icon",
+      "rail_set_order",
       "rail_state",
+    ]);
+  });
+});
+
+describe("mixed rail order", () => {
+  const seed = () => ({
+    folders: [
+      { id: "folder_a", name: "A", icon: "Folder", itemIds: [] },
+      { id: "folder_b", name: "B", icon: "Folder", itemIds: [] },
+    ],
+    order: ["__bb__/new-thread", "folder_a", "folder_b"],
+  });
+
+  it("saves a full order of folders and single icon anchors", async () => {
+    const host = await load(seed());
+    const after = (await host.harness.behavior.callRpc("rail_set_order", {
+      order: [
+        "plugin-a/panel",
+        "folder_b",
+        "folder_a",
+        "__bb__/new-thread",
+      ],
+    })) as { state: { order: string[]; folders: { id: string }[] } };
+
+    expect(after.state.order).toEqual([
+      "plugin-a/panel",
+      "folder_b",
+      "folder_a",
+      "__bb__/new-thread",
+    ]);
+    expect(after.state.folders.map((folder) => folder.id)).toEqual([
+      "folder_a",
+      "folder_b",
+    ]);
+    expect(host.harness.inspection.realtimeSignals).toEqual([
+      { channel: RAIL_FOLDERS_CHANGED, payload: {} },
+    ]);
+    expect(await host.bb.storage.kv.get(RAIL_STORAGE_KEY)).toEqual(after.state);
+  });
+
+  it("does not broadcast an order that changes nothing", async () => {
+    const host = await load(seed());
+    await host.harness.behavior.callRpc("rail_set_order", {
+      order: seed().order,
+    });
+    expect(host.harness.inspection.realtimeSignals).toEqual([]);
+  });
+
+  it("rejects a repeated id, a lost folder and a blank entry", async () => {
+    const host = await load(seed());
+    await expect(
+      host.harness.behavior.callRpc("rail_set_order", {
+        order: ["folder_a", "folder_a", "folder_b"],
+      }),
+    ).rejects.toThrow(/validation/);
+    await expect(
+      host.harness.behavior.callRpc("rail_set_order", {
+        order: ["folder_a"],
+      }),
+    ).rejects.toThrow(/missing folder folder_b/);
+    await expect(
+      host.harness.behavior.callRpc("rail_set_order", {
+        order: ["folder_a", "folder_b", "  "],
+      }),
+    ).rejects.toThrow(/validation/);
+    expect((await state(host)).state.order).toEqual(seed().order);
+  });
+
+  it("moves a folder one mixed slot, past a single icon anchor", async () => {
+    const host = await load(seed());
+    const moved = (await host.harness.behavior.callRpc("folders_move", {
+      id: "folder_b",
+      direction: "up",
+    })) as { state: { order: string[] } };
+    expect(moved.state.order).toEqual([
+      "__bb__/new-thread",
+      "folder_b",
+      "folder_a",
+    ]);
+  });
+
+  it("reorders a folder by its position in the mixed order", async () => {
+    const host = await load(seed());
+    const moved = (await host.harness.behavior.callRpc("folders_reorder", {
+      id: "folder_b",
+      index: 0,
+    })) as { state: { order: string[] } };
+    expect(moved.state.order).toEqual([
+      "folder_b",
+      "__bb__/new-thread",
+      "folder_a",
     ]);
   });
 });

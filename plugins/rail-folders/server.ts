@@ -26,10 +26,17 @@ import {
   renameFolder,
   reorderItems,
   setFolderIcon,
+  setRailOrder,
   type RailFoldersState,
 } from "./lib/folders.js";
 
 const folderIdSchema = z.string().min(1).max(120);
+const orderSchema = z
+  .array(itemIdSchema)
+  .max(500)
+  .refine((ids) => new Set(ids).size === ids.length, {
+    message: "order must not repeat",
+  });
 const stateOutput = z.object({ state: railFoldersStateSchema });
 
 export const rpcContract = defineRpcContract({
@@ -86,6 +93,10 @@ export const rpcContract = defineRpcContract({
   },
   folders_reorder: {
     input: z.object({ id: folderIdSchema, index: z.number().int() }),
+    output: stateOutput,
+  },
+  rail_set_order: {
+    input: z.object({ order: orderSchema }),
     output: stateOutput,
   },
 });
@@ -185,6 +196,8 @@ export default async function plugin(bb: BbPluginApi) {
         requireFolder(state, id);
         return moveFolderToIndex(state, id, index);
       }),
+    rail_set_order: ({ order }) =>
+      mutate((state) => setRailOrder(state, order)),
   });
 
   // Installing picks this navigation, the same one-time setup bb's own guide

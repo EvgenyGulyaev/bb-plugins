@@ -317,72 +317,55 @@ export function removeItemFromFolder(
 export type FolderMoveDirection = "up" | "down";
 
 /**
- * Reorder a folder past its nearest sibling folder. Ungrouped item slots keep
- * their place, so a folder moves only among folders.
+ * Move a folder one slot through the mixed rail order, so it can pass both a
+ * sibling folder and a single icon anchor. The neighbour takes the folder's
+ * old slot, which keeps every other anchor where it was.
  */
 export function moveFolder(
   state: RailFoldersState,
   folderId: string,
   direction: FolderMoveDirection,
 ): RailFoldersState {
-  const folderIds = new Set(state.folders.map((folder) => folder.id));
-  const folderSlots = state.order.filter((id) => folderIds.has(id));
-  const index = folderSlots.indexOf(folderId);
-  const neighbour = folderSlots[direction === "up" ? index - 1 : index + 1];
-  if (index < 0 || neighbour === undefined) return state;
+  const from = state.order.indexOf(folderId);
+  if (from < 0) return state;
+  const to = direction === "up" ? from - 1 : from + 1;
+  const neighbour = state.order[to];
+  if (neighbour === undefined) return state;
 
   const order = [...state.order];
-  const from = order.indexOf(folderId);
-  const to = order.indexOf(neighbour);
-  if (from < 0 || to < 0) return state;
   order[from] = neighbour;
   order[to] = folderId;
   return { folders: state.folders, order };
 }
 
 /**
- * Move a folder to an absolute position among folders. The index is clamped to
- * the folder list, ungrouped item slots stay put, and the `folders` array is
- * kept in the same order as the rail so settings and dragging agree.
+ * Move a folder to an absolute position in the mixed rail order. The index is
+ * clamped to `0..order.length-1`; single icon anchors shift around the folder,
+ * and the `folders` array keeps the rail's relative folder order.
  */
 export function moveFolderToIndex(
   state: RailFoldersState,
   folderId: string,
   index: number,
 ): RailFoldersState {
-  const folder = folderById(state, folderId);
-  if (folder === null) return state;
+  if (folderById(state, folderId) === null) return state;
 
-  const sequence = orderedFolders(state).map((candidate) => candidate.id);
-  const from = sequence.indexOf(folderId);
-  if (from < 0) return state;
-
-  const target = Number.isFinite(index) ? Math.trunc(index) : from;
+  const from = state.order.indexOf(folderId);
+  // A folder `order` forgot still has a logical slot at the end, which is
+  // where `orderedFolders` and `layoutRail` draw it.
+  const sequence = from < 0 ? [...state.order, folderId] : [...state.order];
+  const start = from < 0 ? sequence.length - 1 : from;
+  const target = Number.isFinite(index) ? Math.trunc(index) : start;
   const to = Math.min(Math.max(target, 0), sequence.length - 1);
-  if (from === to) return state;
+  if (start === to) return state;
 
-  const nextIds = [...sequence];
-  nextIds.splice(from, 1);
-  nextIds.splice(to, 0, folderId);
+  sequence.splice(start, 1);
+  sequence.splice(to, 0, folderId);
 
-  const folders = nextIds.map((id) => folderById(state, id)!);
-  const folderIds = new Set(nextIds);
-  const order = [...state.order];
-  const slots: number[] = [];
-  order.forEach((key, position) => {
-    if (folderIds.has(key)) slots.push(position);
-  });
-
-  // `createFolder` always appends the id to `order`; a folder missing from it
-  // (older or hand-edited state) still lands at the tail of the folder order.
-  const remaining = [...nextIds];
-  for (const position of slots) {
-    const id = remaining.shift();
-    if (id !== undefined) order[position] = id;
-  }
-  order.push(...remaining);
-
-  return { folders, order };
+  return {
+    folders: orderedFolders({ folders: state.folders, order: sequence }),
+    order: sequence,
+  };
 }
 
 /** Members of `folder` that still exist as host items, in the folder's order. */
@@ -414,9 +397,10 @@ export function orderedFolders(state: RailFoldersState): Folder[] {
 
 /**
  * Flatten the arrangement into the order the rail draws: `order` first, then
- * folders it does not mention, then ungrouped items in the host's order.
- * Grouped and hidden items never get a slot of their own; unknown ids are
- * skipped, so a stale saved order cannot hide a plugin.
+ * ungrouped visible items the order does not anchor, in the host's order, then
+ * folders the order forgot, as a defensive tail. Grouped and hidden items
+ * never get a slot of their own; unknown ids are skipped, so a stale saved
+ * order cannot hide a plugin.
  */
 export function layoutRail(
   state: RailFoldersState,
@@ -454,8 +438,81 @@ export function layoutRail(
     if (folderIds.has(key)) placeFolder(key);
     else placeItem(key);
   }
-  for (const folder of state.folders) placeFolder(folder.id);
   for (const item of items) placeItem(item.id);
+  for (const folder of state.folders) placeFolder(folder.id);
 
   return entries;
+}
+
+/** The ids `layoutRail` draws, in the order it draws them. */
+export function railSequence(
+  state: RailFoldersState,
+  items: readonly RailItemRef[],
+): string[] {
+  return layoutRail(state, items).map((entry) =>
+    entry.kind === "folder" ? entry.folder.id : entry.itemId,
+  );
+}
+
+function sameOrder(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((id, index) => id === right[index])
+  );
+}
+
+/**
+ * Move `id` to just before `beforeId`, or to the end for `null`, in the mixed
+ * rail order. When the target is not anchored yet the whole drawn sequence is
+ * materialized first, so a folder can land between single icons that only the
+ * host's item order knows about. An unchanged arrangement returns the same
+ * state, so a drop in place neither writes storage nor wakes other windows.
+ */
+export function placeInOrder(
+  state: RailFoldersState,
+  items: readonly RailItemRef[],
+  id: string,
+  beforeId: string | null,
+): RailFoldersState {
+  if (id === beforeId) return state;
+  const order =
+    beforeId !== null && state.order.includes(beforeId)
+      ? [...state.order]
+      : railSequence(state, items);
+
+  const from = order.indexOf(id);
+  if (from < 0) return state;
+  order.splice(from, 1);
+
+  const target = beforeId === null ? -1 : order.indexOf(beforeId);
+  order.splice(target < 0 ? order.length : target, 0, id);
+
+  if (sameOrder(order, state.order)) return state;
+  return { folders: state.folders, order };
+}
+
+/**
+ * Replace the whole mixed rail order. Every folder must appear exactly once;
+ * a list that drops, repeats or blanks a folder is an error rather than a
+ * silent rearrangement.
+ */
+export function setRailOrder(
+  state: RailFoldersState,
+  order: readonly string[],
+): RailFoldersState {
+  const next = order.map((id) => id.trim());
+  const seen = new Set<string>();
+  for (const id of next) {
+    if (id === "") throw new Error("order entries must not be blank");
+    if (seen.has(id)) throw new Error(`order must not repeat ${id}`);
+    seen.add(id);
+  }
+  for (const folder of state.folders) {
+    if (!seen.has(folder.id)) {
+      throw new Error(`order is missing folder ${folder.id}`);
+    }
+  }
+
+  if (sameOrder(next, state.order)) return state;
+  return { folders: state.folders, order: next };
 }
