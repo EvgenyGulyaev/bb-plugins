@@ -31,7 +31,6 @@ import {
   layoutRail,
   type Folder,
 } from "@/lib/folders";
-import { cn } from "@/lib/utils";
 
 import { DeleteFolderDialog, RenameFolderDialog } from "./FolderDialogs";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
@@ -371,59 +370,61 @@ export function RailFolders() {
     <>
       <nav
         aria-label="Папки рейла"
-        className={cn(
-          "flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1 py-2",
-        )}
+        className="flex min-h-0 w-full flex-1 flex-col items-center"
       >
-        <HomeButton />
-        <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
-        {entries.map((entry) =>
-          entry.kind === "folder" ? (
-            <FolderButton
-              key={`folder:${entry.folder.id}`}
-              folder={entry.folder}
-              members={folderMembers(entry.folder, knownItemIds)
-                .map((itemId) => itemsById.get(itemId))
-                .filter(
-                  (item): item is ExperimentalSidebarNavigationItem =>
-                    item !== undefined,
-                )}
+        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1 py-2">
+          <HomeButton />
+          <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
+          {entries.map((entry) =>
+            entry.kind === "folder" ? (
+              <FolderButton
+                key={`folder:${entry.folder.id}`}
+                folder={entry.folder}
+                members={folderMembers(entry.folder, knownItemIds)
+                  .map((itemId) => itemsById.get(itemId))
+                  .filter(
+                    (item): item is ExperimentalSidebarNavigationItem =>
+                      item !== undefined,
+                  )}
+                activeItemId={activeItemId}
+                showShortcut={isShortcutModifierHeld}
+                actions={actions}
+                menu={menu}
+                onRename={setRenameTarget}
+                onDelete={setDeleteTarget}
+              />
+            ) : (
+              <RailItemButton
+                key={entry.itemId}
+                item={itemsById.get(entry.itemId)!}
+                isActive={entry.itemId === activeItemId}
+                showShortcut={isShortcutModifierHeld}
+                actions={actions}
+                menu={menu}
+              />
+            ),
+          )}
+          {hiddenItems.length === 0 ? null : (
+            <MoreItemsButton
+              items={hiddenItems}
               activeItemId={activeItemId}
               showShortcut={isShortcutModifierHeld}
-              actions={actions}
-              menu={menu}
-              onRename={setRenameTarget}
-              onDelete={setDeleteTarget}
-            />
-          ) : (
-            <RailItemButton
-              key={entry.itemId}
-              item={itemsById.get(entry.itemId)!}
-              isActive={entry.itemId === activeItemId}
-              showShortcut={isShortcutModifierHeld}
-              actions={actions}
               menu={menu}
             />
-          ),
-        )}
-        {hiddenItems.length === 0 ? null : (
-          <MoreItemsButton
-            items={hiddenItems}
-            activeItemId={activeItemId}
-            showShortcut={isShortcutModifierHeld}
-            menu={menu}
-          />
-        )}
+          )}
+          {error === null ? null : (
+            <p
+              role="alert"
+              className="w-full px-1 pb-1 text-center text-[10px] leading-tight text-destructive"
+            >
+              {error}
+            </p>
+          )}
+        </div>
         <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
-        <CustomizeButton />
-        {error === null ? null : (
-          <p
-            role="alert"
-            className="w-full px-1 pb-1 text-center text-[10px] leading-tight text-destructive"
-          >
-            {error}
-          </p>
-        )}
+        <div className="pb-2">
+          <CustomizeButton />
+        </div>
       </nav>
       <RenameFolderDialog
         folder={renameTarget}
