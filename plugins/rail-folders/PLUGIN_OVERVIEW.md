@@ -21,16 +21,20 @@ the end of the whole rail. Icons the user hid stay reachable from the "More"
 menu instead of disappearing.
 
 "Customize rail…" in that menu opens the plugin's own editor — one modal with
-the whole arrangement in it. Its "Folders" section lists every folder with its
-icon, name and member count, arrows that step it through the mixed rail order,
-and buttons to rename it through the same icon picker or delete it after a
-confirmation; when there are no folders it says to start one from an icon's
-context menu. Its "Single icons" section lists the ungrouped icons in the rail
-order, hidden ones included: arrows move an icon past a neighbour (a folder or
-another icon alike) and a checkbox calls the host's `setVisible`, so hidden
-rows are dimmed with the switch off and visibility never lands in the plugin's
-storage. The footer keeps bb's own editor one click away ("Редактор BB…") and a
-"Готово" button closes the modal.
+the whole arrangement in it as a single "Rail order" list. The rows are exactly
+the slots the rail draws, folders and single icons interleaved, hidden icons on
+their own slots, each numbered 1..N, under the hint that the rows follow the
+rail and the arrows move a row. A folder row carries its icon, name, member
+count, up/down arrows and buttons to rename it through the same icon picker or
+delete it after a confirmation; a single icon row carries its icon, name, a
+"Видно" checkbox that calls the host's `setVisible` and its own arrows, and
+hidden rows are dimmed with the switch off. An arrow saves the new order, the
+state comes back from `rail_set_order`, and the row moves right there with its
+number — the dialog is a live preview of the rail, not two static sections, so
+the user sees where a folder lands before closing it. When there are no folders
+the list is just the single icons plus a hint to start one from an icon's
+context menu. The footer keeps bb's own editor one click away ("Редактор BB…")
+and a "Готово" button closes the modal.
 
 Settings → Rail Folders creates folders and manages their name, BB icon name,
 position in the rail, member order and removal. Folder and member arrow buttons
