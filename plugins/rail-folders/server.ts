@@ -19,10 +19,12 @@ import {
   folderNameSchema,
   itemIdSchema,
   moveFolder,
+  moveFolderToIndex,
   normalizeState,
   railFoldersStateSchema,
   removeItemFromFolder,
   renameFolder,
+  reorderItems,
   setFolderIcon,
   type RailFoldersState,
 } from "./lib/folders.js";
@@ -68,6 +70,22 @@ export const rpcContract = defineRpcContract({
       id: folderIdSchema,
       direction: z.enum(["up", "down"]),
     }),
+    output: stateOutput,
+  },
+  folders_reorder_items: {
+    input: z.object({
+      id: folderIdSchema,
+      itemIds: z
+        .array(itemIdSchema)
+        .max(200)
+        .refine((ids) => new Set(ids).size === ids.length, {
+          message: "itemIds must not repeat",
+        }),
+    }),
+    output: stateOutput,
+  },
+  folders_reorder: {
+    input: z.object({ id: folderIdSchema, index: z.number().int() }),
     output: stateOutput,
   },
 });
@@ -159,6 +177,13 @@ export default async function plugin(bb: BbPluginApi) {
       mutate((state) => {
         requireFolder(state, id);
         return moveFolder(state, id, direction);
+      }),
+    folders_reorder_items: ({ id, itemIds }) =>
+      mutate((state) => reorderItems(state, id, itemIds)),
+    folders_reorder: ({ id, index }) =>
+      mutate((state) => {
+        requireFolder(state, id);
+        return moveFolderToIndex(state, id, index);
       }),
   });
 

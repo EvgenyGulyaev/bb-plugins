@@ -16,6 +16,14 @@ export const RAIL_ITEM_DRAG_MIME = "text/rail-item-id";
  * area only offers itself as a target when leaving the folder is possible.
  */
 export const RAIL_MEMBER_DRAG_MIME = "text/rail-item-in-folder";
+/**
+ * `dataTransfer` type carrying the dragged folder id, so a folder can be moved
+ * among its siblings without disturbing the icon drag payload.
+ */
+export const RAIL_FOLDER_DRAG_MIME = "text/rail-folder-id";
+
+/** Where a dragged row or folder lands relative to the hovered one. */
+export type InsertionSide = "before" | "after";
 
 export const folderNameSchema = z.string().trim().min(1).max(60);
 export const folderIconSchema = z.string().trim().min(1).max(80);
@@ -226,6 +234,67 @@ export function addItemToFolder(
   );
 }
 
+/**
+ * Replace a folder's member order. The new list must be a permutation of the
+ * current members: dropping, adding or borrowing an id is an error rather than
+ * a silent membership change. An unchanged order returns the same state, so a
+ * no-op drop never rewrites storage or wakes other windows.
+ */
+export function reorderItems(
+  state: RailFoldersState,
+  folderId: string,
+  itemIds: readonly string[],
+): RailFoldersState {
+  const folder = folderById(state, folderId);
+  if (folder === null) {
+    throw new Error(`No folder with id ${folderId}`);
+  }
+
+  const next = itemIds.map((itemId) => itemId.trim());
+  const current = new Set(folder.itemIds);
+  const seen = new Set<string>();
+  let invalid = next.length !== folder.itemIds.length;
+  for (const itemId of next) {
+    if (itemId === "" || !current.has(itemId) || seen.has(itemId)) {
+      invalid = true;
+      break;
+    }
+    seen.add(itemId);
+  }
+  if (invalid) {
+    throw new Error(
+      `itemIds must be a permutation of the members of folder ${folderId}`,
+    );
+  }
+
+  if (next.every((itemId, index) => itemId === folder.itemIds[index])) {
+    return state;
+  }
+  return withFolders(
+    state,
+    state.folders.map((candidate) =>
+      candidate.id === folderId ? { ...candidate, itemIds: next } : candidate,
+    ),
+  );
+}
+
+/**
+ * Rewrite a folder's full member list with a new order for the members the
+ * rail can currently draw. Ids the host no longer publishes keep their slots,
+ * so a reorder in the popover never silently drops a stale member.
+ */
+export function applyVisibleOrder(
+  itemIds: readonly string[],
+  visibleIds: readonly string[],
+  nextVisibleIds: readonly string[],
+): string[] {
+  const visible = new Set(visibleIds);
+  const queue = [...nextVisibleIds];
+  return itemIds.map((itemId) =>
+    visible.has(itemId) ? (queue.shift() ?? itemId) : itemId,
+  );
+}
+
 export function removeItemFromFolder(
   state: RailFoldersState,
   itemId: string,
@@ -269,6 +338,51 @@ export function moveFolder(
   order[from] = neighbour;
   order[to] = folderId;
   return { folders: state.folders, order };
+}
+
+/**
+ * Move a folder to an absolute position among folders. The index is clamped to
+ * the folder list, ungrouped item slots stay put, and the `folders` array is
+ * kept in the same order as the rail so settings and dragging agree.
+ */
+export function moveFolderToIndex(
+  state: RailFoldersState,
+  folderId: string,
+  index: number,
+): RailFoldersState {
+  const folder = folderById(state, folderId);
+  if (folder === null) return state;
+
+  const sequence = orderedFolders(state).map((candidate) => candidate.id);
+  const from = sequence.indexOf(folderId);
+  if (from < 0) return state;
+
+  const target = Number.isFinite(index) ? Math.trunc(index) : from;
+  const to = Math.min(Math.max(target, 0), sequence.length - 1);
+  if (from === to) return state;
+
+  const nextIds = [...sequence];
+  nextIds.splice(from, 1);
+  nextIds.splice(to, 0, folderId);
+
+  const folders = nextIds.map((id) => folderById(state, id)!);
+  const folderIds = new Set(nextIds);
+  const order = [...state.order];
+  const slots: number[] = [];
+  order.forEach((key, position) => {
+    if (folderIds.has(key)) slots.push(position);
+  });
+
+  // `createFolder` always appends the id to `order`; a folder missing from it
+  // (older or hand-edited state) still lands at the tail of the folder order.
+  const remaining = [...nextIds];
+  for (const position of slots) {
+    const id = remaining.shift();
+    if (id !== undefined) order[position] = id;
+  }
+  order.push(...remaining);
+
+  return { folders, order };
 }
 
 /** Members of `folder` that still exist as host items, in the folder's order. */

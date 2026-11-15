@@ -201,6 +201,134 @@ describe("rail state", () => {
     expect(moved.state.order[1]).toBe(idA);
   });
 
+  it("reorders members and broadcasts the new order", async () => {
+    const host = await load();
+    const created = await create(host, {
+      name: "A",
+      icon: "Folder",
+      itemIds: ["one", "two", "three"],
+    });
+    const id = created.state.folders[0]!.id;
+
+    const after = (await host.harness.behavior.callRpc(
+      "folders_reorder_items",
+      { id, itemIds: ["three", "one", "two"] },
+    )) as { state: { folders: { itemIds: string[] }[] } };
+
+    expect(after.state.folders[0]!.itemIds).toEqual(["three", "one", "two"]);
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(2);
+    expect(await host.bb.storage.kv.get(RAIL_STORAGE_KEY)).toEqual(after.state);
+  });
+
+  it("rejects a member order that is not a permutation", async () => {
+    const host = await load();
+    const created = await create(host, {
+      name: "A",
+      icon: "Folder",
+      itemIds: ["one", "two", "three"],
+    });
+    const id = created.state.folders[0]!.id;
+
+    await expect(
+      host.harness.behavior.callRpc("folders_reorder_items", {
+        id,
+        itemIds: ["one", "two"],
+      }),
+    ).rejects.toThrow(/permutation/);
+    await expect(
+      host.harness.behavior.callRpc("folders_reorder_items", {
+        id,
+        itemIds: ["one", "two", "two"],
+      }),
+    ).rejects.toThrow(/validation/);
+    await expect(
+      host.harness.behavior.callRpc("folders_reorder_items", {
+        id,
+        itemIds: ["one", "two", "four"],
+      }),
+    ).rejects.toThrow(/permutation/);
+    await expect(
+      host.harness.behavior.callRpc("folders_reorder_items", {
+        id: "folder_gone",
+        itemIds: [],
+      }),
+    ).rejects.toThrow(/folder_gone/);
+
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(1);
+    expect((await state(host)).state.folders[0]!.itemIds).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+  });
+
+  it("does not broadcast a member reorder that changes nothing", async () => {
+    const host = await load();
+    const created = await create(host, {
+      name: "A",
+      icon: "Folder",
+      itemIds: ["one", "two"],
+    });
+    const id = created.state.folders[0]!.id;
+
+    await host.harness.behavior.callRpc("folders_reorder_items", {
+      id,
+      itemIds: ["one", "two"],
+    });
+
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(1);
+  });
+
+  it("moves a folder to an absolute index and clamps it", async () => {
+    const host = await load();
+    const first = await create(host, { name: "A", icon: "Folder" });
+    await create(host, { name: "B", icon: "Folder" });
+    const third = await create(host, { name: "C", icon: "Folder" });
+    const idA = first.state.folders[0]!.id;
+    const idC = third.state.folders[2]!.id;
+
+    const moved = (await host.harness.behavior.callRpc("folders_reorder", {
+      id: idC,
+      index: 0,
+    })) as { state: { order: string[]; folders: { id: string }[] } };
+    expect(moved.state.order).toEqual([
+      idC,
+      idA,
+      third.state.folders[1]!.id,
+    ]);
+    expect(moved.state.folders.map((folder) => folder.id)).toEqual(
+      moved.state.order,
+    );
+
+    const clamped = (await host.harness.behavior.callRpc("folders_reorder", {
+      id: idC,
+      index: 99,
+    })) as { state: { order: string[] } };
+    expect(clamped.state.order[clamped.state.order.length - 1]).toBe(idC);
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(5);
+  });
+
+  it("does not broadcast a folder reorder that changes nothing", async () => {
+    const host = await load();
+    const first = await create(host, { name: "A", icon: "Folder" });
+    await create(host, { name: "B", icon: "Folder" });
+    const idA = first.state.folders[0]!.id;
+
+    await host.harness.behavior.callRpc("folders_reorder", {
+      id: idA,
+      index: 0,
+    });
+
+    await expect(
+      host.harness.behavior.callRpc("folders_reorder", {
+        id: "folder_gone",
+        index: 0,
+      }),
+    ).rejects.toThrow(/folder_gone/);
+
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(2);
+  });
+
   it("rejects mutations of a folder that no longer exists", async () => {
     const host = await load();
     await expect(
@@ -238,6 +366,8 @@ describe("rail state", () => {
       "folders_move",
       "folders_remove_item",
       "folders_rename",
+      "folders_reorder",
+      "folders_reorder_items",
       "folders_set_icon",
       "rail_state",
     ]);

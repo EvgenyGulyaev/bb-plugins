@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   EMPTY_RAIL_STATE,
   addItemToFolder,
+  applyVisibleOrder,
   createFolder,
   deleteFolder,
   folderById,
@@ -10,11 +11,13 @@ import {
   folderOfItem,
   layoutRail,
   moveFolder,
+  moveFolderToIndex,
   normalizeState,
   orderedFolders,
   railFoldersStateSchema,
   removeItemFromFolder,
   renameFolder,
+  reorderItems,
   setFolderIcon,
 } from "./folders";
 
@@ -220,6 +223,114 @@ describe("editing folders", () => {
     );
     expect(moveFolder(state, "folder_a", "up")).toBe(state);
     expect(moveFolder(state, "folder_b", "down")).toBe(state);
+  });
+});
+
+describe("reordering folder members", () => {
+  const members = () =>
+    createFolder(EMPTY_RAIL_STATE, {
+      id: "folder_a",
+      name: "A",
+      icon: "Folder",
+      itemIds: ["one", "two", "three"],
+    });
+
+  it("replaces the member order without touching the rail order", () => {
+    const state = members();
+    const next = reorderItems(state, "folder_a", ["three", "one", "two"]);
+    expect(folderById(next, "folder_a")?.itemIds).toEqual([
+      "three",
+      "one",
+      "two",
+    ]);
+    expect(next.order).toEqual(state.order);
+  });
+
+  it("returns the same state when the order did not change", () => {
+    const state = members();
+    expect(reorderItems(state, "folder_a", ["one", "two", "three"])).toBe(
+      state,
+    );
+  });
+
+  it("rejects a lost, duplicated or foreign id", () => {
+    const state = members();
+    expect(() =>
+      reorderItems(state, "folder_a", ["one", "two"]),
+    ).toThrow(/permutation/);
+    expect(() =>
+      reorderItems(state, "folder_a", ["one", "two", "two"]),
+    ).toThrow(/permutation/);
+    expect(() =>
+      reorderItems(state, "folder_a", ["one", "two", "four"]),
+    ).toThrow(/permutation/);
+    expect(() =>
+      reorderItems(state, "folder_a", ["one", "two", "  "]),
+    ).toThrow(/permutation/);
+  });
+
+  it("rejects an unknown folder", () => {
+    expect(() => reorderItems(members(), "folder_gone", [])).toThrow(
+      /folder_gone/,
+    );
+  });
+});
+
+describe("applyVisibleOrder", () => {
+  it("reorders drawable members and leaves stale ids in their slots", () => {
+    expect(
+      applyVisibleOrder(
+        ["one", "gone", "two"],
+        ["one", "two"],
+        ["two", "one"],
+      ),
+    ).toEqual(["two", "gone", "one"]);
+  });
+});
+
+describe("moveFolderToIndex", () => {
+  const state = () => ({
+    ...STATE(),
+    order: ["__bb__/new-thread", "folder_a", "plugin-a/panel", "folder_b"],
+  });
+
+  it("moves a folder to an absolute slot and keeps item slots in place", () => {
+    const before = state();
+    const after = moveFolderToIndex(before, "folder_b", 0);
+    expect(after.order).toEqual([
+      "__bb__/new-thread",
+      "folder_b",
+      "plugin-a/panel",
+      "folder_a",
+    ]);
+    expect(after.folders.map((folder) => folder.id)).toEqual([
+      "folder_b",
+      "folder_a",
+    ]);
+  });
+
+  it("clamps an index below zero or past the end", () => {
+    expect(
+      moveFolderToIndex(state(), "folder_b", -5).order,
+    ).toEqual([
+      "__bb__/new-thread",
+      "folder_b",
+      "plugin-a/panel",
+      "folder_a",
+    ]);
+    expect(moveFolderToIndex(state(), "folder_a", 99).order).toEqual([
+      "__bb__/new-thread",
+      "folder_b",
+      "plugin-a/panel",
+      "folder_a",
+    ]);
+  });
+
+  it("is a no-op at the current position or for an unknown folder", () => {
+    const before = state();
+    expect(moveFolderToIndex(before, "folder_a", 0)).toBe(before);
+    expect(moveFolderToIndex(before, "folder_b", 1)).toBe(before);
+    expect(moveFolderToIndex(before, "folder_gone", 0)).toBe(before);
   });
 });
 
