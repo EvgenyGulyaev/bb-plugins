@@ -36,8 +36,10 @@ Settings → Rail Folders creates folders and manages their name, BB icon name,
 position in the rail, member order and removal. Folder and member arrow buttons
 are the keyboard and screen-reader alternative to dragging. The folder arrows
 step through the same mixed order as the rail, so a folder passes both sibling
-folders and single icons. Deleting a folder never disables a plugin or deletes a
-panel: its members simply return to the rail one by one.
+folders and single icons; when the saved order is still the old folders-only
+one, an arrow materializes the whole rail first, so the folder can also drop
+below the single icons or to the very end. Deleting a folder never disables a
+plugin or deletes a panel: its members simply return to the rail one by one.
 
 The arrangement is stored on the BB server, survives restarts, and every open
 window updates immediately when it changes. No account, API key, or external
