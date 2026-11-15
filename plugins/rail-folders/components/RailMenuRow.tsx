@@ -14,7 +14,11 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { RAIL_ITEM_DRAG_MIME, RAIL_MEMBER_DRAG_MIME } from "@/lib/folders";
+import {
+  RAIL_ITEM_DRAG_MIME,
+  RAIL_MEMBER_DRAG_MIME,
+  type InsertionSide,
+} from "@/lib/folders";
 
 import { cn } from "../lib/utils";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
@@ -22,6 +26,15 @@ import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
 // The SDK exports the icon component under a lowercase experimental_ name,
 // which JSX would read as an intrinsic element, so it needs an alias.
 const SidebarNavigationIcon = experimental_SidebarNavigationIcon;
+
+/** Which half of a row the pointer is over: insert above or below it. */
+export function dropSideFor(event: {
+  clientY: number;
+  currentTarget: HTMLElement;
+}): InsertionSide {
+  const rect = event.currentTarget.getBoundingClientRect();
+  return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+}
 
 /** Accessible name for an item, with its badge label folded in. */
 export function railItemLabel(item: ExperimentalSidebarNavigationItem): string {
@@ -49,6 +62,7 @@ export function RailMenuRow({
   showShortcut,
   onActivate,
   onClose,
+  onReorderDrop,
   menu,
 }: {
   item: ExperimentalSidebarNavigationItem;
@@ -60,6 +74,11 @@ export function RailMenuRow({
   ) => void;
   /** Closes the popover the row lives in, so a drag never covers the page. */
   onClose: () => void;
+  /**
+   * Present when the row is also a drop target for reordering the folder it
+   * belongs to. A drop elsewhere still carries the icon out to the rail.
+   */
+  onReorderDrop?: (itemId: string, side: InsertionSide) => void;
   menu: ItemMenuActions;
 }) {
   const { actions } = experimental_useSidebarNavigation();
@@ -68,6 +87,7 @@ export function RailMenuRow({
     onDragStart: onClose,
   });
   const [dragging, setDragging] = useState(false);
+  const [dropSide, setDropSide] = useState<InsertionSide | null>(null);
   const unavailable = item.isDisabled || item.isLoading;
 
   return (
@@ -75,6 +95,7 @@ export function RailMenuRow({
       draggable
       data-rail-menu-row={item.id}
       data-rail-dragging={dragging ? "" : undefined}
+      data-reorder-indicator={dropSide ?? undefined}
       onDragStart={(event: DragEvent<HTMLDivElement>) => {
         event.stopPropagation();
         event.dataTransfer.setData(RAIL_ITEM_DRAG_MIME, item.id);
@@ -85,11 +106,65 @@ export function RailMenuRow({
         setDragging(true);
       }}
       onDragEnd={() => setDragging(false)}
+      onDragOver={
+        onReorderDrop === undefined
+          ? undefined
+          : (event) => {
+              if (!event.dataTransfer.types.includes(RAIL_MEMBER_DRAG_MIME)) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "move";
+              setDropSide(dropSideFor(event));
+            }
+      }
+      onDragLeave={
+        onReorderDrop === undefined
+          ? undefined
+          : (event) => {
+              event.stopPropagation();
+              if (
+                event.currentTarget.contains(
+                  event.relatedTarget as Node | null,
+                )
+              ) {
+                return;
+              }
+              setDropSide(null);
+            }
+      }
+      onDrop={
+        onReorderDrop === undefined
+          ? undefined
+          : (event) => {
+              if (!event.dataTransfer.types.includes(RAIL_MEMBER_DRAG_MIME)) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              const side = dropSide ?? dropSideFor(event);
+              setDropSide(null);
+              const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
+              if (itemId !== "") onReorderDrop(itemId, side);
+            }
+      }
       className={cn(
-        "w-full rounded-sm transition",
+        "relative w-full rounded-sm transition",
         dragging && "opacity-40",
+        dropSide !== null && "bg-state-hover",
       )}
     >
+      {dropSide === null ? null : (
+        <span
+          data-reorder-line={dropSide}
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-primary",
+            dropSide === "before" ? "-top-px" : "-bottom-px",
+          )}
+        />
+      )}
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button

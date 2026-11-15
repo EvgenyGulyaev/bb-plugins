@@ -706,6 +706,24 @@ describe("drag and drop", () => {
     };
   }
 
+  // jsdom has no layout, so a drop target needs a rectangle before its halves
+  // can be told apart.
+  function withRect(element: HTMLElement, top = 0, height = 20): HTMLElement {
+    element.getBoundingClientRect = () =>
+      ({
+        top,
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 40,
+        width: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    return element;
+  }
+
   it("drops a rail icon on a folder and adds it there", async () => {
     const slot = mount({
       state: createFolder(EMPTY_RAIL_STATE, {
@@ -787,6 +805,115 @@ describe("drag and drop", () => {
         { method: "folders_remove_item", input: { itemId: PANEL_B.id } },
       ]),
     );
+  });
+
+  it("reorders members by dragging one row onto another", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+        itemIds: [PANEL_A.id, PANEL_B.id],
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const source = within(menu).getByRole("button", {
+      name: "Панель A, 3 открытые задачи",
+    }).parentElement!;
+    const target = withRect(
+      within(menu).getByRole("button", { name: "Панель B" }).parentElement!,
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    fireEvent.dragOver(target, { dataTransfer: data, clientY: 19 });
+    expect(target.getAttribute("data-reorder-indicator")).toBe("after");
+    expect(
+      target.querySelector('[data-reorder-line="after"]'),
+    ).not.toBeNull();
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder_items")).toEqual([
+        {
+          method: "folders_reorder_items",
+          input: { id: "folder_a", itemIds: [PANEL_B.id, PANEL_A.id] },
+        },
+      ]),
+    );
+  });
+
+  it("drags a folder onto another folder to move it there", async () => {
+    const slot = mount({ state: twoFolders() });
+    await screen.findByRole("button", { name: /^Работа/ });
+    const source = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+    const target = withRect(
+      await screen.findByRole("button", { name: "Инструменты" }),
+    );
+    expect(source).not.toBeNull();
+    expect(source.getAttribute("draggable")).toBe("true");
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    expect(data.getData("text/rail-folder-id")).toBe("folder_a");
+    fireEvent.dragOver(target, { dataTransfer: data, clientY: 19 });
+    expect(
+      slot.container.querySelector('[data-folder-drop-line="after"]'),
+    ).not.toBeNull();
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+        {
+          method: "folders_reorder",
+          input: { id: "folder_a", index: 1 },
+        },
+      ]),
+    );
+  });
+
+  it("moves a folder to the end when dropped on the free rail", async () => {
+    const slot = mount({ state: twoFolders() });
+    await screen.findByRole("button", { name: /^Работа/ });
+    const source = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+    const dropZone = slot.container.querySelector<HTMLElement>(
+      "[data-rail-dropzone]",
+    )!;
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    fireEvent.dragOver(dropZone, { dataTransfer: data });
+    expect(dropZone.getAttribute("data-drop-active")).toBe("");
+    fireEvent.drop(dropZone, { dataTransfer: data });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+        {
+          method: "folders_reorder",
+          input: { id: "folder_a", index: 1 },
+        },
+      ]),
+    );
+  });
+
+  it("keeps the folder button as the popover trigger inside the drag wrapper", async () => {
+    const slot = mount({ state: folderState() });
+    const button = await screen.findByRole("button", { name: /^Работа/ });
+    const wrapper = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+
+    expect(wrapper).not.toBe(button);
+    expect(wrapper.getAttribute("draggable")).toBe("true");
+    expect(button.getAttribute("draggable")).toBeNull();
+
+    fireEvent.click(button);
+    expect(await screen.findByRole("group", { name: /^Работа/ })).toBeTruthy();
   });
 
   it("does not offer the rail as a target for an icon that is already there", async () => {
@@ -927,6 +1054,42 @@ describe("settings section", () => {
         {
           method: "folders_move",
           input: { id: "folder_a", direction: "down" },
+        },
+      ]),
+    );
+  });
+
+  it("reorders folder members with the arrow buttons", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+        itemIds: [PANEL_A.id, PANEL_B.id],
+      }),
+      settings: true,
+    });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    const firstUp = screen.getByRole("button", {
+      name: `Выше в папке: ${PANEL_A.id}`,
+    }) as HTMLButtonElement;
+    const firstDown = screen.getByRole("button", {
+      name: `Ниже в папке: ${PANEL_A.id}`,
+    }) as HTMLButtonElement;
+    const lastDown = screen.getByRole("button", {
+      name: `Ниже в папке: ${PANEL_B.id}`,
+    }) as HTMLButtonElement;
+    expect(firstUp.disabled).toBe(true);
+    expect(firstDown.disabled).toBe(false);
+    expect(lastDown.disabled).toBe(true);
+
+    fireEvent.click(firstDown);
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder_items")).toEqual([
+        {
+          method: "folders_reorder_items",
+          input: { id: "folder_a", itemIds: [PANEL_B.id, PANEL_A.id] },
         },
       ]),
     );

@@ -27,12 +27,17 @@ import {
 import { useRailFolders } from "@/hooks/useRailFolders";
 import {
   DEFAULT_FOLDER_ICON,
+  RAIL_FOLDER_DRAG_MIME,
   RAIL_ITEM_DRAG_MIME,
   RAIL_MEMBER_DRAG_MIME,
+  applyVisibleOrder,
+  folderById,
   folderMembers,
   folderOfItem,
   layoutRail,
+  orderedFolders,
   type Folder,
+  type InsertionSide,
 } from "@/lib/folders";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +47,12 @@ import {
   RenameFolderDialog,
 } from "./FolderDialogs";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
-import { RailMenuRow, railItemLabel, targetForClick } from "./RailMenuRow";
+import {
+  RailMenuRow,
+  dropSideFor,
+  railItemLabel,
+  targetForClick,
+} from "./RailMenuRow";
 
 const RAIL_BUTTON_CLASS =
   "relative size-8 shrink-0 rounded-md data-[active]:bg-state-active data-[active]:text-foreground";
@@ -50,6 +60,11 @@ const RAIL_BUTTON_CLASS =
 /** Whether a drag carries one of our item ids. */
 function carriesRailItem(dataTransfer: DataTransfer): boolean {
   return dataTransfer.types.includes(RAIL_ITEM_DRAG_MIME);
+}
+
+/** Whether a drag carries one of our folder ids. */
+function carriesRailFolder(dataTransfer: DataTransfer): boolean {
+  return dataTransfer.types.includes(RAIL_FOLDER_DRAG_MIME);
 }
 
 /** Whether a drag started from a row inside a folder. */
@@ -176,6 +191,8 @@ function FolderButton({
   onRename,
   onDelete,
   onDropItem,
+  onReorderFolder,
+  onReorderItems,
 }: {
   folder: Folder;
   members: readonly ExperimentalSidebarNavigationItem[];
@@ -186,9 +203,17 @@ function FolderButton({
   onRename: (folder: Folder) => void;
   onDelete: (folder: Folder) => void;
   onDropItem: (folderId: string, itemId: string) => void;
+  onReorderFolder: (
+    draggedFolderId: string,
+    targetFolderId: string,
+    side: InsertionSide,
+  ) => void;
+  onReorderItems: (folderId: string, itemIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [folderDrop, setFolderDrop] = useState<InsertionSide | null>(null);
+  const [dragging, setDragging] = useState(false);
   const badgeLabels = members.flatMap((member) =>
     member.badge === null ? [] : [member.badge.label],
   );
@@ -199,81 +224,158 @@ function FolderButton({
     ? `${folder.name}, ${badgeLabels.join(", ")}`
     : folder.name;
 
+  const visibleIds = members.map((member) => member.id);
+  const clearDrop = () => {
+    setDropActive(false);
+    setFolderDrop(null);
+  };
+  // Members the host still publishes move through this popover; stale ids keep
+  // their slots so the permutation sent to the server is always complete.
+  const reorderMember = (
+    draggedId: string,
+    targetId: string,
+    side: InsertionSide,
+  ) => {
+    if (draggedId === targetId || !folder.itemIds.includes(draggedId)) return;
+    const from = visibleIds.indexOf(draggedId);
+    const target = visibleIds.indexOf(targetId);
+    if (from < 0 || target < 0) return;
+
+    let index = target + (side === "after" ? 1 : 0);
+    if (from < index) index -= 1;
+    const next = visibleIds.filter((itemId) => itemId !== draggedId);
+    next.splice(Math.max(0, Math.min(index, next.length)), 0, draggedId);
+    onReorderItems(
+      folder.id,
+      applyVisibleOrder(folder.itemIds, visibleIds, next),
+    );
+  };
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={label}
-              title={folder.name}
-              aria-current={isActive ? "true" : undefined}
-              data-active={isActive ? "" : undefined}
-              data-rail-entry={`folder:${folder.id}`}
-              data-drop-active={dropActive ? "" : undefined}
-              onDragOver={(event) => {
-                if (!carriesRailItem(event.dataTransfer)) return;
-                event.preventDefault();
-                event.stopPropagation();
-                event.dataTransfer.dropEffect = "move";
-                setDropActive(true);
-              }}
-              onDragLeave={(event) => {
-                event.stopPropagation();
-                // Moving between the button and its icon fires a dragleave on
-                // the button; only a real exit clears the highlight.
-                if (
-                  event.currentTarget.contains(event.relatedTarget as Node | null)
-                ) {
-                  return;
-                }
-                setDropActive(false);
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setDropActive(false);
-                const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
-                if (itemId !== "") onDropItem(folder.id, itemId);
-              }}
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "icon" }),
-                RAIL_BUTTON_CLASS,
-                "transition",
-                dropActive && "scale-110 ring-2 ring-ring",
-              )}
-            >
-              <Icon
-                name={folder.icon}
-                fallback={DEFAULT_FOLDER_ICON}
-                className="size-4"
-                aria-hidden="true"
-              />
-              {hasBadge ? (
-                <span
-                  data-rail-badge-dot=""
+      <div
+        draggable
+        data-rail-folder-drag={folder.id}
+        data-rail-dragging={dragging ? "" : undefined}
+        onDragStart={(event: DragEvent<HTMLDivElement>) => {
+          event.stopPropagation();
+          event.dataTransfer.setData(RAIL_FOLDER_DRAG_MIME, folder.id);
+          event.dataTransfer.effectAllowed = "move";
+          setDragging(true);
+        }}
+        onDragEnd={() => {
+          setDragging(false);
+          clearDrop();
+        }}
+        className={cn(
+          "relative shrink-0 rounded-md transition",
+          dragging && "opacity-40",
+        )}
+      >
+        {folderDrop === null ? null : (
+          <span
+            data-folder-drop-line={folderDrop}
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none absolute inset-x-0 z-10 h-0.5 rounded-full bg-primary",
+              folderDrop === "before" ? "-top-px" : "-bottom-px",
+            )}
+          />
+        )}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={label}
+                title={folder.name}
+                aria-current={isActive ? "true" : undefined}
+                data-active={isActive ? "" : undefined}
+                data-rail-entry={`folder:${folder.id}`}
+                data-drop-active={dropActive ? "" : undefined}
+                onDragOver={(event) => {
+                  if (carriesRailFolder(event.dataTransfer)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = "move";
+                    setDropActive(false);
+                    setFolderDrop(dropSideFor(event));
+                    return;
+                  }
+                  if (!carriesRailItem(event.dataTransfer)) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "move";
+                  setDropActive(true);
+                  setFolderDrop(null);
+                }}
+                onDragLeave={(event) => {
+                  event.stopPropagation();
+                  // Moving between the button and its icon fires a dragleave on
+                  // the button; only a real exit clears the highlight.
+                  if (
+                    event.currentTarget.contains(
+                      event.relatedTarget as Node | null,
+                    )
+                  ) {
+                    return;
+                  }
+                  clearDrop();
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const side = folderDrop ?? dropSideFor(event);
+                  const draggedFolderId =
+                    event.dataTransfer.getData(RAIL_FOLDER_DRAG_MIME);
+                  clearDrop();
+                  if (draggedFolderId !== "") {
+                    onReorderFolder(draggedFolderId, folder.id, side);
+                    return;
+                  }
+                  const itemId = event.dataTransfer.getData(
+                    RAIL_ITEM_DRAG_MIME,
+                  );
+                  if (itemId !== "") onDropItem(folder.id, itemId);
+                }}
+                className={cn(
+                  buttonVariants({ variant: "ghost", size: "icon" }),
+                  RAIL_BUTTON_CLASS,
+                  "transition",
+                  dropActive && "scale-110 ring-2 ring-ring",
+                )}
+              >
+                <Icon
+                  name={folder.icon}
+                  fallback={DEFAULT_FOLDER_ICON}
+                  className="size-4"
                   aria-hidden="true"
-                  className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
                 />
-              ) : null}
-            </button>
-          </PopoverTrigger>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuLabel className="truncate">
-            {folder.name}
-          </ContextMenuLabel>
-          <ContextMenuItem onSelect={() => onRename(folder)}>
-            <Icon name="Pencil" className="size-4" aria-hidden="true" />
-            Переименовать папку
-          </ContextMenuItem>
-          <ContextMenuItem onSelect={() => onDelete(folder)}>
-            <Icon name="Trash2" className="size-4" aria-hidden="true" />
-            Удалить папку
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+                {hasBadge ? (
+                  <span
+                    data-rail-badge-dot=""
+                    aria-hidden="true"
+                    className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
+                  />
+                ) : null}
+              </button>
+            </PopoverTrigger>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuLabel className="truncate">
+              {folder.name}
+            </ContextMenuLabel>
+            <ContextMenuItem onSelect={() => onRename(folder)}>
+              <Icon name="Pencil" className="size-4" aria-hidden="true" />
+              Переименовать папку
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => onDelete(folder)}>
+              <Icon name="Trash2" className="size-4" aria-hidden="true" />
+              Удалить папку
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </div>
       <PopoverContent
         side="right"
         align="start"
@@ -302,6 +404,9 @@ function FolderButton({
                   setOpen(false);
                   actions.activate(activated.id, { target });
                 }}
+                onReorderDrop={(draggedId, side) =>
+                  reorderMember(draggedId, item.id, side)
+                }
               />
             ))
           )}
@@ -417,6 +522,28 @@ export function RailFolders() {
   const removeFromFolder = (item: ExperimentalSidebarNavigationItem) => {
     void mutate("folders_remove_item", { itemId: item.id });
   };
+  const reorderItems = (folderId: string, itemIds: string[]) => {
+    void mutate("folders_reorder_items", { id: folderId, itemIds });
+  };
+  // The index is the folder's final slot after removing it, so a drop below a
+  // later sibling needs the same shift an array splice would do.
+  const reorderFolderBeside = (
+    draggedFolderId: string,
+    targetFolderId: string,
+    side: InsertionSide,
+  ) => {
+    const ids = orderedFolders(state).map((folder) => folder.id);
+    const from = ids.indexOf(draggedFolderId);
+    const target = ids.indexOf(targetFolderId);
+    if (from < 0 || target < 0) return;
+
+    let index = target + (side === "after" ? 1 : 0);
+    if (from < index) index -= 1;
+    void mutate("folders_reorder", {
+      id: draggedFolderId,
+      index: Math.max(0, Math.min(index, ids.length - 1)),
+    });
+  };
 
   const menu: ItemMenuActions = {
     folders: state.folders,
@@ -435,7 +562,12 @@ export function RailFolders() {
           data-rail-dropzone=""
           data-drop-active={dropActive ? "" : undefined}
           onDragOver={(event) => {
-            if (!carriesFolderMember(event.dataTransfer)) return;
+            if (
+              !carriesRailFolder(event.dataTransfer) &&
+              !carriesFolderMember(event.dataTransfer)
+            ) {
+              return;
+            }
             event.preventDefault();
             event.dataTransfer.dropEffect = "move";
             setDropActive(true);
@@ -451,6 +583,16 @@ export function RailFolders() {
           onDrop={(event) => {
             event.preventDefault();
             setDropActive(false);
+            const folderId = event.dataTransfer.getData(RAIL_FOLDER_DRAG_MIME);
+            // A folder dropped on the free rail goes to the end of the folder
+            // order; an icon row dropped there leaves its folder.
+            if (folderId !== "" && folderById(state, folderId) !== null) {
+              void mutate("folders_reorder", {
+                id: folderId,
+                index: Math.max(orderedFolders(state).length - 1, 0),
+              });
+              return;
+            }
             const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
             // Only an icon that came out of a folder can return to the rail.
             if (
@@ -487,6 +629,8 @@ export function RailFolders() {
                 onRename={setRenameTarget}
                 onDelete={setDeleteTarget}
                 onDropItem={addToFolder}
+                onReorderFolder={reorderFolderBeside}
+                onReorderItems={reorderItems}
               />
             ) : (
               <RailItemButton

@@ -13,12 +13,26 @@ import {
 
 import { DeleteFolderDialog } from "./FolderDialogs";
 
+/** Move one member past a neighbour, keeping every other slot. */
+function moveMember(
+  itemIds: readonly string[],
+  index: number,
+  offset: -1 | 1,
+): string[] {
+  const next = [...itemIds];
+  const [moved] = next.splice(index, 1);
+  if (moved === undefined) return [...itemIds];
+  next.splice(index + offset, 0, moved);
+  return next;
+}
+
 function FolderRow({
   folder,
   index,
   count,
   onSave,
   onMove,
+  onReorderItems,
   onDelete,
 }: {
   folder: Folder;
@@ -26,6 +40,7 @@ function FolderRow({
   count: number;
   onSave: (folder: Folder, name: string, icon: string) => void;
   onMove: (folder: Folder, direction: "up" | "down") => void;
+  onReorderItems: (folder: Folder, itemIds: string[]) => void;
   onDelete: (folder: Folder) => void;
 }) {
   const [name, setName] = useState(folder.name);
@@ -109,6 +124,59 @@ function FolderRow({
       <span className="text-xs text-muted-foreground">
         Иконок: {folder.itemIds.length}
       </span>
+      {folder.itemIds.length === 0 ? null : (
+        <ul
+          aria-label={`Участники папки ${folder.name}`}
+          className="flex w-full flex-col gap-1"
+        >
+          {folder.itemIds.map((itemId, memberIndex) => (
+            <li
+              key={itemId}
+              data-folder-member={itemId}
+              className="flex items-center gap-2 rounded-sm bg-muted/50 px-2 py-1"
+            >
+              <span
+                title={itemId}
+                className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
+              >
+                {itemId}
+              </span>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Выше в папке: ${itemId}`}
+                disabled={memberIndex === 0}
+                onClick={() =>
+                  onReorderItems(
+                    folder,
+                    moveMember(folder.itemIds, memberIndex, -1),
+                  )
+                }
+                className="size-6"
+              >
+                <Icon name="ArrowUp" className="size-3.5" aria-hidden="true" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={`Ниже в папке: ${itemId}`}
+                disabled={memberIndex === folder.itemIds.length - 1}
+                onClick={() =>
+                  onReorderItems(
+                    folder,
+                    moveMember(folder.itemIds, memberIndex, 1),
+                  )
+                }
+                className="size-6"
+              >
+                <Icon name="ArrowDown" className="size-3.5" aria-hidden="true" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </li>
   );
 }
@@ -207,6 +275,12 @@ export function RailFoldersSettings() {
               }}
               onMove={(target, direction) => {
                 void mutate("folders_move", { id: target.id, direction });
+              }}
+              onReorderItems={(target, itemIds) => {
+                void mutate("folders_reorder_items", {
+                  id: target.id,
+                  itemIds,
+                });
               }}
               onDelete={setDeleteTarget}
             />
