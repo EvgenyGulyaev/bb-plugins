@@ -7,6 +7,8 @@ description: Move BB threads between the Kanban board columns when work starts, 
 
 Each board card is a BB thread. The board has four columns: `backlog`, `in_progress`, `review`, and `done`.
 
+A thread started from another thread appears as a subcard inside its parent's card rather than as a card of its own. A parent card shows its subcard count and collapses or expands the list; a subcard that sits in a different column carries that column as a chip. Placement and pinning are per thread: moving a parent does not move its subcards, and moving a subcard leaves it inside the parent's card. Commands below take a thread id, so they work the same for a card and for a subcard.
+
 ## Move a card
 
 Use the thread id and one of the four column names:

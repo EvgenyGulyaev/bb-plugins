@@ -4,6 +4,7 @@
 
 - A **Доска** page in the sidebar with four workflow columns: **В очереди**, **В работе**, **На проверке**, and **Готово**.
 - Every visible thread appears as a draggable card. Opening a card takes you to that thread.
+- A thread started from another thread is a compact subcard inside its parent's card, with the provider icon, title, status dot and its own column when that differs from the parent's. The parent card counts its subcards and expands or collapses them. A thread whose parent is archived or hidden keeps a card of its own.
 - Optional **Автопереходы** checkbox: while enabled, a thread that starts working moves to **В работе** and a finished turn moves to **На проверке**. A hand move pins the card (shown with a pin icon) and automation leaves it alone; moving it back to **В очереди** hands it to automation again. Auto moves never place a card in **Готово** — finishing work stays a human decision.
 - Positions are stored in the plugin's own BB storage and updates are broadcast to every open board.
 
