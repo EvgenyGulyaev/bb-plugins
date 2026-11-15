@@ -844,6 +844,80 @@ describe("drag and drop", () => {
     );
   });
 
+  it("shifts the insert index when dragging a member below a later row", async () => {
+    const panelC = item({ id: "test-plugin/panel-c", label: "Панель C" });
+    const panelD = item({ id: "test-plugin/panel-d", label: "Панель D" });
+    const members = [PANEL_A, PANEL_B, panelC, panelD];
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+        itemIds: members.map((member) => member.id),
+      }),
+      items: members,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const source = within(menu).getByRole("button", {
+      name: "Панель A, 3 открытые задачи",
+    }).parentElement!;
+    const target = withRect(
+      within(menu).getByRole("button", { name: "Панель C" }).parentElement!,
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    fireEvent.dragOver(target, { dataTransfer: data, clientY: 19 });
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder_items")).toEqual([
+        {
+          method: "folders_reorder_items",
+          input: {
+            id: "folder_a",
+            itemIds: [PANEL_B.id, panelC.id, PANEL_A.id, panelD.id],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("keeps a stale member's slot when reordering the visible rows", async () => {
+    const gone = "plugin-a/gone";
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+        itemIds: [PANEL_A.id, gone, PANEL_B.id],
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const source = within(menu).getByRole("button", {
+      name: "Панель A, 3 открытые задачи",
+    }).parentElement!;
+    const target = withRect(
+      within(menu).getByRole("button", { name: "Панель B" }).parentElement!,
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    fireEvent.dragOver(target, { dataTransfer: data, clientY: 19 });
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder_items")).toEqual([
+        {
+          method: "folders_reorder_items",
+          input: { id: "folder_a", itemIds: [PANEL_B.id, gone, PANEL_A.id] },
+        },
+      ]),
+    );
+  });
+
   it("drags a folder onto another folder to move it there", async () => {
     const slot = mount({ state: twoFolders() });
     await screen.findByRole("button", { name: /^Работа/ });
@@ -863,6 +937,37 @@ describe("drag and drop", () => {
     expect(
       slot.container.querySelector('[data-folder-drop-line="after"]'),
     ).not.toBeNull();
+    fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_reorder")).toEqual([
+        {
+          method: "folders_reorder",
+          input: { id: "folder_a", index: 1 },
+        },
+      ]),
+    );
+  });
+
+  it("shifts the folder index when dragging it below a later sibling", async () => {
+    const slot = mount({
+      state: createFolder(twoFolders(), {
+        id: "folder_c",
+        name: "Прочее",
+        icon: "Folder",
+      }),
+    });
+    await screen.findByRole("button", { name: /^Работа/ });
+    const source = slot.container.querySelector<HTMLElement>(
+      '[data-rail-folder-drag="folder_a"]',
+    )!;
+    const target = withRect(
+      await screen.findByRole("button", { name: "Инструменты" }),
+    );
+
+    const data = transfer();
+    fireEvent.dragStart(source, { dataTransfer: data });
+    fireEvent.dragOver(target, { dataTransfer: data, clientY: 19 });
     fireEvent.drop(target, { dataTransfer: data, clientY: 19 });
 
     await waitFor(() =>

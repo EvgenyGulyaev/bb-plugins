@@ -99,9 +99,11 @@ export function RailMenuRow({
       onDragStart={(event: DragEvent<HTMLDivElement>) => {
         event.stopPropagation();
         event.dataTransfer.setData(RAIL_ITEM_DRAG_MIME, item.id);
-        // Marks the drag as coming out of a folder, so the rail's free area
-        // offers itself only when removing the icon is meaningful.
-        event.dataTransfer.setData(RAIL_MEMBER_DRAG_MIME, item.id);
+        if (onReorderDrop !== undefined) {
+          // Only a row inside a folder can be pulled back out of one, so the
+          // rail's free area offers itself only for these drags.
+          event.dataTransfer.setData(RAIL_MEMBER_DRAG_MIME, item.id);
+        }
         event.dataTransfer.effectAllowed = "move";
         setDragging(true);
       }}

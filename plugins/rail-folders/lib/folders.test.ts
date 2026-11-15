@@ -326,6 +326,17 @@ describe("moveFolderToIndex", () => {
     ]);
   });
 
+  it("pulls the last folder to the front for a negative index", () => {
+    const four = ["a", "b", "c", "d"].reduce(
+      (state, id) =>
+        createFolder(state, { id: `folder_${id}`, name: id, icon: "Folder" }),
+      EMPTY_RAIL_STATE,
+    );
+    expect(
+      moveFolderToIndex(four, "folder_d", -1).order,
+    ).toEqual(["folder_d", "folder_a", "folder_b", "folder_c"]);
+  });
+
   it("is a no-op at the current position or for an unknown folder", () => {
     const before = state();
     expect(moveFolderToIndex(before, "folder_a", 0)).toBe(before);
