@@ -1280,10 +1280,50 @@ describe("settings section", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ниже: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_move",
-          input: { id: "folder_a", direction: "down" },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("lowers a folder below the single icons on an old folders-only order", async () => {
+    const slot = mount({ state: twoFolders(), settings: true });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    // The saved order lists only folders, so the arrow has to materialize the
+    // icons the rail draws after them first and then step past the first one.
+    const down = screen.getByRole("button", {
+      name: "Ниже: Инструменты",
+    }) as HTMLButtonElement;
+    expect(down.disabled).toBe(false);
+    fireEvent.click(down);
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              "folder_b",
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
@@ -1307,20 +1347,30 @@ describe("settings section", () => {
       (screen.getByRole("button", { name: "Ниже: Работа" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+    // The last folder is still above the single icons, so it can step down.
     expect(
       (
         screen.getByRole("button", {
           name: "Ниже: Инструменты",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
+    ).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Выше: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_move",
-          input: { id: "folder_a", direction: "up" },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              PANEL_B.id,
+              "folder_b",
+              NEW_THREAD.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
@@ -1465,15 +1515,54 @@ describe("customize dialog", () => {
 
     const up = within(dialog).getByRole("button", { name: "Выше: Работа" }) as HTMLButtonElement;
     expect(up.disabled).toBe(true);
+    // The last folder still has the single icons below it, so it can step down
+    // even though the saved order lists only folders.
     expect(
       (within(dialog).getByRole("button", { name: "Ниже: Инструменты" }) as HTMLButtonElement)
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Ниже: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
-        { method: "folders_move", input: { id: "folder_a", direction: "down" } },
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("lowers a folder below the single icons on an old folders-only order", async () => {
+    const { slot, dialog } = await openCustomize({ state: twoFolders() });
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ниже: Инструменты" }),
+    );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              "folder_b",
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
       ]),
     );
   });

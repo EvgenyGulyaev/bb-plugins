@@ -16,6 +16,7 @@ import {
 import { Icon } from "@/components/ui/icon";
 import {
   DEFAULT_FOLDER_ICON,
+  moveFolder,
   moveItemInOrder,
   orderedFolders,
   railEditableSequence,
@@ -188,7 +189,6 @@ export function RailCustomizeDialog({
   isLoaded,
   items,
   actions,
-  onMoveFolder,
   onRenameFolder,
   onDeleteFolder,
   onSetOrder,
@@ -200,7 +200,6 @@ export function RailCustomizeDialog({
   isLoaded: boolean;
   items: readonly ExperimentalSidebarNavigationItem[];
   actions: ExperimentalSidebarNavigationActions;
-  onMoveFolder: (folder: Folder, direction: FolderMoveDirection) => void;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onSetOrder: (order: string[]) => void;
@@ -213,6 +212,14 @@ export function RailCustomizeDialog({
     const item = itemsById.get(itemId);
     return item === undefined ? [] : [item];
   });
+
+  // The dialog owns the host's item list, so it materializes the rail order
+  // itself and saves it whole. A folder in an old folders-only order can then
+  // step past single icons too, and the server never has to guess them.
+  const moveFolderTo = (folder: Folder, direction: FolderMoveDirection) => {
+    const next = moveFolder(state, items, folder.id, direction);
+    if (next !== state) onSetOrder(next.order);
+  };
 
   const moveSingle = (
     item: ExperimentalSidebarNavigationItem,
@@ -262,16 +269,16 @@ export function RailCustomizeDialog({
           ) : (
             <ul aria-label="Папки" className="flex flex-col gap-1.5">
               {folders.map((folder) => {
-                const position = state.order.indexOf(folder.id);
+                const position = sequence.indexOf(folder.id);
                 return (
                   <FolderRow
                     key={folder.id}
                     folder={folder}
                     canMoveUp={position > 0}
                     canMoveDown={
-                      position >= 0 && position < state.order.length - 1
+                      position >= 0 && position < sequence.length - 1
                     }
-                    onMove={onMoveFolder}
+                    onMove={moveFolderTo}
                     onRename={onRenameFolder}
                     onDelete={onDeleteFolder}
                   />

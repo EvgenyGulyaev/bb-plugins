@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { experimental_useSidebarNavigation } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -7,7 +8,9 @@ import { Input } from "@/components/ui/input";
 import { useRailFolders } from "@/hooks/useRailFolders";
 import {
   DEFAULT_FOLDER_ICON,
+  moveFolder,
   orderedFolders,
+  railEditableSequence,
   type Folder,
 } from "@/lib/folders";
 
@@ -187,12 +190,17 @@ function FolderRow({
  * the realtime signal.
  */
 export function RailFoldersSettings() {
+  const { items } = experimental_useSidebarNavigation();
   const { state, isLoaded, error, mutate } = useRailFolders();
   const [newName, setNewName] = useState("");
   const [newIcon, setNewIcon] = useState(DEFAULT_FOLDER_ICON);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
 
   const folders = orderedFolders(state);
+  // The arrows step through the rail the user sees, single icons included. On
+  // an old folders-only order that means materializing the drawn sequence
+  // first, so a folder can move past the icons the order never mentioned.
+  const sequence = railEditableSequence(state, items);
 
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -267,20 +275,22 @@ export function RailFoldersSettings() {
           {folders.map((folder) => {
             // The arrows step through the mixed rail order, so a folder can
             // cross a single icon anchor as well as a sibling folder.
-            const position = state.order.indexOf(folder.id);
+            const position = sequence.indexOf(folder.id);
             return (
               <FolderRow
                 key={folder.id}
                 folder={folder}
                 canMoveUp={position > 0}
                 canMoveDown={
-                  position >= 0 && position < state.order.length - 1
+                  position >= 0 && position < sequence.length - 1
                 }
                 onSave={(target, name, icon) => {
                   void save(target, name, icon);
                 }}
                 onMove={(target, direction) => {
-                  void mutate("folders_move", { id: target.id, direction });
+                  const next = moveFolder(state, items, target.id, direction);
+                  if (next === state) return;
+                  void mutate("rail_set_order", { order: next.order });
                 }}
                 onReorderItems={(target, itemIds) => {
                   void mutate("folders_reorder_items", {

@@ -218,26 +218,108 @@ describe("editing folders", () => {
       ...STATE(),
       order: ["__bb__/new-thread", "folder_a", "plugin-a/panel", "folder_b"],
     };
-    expect(moveFolder(state, "folder_b", "up").order).toEqual([
+    expect(moveFolder(state, ITEMS, "folder_b", "up").order).toEqual([
       "__bb__/new-thread",
       "folder_a",
       "folder_b",
       "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
     ]);
-    expect(moveFolder(state, "folder_a", "up").order).toEqual([
+    expect(moveFolder(state, ITEMS, "folder_a", "up").order).toEqual([
       "folder_a",
       "__bb__/new-thread",
       "plugin-a/panel",
       "folder_b",
+      "plugin-a/hidden",
+      "plugin-b/tools",
     ]);
-    expect(moveFolder(state, "folder_a", "down").order).toEqual([
+    expect(moveFolder(state, ITEMS, "folder_a", "down").order).toEqual([
       "__bb__/new-thread",
       "plugin-a/panel",
       "folder_a",
       "folder_b",
+      "plugin-a/hidden",
+      "plugin-b/tools",
     ]);
-    expect(moveFolder(state, "folder_b", "down")).toBe(state);
-    expect(moveFolder(state, "folder_gone", "up")).toBe(state);
+    expect(moveFolder(state, ITEMS, "folder_b", "down").order).toEqual([
+      "__bb__/new-thread",
+      "folder_a",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "folder_b",
+      "plugin-b/tools",
+    ]);
+    expect(moveFolder(state, ITEMS, "folder_gone", "up")).toBe(state);
+  });
+
+  it("is a no-op at the edges of the full rail, not of the saved order", () => {
+    const state = {
+      ...STATE(),
+      order: [
+        "folder_a",
+        "__bb__/new-thread",
+        "plugin-a/panel",
+        "plugin-a/hidden",
+        "plugin-b/tools",
+        "folder_b",
+      ],
+    };
+    expect(moveFolder(state, ITEMS, "folder_a", "up")).toBe(state);
+    expect(moveFolder(state, ITEMS, "folder_b", "down")).toBe(state);
+  });
+});
+
+describe("moving folders on a legacy order", () => {
+  // Old state: `order` lists only the folders, so the rail draws them first and
+  // every single icon follows in the host's order. A folder arrow still has to
+  // reach the icons, so the helper materializes that drawn sequence first.
+  const legacy = () => ({ ...STATE(), order: ["folder_a", "folder_b"] });
+  const DRAWN = [
+    "folder_a",
+    "folder_b",
+    "__bb__/new-thread",
+    "plugin-a/panel",
+    "plugin-a/hidden",
+    "plugin-b/tools",
+  ];
+
+  it("steps a folder below the first single icon", () => {
+    expect(moveFolder(legacy(), ITEMS, "folder_b", "down").order).toEqual([
+      "folder_a",
+      "__bb__/new-thread",
+      "folder_b",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+    ]);
+  });
+
+  it("materializes the whole rail order even when only folders were saved", () => {
+    const after = moveFolder(legacy(), ITEMS, "folder_a", "down");
+    expect(after.order).toEqual([
+      "folder_b",
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+    ]);
+    expect([...after.order].sort()).toEqual([...DRAWN].sort());
+  });
+
+  it("keeps a hidden icon on its materialized slot", () => {
+    const after = moveFolder(legacy(), ITEMS, "folder_b", "down");
+    expect(after.order.indexOf("plugin-a/hidden")).toBe(4);
+    expect(after.order.indexOf("plugin-a/panel")).toBe(3);
+  });
+
+  it("returns the same state at an edge or for an unknown, grouped id", () => {
+    const state = legacy();
+    expect(moveFolder(state, ITEMS, "folder_a", "up")).toBe(state);
+    expect(moveFolder(state, ITEMS, "folder_gone", "down")).toBe(state);
+    // A grouped icon belongs to a folder, so the folder arrow ignores it.
+    expect(moveFolder(state, ITEMS, "plugin-a/new-thread", "down")).toBe(state);
   });
 });
 
@@ -308,15 +390,19 @@ describe("moveFolderToIndex", () => {
     ...STATE(),
     order: ["__bb__/new-thread", "folder_a", "plugin-a/panel", "folder_b"],
   });
+  // What the rail draws for `state()`: the saved anchors first, then the single
+  // icons `order` does not mention, hidden ones included.
+  const TAIL = ["plugin-a/hidden", "plugin-b/tools"];
 
   it("moves a folder to an absolute slot in the mixed order", () => {
     const before = state();
-    const after = moveFolderToIndex(before, "folder_b", 0);
+    const after = moveFolderToIndex(before, ITEMS, "folder_b", 0);
     expect(after.order).toEqual([
       "folder_b",
       "__bb__/new-thread",
       "folder_a",
       "plugin-a/panel",
+      ...TAIL,
     ]);
     expect(after.folders.map((folder) => folder.id)).toEqual([
       "folder_b",
@@ -325,16 +411,18 @@ describe("moveFolderToIndex", () => {
   });
 
   it("clamps an index below zero or past the end", () => {
-    expect(moveFolderToIndex(state(), "folder_b", -5).order).toEqual([
+    expect(moveFolderToIndex(state(), ITEMS, "folder_b", -5).order).toEqual([
       "folder_b",
       "__bb__/new-thread",
       "folder_a",
       "plugin-a/panel",
+      ...TAIL,
     ]);
-    expect(moveFolderToIndex(state(), "folder_a", 99).order).toEqual([
+    expect(moveFolderToIndex(state(), ITEMS, "folder_a", 99).order).toEqual([
       "__bb__/new-thread",
       "plugin-a/panel",
       "folder_b",
+      ...TAIL,
       "folder_a",
     ]);
   });
@@ -346,15 +434,80 @@ describe("moveFolderToIndex", () => {
       EMPTY_RAIL_STATE,
     );
     expect(
-      moveFolderToIndex(four, "folder_d", -1).order,
+      moveFolderToIndex(four, [], "folder_d", -1).order,
     ).toEqual(["folder_d", "folder_a", "folder_b", "folder_c"]);
   });
 
   it("is a no-op at the current position or for an unknown folder", () => {
     const before = state();
-    expect(moveFolderToIndex(before, "folder_a", 1)).toBe(before);
-    expect(moveFolderToIndex(before, "folder_b", 3)).toBe(before);
-    expect(moveFolderToIndex(before, "folder_gone", 0)).toBe(before);
+    expect(moveFolderToIndex(before, ITEMS, "folder_a", 1)).toBe(before);
+    expect(moveFolderToIndex(before, ITEMS, "folder_b", 3)).toBe(before);
+    expect(moveFolderToIndex(before, ITEMS, "folder_gone", 0)).toBe(before);
+  });
+});
+
+describe("moveFolderToIndex on a legacy order", () => {
+  const legacy = () => ({ ...STATE(), order: ["folder_a", "folder_b"] });
+  const DRAWN = [
+    "folder_a",
+    "folder_b",
+    "__bb__/new-thread",
+    "plugin-a/panel",
+    "plugin-a/hidden",
+    "plugin-b/tools",
+  ];
+
+  it("indexes the drawn rail, so a folder lands after the single icons", () => {
+    expect(moveFolderToIndex(legacy(), ITEMS, "folder_a", 99).order).toEqual([
+      "folder_b",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+      "folder_a",
+    ]);
+  });
+
+  it("drops a folder into the middle, past the first single icon", () => {
+    expect(moveFolderToIndex(legacy(), ITEMS, "folder_a", 3).order).toEqual([
+      "folder_b",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "folder_a",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+    ]);
+    expect([...moveFolderToIndex(legacy(), ITEMS, "folder_a", 3).order].sort())
+      .toEqual([...DRAWN].sort());
+  });
+
+  it("clamps to the drawn rail and keeps a hidden icon's slot", () => {
+    expect(moveFolderToIndex(legacy(), ITEMS, "folder_b", -2).order).toEqual([
+      "folder_b",
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+    ]);
+    const after = moveFolderToIndex(legacy(), ITEMS, "folder_b", 99);
+    expect(after.order).toEqual([
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-a/hidden",
+      "plugin-b/tools",
+      "folder_b",
+    ]);
+    expect(after.order.indexOf("plugin-a/hidden")).toBe(3);
+  });
+
+  it("returns the same state for a grouped id or a folder already in place", () => {
+    const before = legacy();
+    expect(moveFolderToIndex(before, ITEMS, "plugin-a/new-thread", 0)).toBe(
+      before,
+    );
+    expect(moveFolderToIndex(before, ITEMS, "folder_b", 1)).toBe(before);
   });
 });
 

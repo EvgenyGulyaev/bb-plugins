@@ -28,6 +28,7 @@ import {
   setFolderIcon,
   setRailOrder,
   type RailFoldersState,
+  type RailItemRef,
 } from "./lib/folders.js";
 
 const folderIdSchema = z.string().min(1).max(120);
@@ -143,6 +144,16 @@ export default async function plugin(bb: BbPluginApi) {
     return folder;
   }
 
+  // The renderer owns the host's full item list, so it materializes the order
+  // itself and calls `rail_set_order`. The server only knows the single icons
+  // `order` already anchors; passing those keeps the legacy RPCs stepping
+  // through a mixed order without inventing slots the renderer did not save.
+  function anchoredItems(state: RailFoldersState): RailItemRef[] {
+    return state.order
+      .filter((id) => folderById(state, id) === null)
+      .map((id) => ({ id, isVisible: true }));
+  }
+
   function nextFolderId(state: RailFoldersState): string {
     let id = `folder_${randomUUID().slice(0, 12)}`;
     while (folderById(state, id) !== null) {
@@ -187,14 +198,14 @@ export default async function plugin(bb: BbPluginApi) {
     folders_move: ({ id, direction }) =>
       mutate((state) => {
         requireFolder(state, id);
-        return moveFolder(state, id, direction);
+        return moveFolder(state, anchoredItems(state), id, direction);
       }),
     folders_reorder_items: ({ id, itemIds }) =>
       mutate((state) => reorderItems(state, id, itemIds)),
     folders_reorder: ({ id, index }) =>
       mutate((state) => {
         requireFolder(state, id);
-        return moveFolderToIndex(state, id, index);
+        return moveFolderToIndex(state, anchoredItems(state), id, index);
       }),
     rail_set_order: ({ order }) =>
       mutate((state) => setRailOrder(state, order)),
