@@ -22,7 +22,7 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({
     id: "rail-folders",
     title: "Папки рейла",
-    description: "Создавайте папки, переименовывайте их, меняйте иконки и порядок.",
+    description: "Создавайте папки, переименовывайте их, меняйте иконки, порядок папок и участников.",
     component: RailFoldersSettings,
   });
 });

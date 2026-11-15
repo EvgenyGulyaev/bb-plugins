@@ -12,14 +12,18 @@ Right-click an icon to start a new folder, add it to an existing folder, remove
 it, or open the owning plugin's details. "New folder…" opens a modal with a
 grid of BB icons and a name field (default "Папка"), and creates an empty folder
 after OK. Renaming a folder uses the same icon picker. Drag an icon onto a
-folder with the mouse to add it, and drag a member row out onto the free rail to
-return it. Icons the user hid stay reachable from the "More" menu instead of
-disappearing; that menu also holds "Customize rail…", which opens bb's own rail
-editor.
+folder with the mouse to add it, drag a member row inside the popover to reorder
+the folder, or drag it out onto the free rail to return it. Drag a folder onto
+another folder to place it before or after, or onto the free rail to move it to
+the end of the folder order. Icons the user hid stay reachable from the "More"
+menu instead of disappearing; that menu also holds "Customize rail…", which
+opens bb's own rail editor.
 
 Settings → Rail Folders creates folders and manages their name, BB icon name,
-order and removal. Deleting a folder never disables a plugin or deletes a
-panel: its members simply return to the rail one by one.
+position in the rail, member order and removal. Folder and member arrow buttons
+are the keyboard and screen-reader alternative to dragging. Deleting a folder
+never disables a plugin or deletes a panel: its members simply return to the
+rail one by one.
 
 The arrangement is stored on the BB server, survives restarts, and every open
 window updates immediately when it changes. No account, API key, or external
