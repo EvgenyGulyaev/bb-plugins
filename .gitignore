@@ -8,3 +8,4 @@
 *.sqlite
 *.sqlite3
 docs/superpowers/
+.commandcode/
