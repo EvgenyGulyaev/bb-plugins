@@ -177,6 +177,17 @@ describe("rail state", () => {
     expect(after.state).toEqual({ folders: [], order: [] });
   });
 
+  it("serializes concurrent mutations so neither folder is lost", async () => {
+    const host = await load();
+    await Promise.all([
+      create(host, { name: "A", icon: "Folder" }),
+      create(host, { name: "B", icon: "Folder" }),
+    ]);
+    const { state: after } = await state(host);
+    expect(after.folders.map((folder) => folder.name)).toEqual(["A", "B"]);
+    expect(host.harness.inspection.realtimeSignals).toHaveLength(2);
+  });
+
   it("reorders folders past each other", async () => {
     const host = await load();
     const first = await create(host, { name: "A", icon: "Folder" });

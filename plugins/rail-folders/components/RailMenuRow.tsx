@@ -44,6 +44,7 @@ export function RailMenuRow({
   isActive,
   showShortcut,
   onActivate,
+  onClose,
   menu,
 }: {
   item: ExperimentalSidebarNavigationItem;
@@ -53,11 +54,14 @@ export function RailMenuRow({
     item: ExperimentalSidebarNavigationItem,
     target: ExperimentalSidebarNavigationTarget,
   ) => void;
+  /** Closes the popover the row lives in, so a drag never covers the page. */
+  onClose: () => void;
   menu: ItemMenuActions;
 }) {
   const { actions } = experimental_useSidebarNavigation();
   const split = experimental_useSidebarNavigationSplit(item.id, {
     activation: "distance",
+    onDragStart: onClose,
   });
   const unavailable = item.isDisabled || item.isLoading;
 
@@ -66,7 +70,6 @@ export function RailMenuRow({
       <ContextMenuTrigger asChild>
         <button
           type="button"
-          role="menuitem"
           data-rail-menu-row={item.id}
           aria-label={railItemLabel(item)}
           aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}

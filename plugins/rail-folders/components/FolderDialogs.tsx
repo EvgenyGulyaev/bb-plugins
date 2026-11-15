@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -46,6 +47,9 @@ export function RenameFolderDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Переименовать папку</DialogTitle>
+          <DialogDescription>
+            Новое название появится на рейле.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-3">
           <Input
@@ -89,11 +93,11 @@ export function DeleteFolderDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Удалить папку?</DialogTitle>
+          <DialogDescription>
+            «{folder?.name}» исчезнет, а её иконки вернутся в рейл по одной.
+            Плагины и панели останутся на месте.
+          </DialogDescription>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          «{folder?.name}» исчезнет, а её иконки вернутся в рейл по одной.
-          Плагины и панели останутся на месте.
-        </p>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
             Отмена

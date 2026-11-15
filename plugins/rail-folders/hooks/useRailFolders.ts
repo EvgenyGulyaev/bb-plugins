@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { StandardSchemaV1InferInput } from "@get-bb/plugin-sdk/app";
-import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  useRealtime,
+  useRealtimeConnectionState,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 
 import {
   EMPTY_RAIL_STATE,
@@ -38,6 +42,20 @@ export function useRailFolders() {
     refresh();
   }, [refresh]);
   useRealtime(RAIL_FOLDERS_CHANGED, refresh);
+
+  // Signals are ephemeral: anything published while the socket was down is
+  // gone. Reconcile on every later reconnection, not on the first connect.
+  const connectionState = useRealtimeConnectionState();
+  const previousConnectionState = useRef(connectionState);
+  useEffect(() => {
+    if (
+      connectionState === "connected" &&
+      previousConnectionState.current !== "connected"
+    ) {
+      refresh();
+    }
+    previousConnectionState.current = connectionState;
+  }, [connectionState, refresh]);
 
   const mutate = useCallback(
     async <Method extends RailMutation>(

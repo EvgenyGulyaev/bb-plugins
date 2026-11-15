@@ -166,7 +166,7 @@ describe("registration", () => {
 describe("rail layout", () => {
   it("draws Home, the folder and the ungrouped visible items in order", async () => {
     const slot = mount({ state: folderState() });
-    await screen.findByRole("button", { name: "Работа" });
+    await screen.findByRole("button", { name: /^Работа/ });
 
     expect(railEntries(slot)).toEqual([
       "home",
@@ -179,15 +179,15 @@ describe("rail layout", () => {
 
   it("moves a grouped icon out of the top level into its folder", async () => {
     const slot = mount({ state: folderState() });
-    const folderButton = await screen.findByRole("button", { name: "Работа" });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
     expect(
       slot.container.querySelector('[data-rail-entry="item:test-plugin/panel-a"]'),
     ).toBeNull();
 
     fireEvent.click(folderButton);
-    const menu = await screen.findByRole("menu", { name: "Работа" });
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
     expect(
-      within(menu).getByRole("menuitem", {
+      within(menu).getByRole("button", {
         name: "Панель A, 3 открытые задачи",
       }),
     ).toBeTruthy();
@@ -195,8 +195,8 @@ describe("rail layout", () => {
 
   it("marks the active item and the folder that contains it", async () => {
     const slot = mount({ state: folderState(), activeItemId: PANEL_A.id });
-    const folderButton = await screen.findByRole("button", { name: "Работа" });
-    expect(folderButton.getAttribute("aria-current")).toBe("page");
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
+    expect(folderButton.getAttribute("aria-current")).toBe("true");
     expect(
       slot.getByRole("button", { name: "Панель B" }).getAttribute("aria-current"),
     ).toBeNull();
@@ -204,7 +204,7 @@ describe("rail layout", () => {
 
   it("does not mark a folder active for an unrelated item", async () => {
     const slot = mount({ state: folderState(), activeItemId: PANEL_B.id });
-    const folderButton = await screen.findByRole("button", { name: "Работа" });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
     expect(folderButton.getAttribute("aria-current")).toBeNull();
     expect(
       slot.getByRole("button", { name: "Панель B" }).getAttribute("aria-current"),
@@ -216,10 +216,13 @@ describe("rail layout", () => {
     expect(screen.getByRole("button", { name: "Панель A, 3 открытые задачи" })).toBeTruthy();
   });
 
-  it("shows a dot on a folder whose member has a badge", async () => {
+  it("shows a dot on a folder whose member has a badge, and names the badge", async () => {
     const slot = mount({ state: folderState() });
-    await screen.findByRole("button", { name: "Работа" });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
     expect(slot.container.querySelector("[data-rail-badge-dot]")).not.toBeNull();
+    expect(folderButton.getAttribute("aria-label")).toBe(
+      "Работа, 3 открытые задачи",
+    );
   });
 
   it("shows no dot on a folder without badges", async () => {
@@ -245,6 +248,14 @@ describe("rail layout", () => {
     fireEvent.click(slot.getByRole("button", { name: "Отключена" }));
     fireEvent.click(slot.getByRole("button", { name: "Грузится" }));
     expect(slot.inspection.sidebarNavigationCalls).toEqual([]);
+  });
+
+  it("opens bb's rail editor from the rail", () => {
+    const slot = mount();
+    fireEvent.click(slot.getByRole("button", { name: "Настроить рейл" }));
+    expect(slot.inspection.sidebarNavigationCalls).toEqual([
+      { method: "openCustomize" },
+    ]);
   });
 });
 
@@ -287,11 +298,11 @@ describe("activation", () => {
 describe("folder popover", () => {
   it("lists members and activates one in place or in a split", async () => {
     const slot = mount({ state: folderState() });
-    const folderButton = await screen.findByRole("button", { name: "Работа" });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
     fireEvent.click(folderButton);
 
-    const menu = await screen.findByRole("menu", { name: "Работа" });
-    const member = within(menu).getByRole("menuitem", {
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const member = within(menu).getByRole("button", {
       name: "Панель A, 3 открытые задачи",
     });
     fireEvent.click(member);
@@ -300,12 +311,12 @@ describe("folder popover", () => {
       itemId: PANEL_A.id,
       target: "current",
     });
-    await waitFor(() => expect(screen.queryByRole("menu", { name: "Работа" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("group", { name: /^Работа/ })).toBeNull());
 
     fireEvent.click(folderButton);
-    const reopened = await screen.findByRole("menu", { name: "Работа" });
+    const reopened = await screen.findByRole("group", { name: /^Работа/ });
     fireEvent.click(
-      within(reopened).getByRole("menuitem", { name: "Панель A, 3 открытые задачи" }),
+      within(reopened).getByRole("button", { name: "Панель A, 3 открытые задачи" }),
       { metaKey: true },
     );
     expect(slot.inspection.sidebarNavigationCalls).toContainEqual({
@@ -324,12 +335,12 @@ describe("folder popover", () => {
       }),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Пустая" }));
-    const menu = await screen.findByRole("menu", { name: "Пустая" });
+    const menu = await screen.findByRole("group", { name: "Пустая" });
     expect(within(menu).getByText("В папке пусто")).toBeTruthy();
 
     fireEvent.keyDown(menu, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByRole("menu", { name: "Пустая" })).toBeNull(),
+      expect(screen.queryByRole("group", { name: "Пустая" })).toBeNull(),
     );
   });
 
@@ -343,8 +354,8 @@ describe("folder popover", () => {
       }),
     });
     fireEvent.click(await screen.findByRole("button", { name: "Отключённые" }));
-    const menu = await screen.findByRole("menu", { name: "Отключённые" });
-    const member = within(menu).getByRole("menuitem", { name: "Отключена" });
+    const menu = await screen.findByRole("group", { name: "Отключённые" });
+    const member = within(menu).getByRole("button", { name: "Отключена" });
     expect((member as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(member);
     expect(slot.inspection.sidebarNavigationCalls).toEqual([]);
@@ -357,8 +368,8 @@ describe("overflow", () => {
     expect(screen.queryByRole("button", { name: "Скрытая" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Ещё" }));
-    const menu = await screen.findByRole("menu", { name: "Скрытые иконки" });
-    const hidden = within(menu).getByRole("menuitem", { name: "Скрытая" });
+    const menu = await screen.findByRole("group", { name: "Скрытые иконки" });
+    const hidden = within(menu).getByRole("button", { name: "Скрытая" });
     fireEvent.click(hidden);
 
     expect(slot.inspection.sidebarNavigationCalls).toEqual([
@@ -369,6 +380,23 @@ describe("overflow", () => {
   it("omits the overflow button when nothing is hidden", () => {
     mount({ items: [NEW_THREAD, PANEL_A] });
     expect(screen.queryByRole("button", { name: "Ещё" })).toBeNull();
+  });
+
+  it("keeps a hidden grouped item inside its folder, not in the overflow", async () => {
+    mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_hidden",
+        name: "Скрытые",
+        icon: "Folder",
+        itemIds: [HIDDEN.id],
+      }),
+    });
+    expect(await screen.findByRole("button", { name: "Скрытые" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Ещё" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Скрытые" }));
+    const group = await screen.findByRole("group", { name: "Скрытые" });
+    expect(within(group).getByRole("button", { name: "Скрытая" })).toBeTruthy();
   });
 });
 
@@ -397,14 +425,14 @@ describe("item context menu", () => {
 
   it("adds the icon to an existing folder through the submenu", async () => {
     const slot = mount({ state: folderState() });
-    await screen.findByRole("button", { name: "Работа" });
+    await screen.findByRole("button", { name: /^Работа/ });
     fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
 
     const subTrigger = await screen.findByRole("menuitem", {
       name: /Добавить в папку/,
     });
     fireEvent.keyDown(subTrigger, { key: "ArrowRight" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Работа" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Работа/ }));
 
     await waitFor(() =>
       expect(rpcCalls(slot, "folders_add_item")).toEqual([
@@ -421,10 +449,10 @@ describe("item context menu", () => {
       state: addItemToFolder(folderState(), "folder_a", PANEL_B.id),
     });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Работа" }));
-    const menu = await screen.findByRole("menu", { name: "Работа" });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
     fireEvent.contextMenu(
-      within(menu).getByRole("menuitem", { name: "Панель B" }),
+      within(menu).getByRole("button", { name: "Панель B" }),
     );
     fireEvent.click(
       await screen.findByRole("menuitem", { name: /Убрать из папки/ }),
@@ -458,7 +486,7 @@ describe("item context menu", () => {
 describe("folder context menu", () => {
   it("renames a folder through the dialog", async () => {
     const slot = mount({ state: folderState() });
-    fireEvent.contextMenu(await screen.findByRole("button", { name: "Работа" }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /^Работа/ }));
     fireEvent.click(
       await screen.findByRole("menuitem", { name: /Переименовать папку/ }),
     );
@@ -476,7 +504,7 @@ describe("folder context menu", () => {
 
   it("deletes a folder only after confirmation", async () => {
     const slot = mount({ state: folderState() });
-    fireEvent.contextMenu(await screen.findByRole("button", { name: "Работа" }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /^Работа/ }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Удалить папку/ }));
 
     await screen.findByText("Удалить папку?");
@@ -497,6 +525,15 @@ describe("realtime", () => {
     await waitFor(() => expect(rpcCalls(slot, "rail_state")).toHaveLength(1));
 
     await slot.behavior.emitRealtime("rail-folders-changed", {});
+    await waitFor(() => expect(rpcCalls(slot, "rail_state")).toHaveLength(2));
+  });
+
+  it("reconciles after a reconnection, where signals are not replayed", async () => {
+    const slot = mount();
+    await waitFor(() => expect(rpcCalls(slot, "rail_state")).toHaveLength(1));
+
+    await slot.behavior.setRealtimeConnectionState("reconnecting");
+    await slot.behavior.setRealtimeConnectionState("connected");
     await waitFor(() => expect(rpcCalls(slot, "rail_state")).toHaveLength(2));
   });
 });

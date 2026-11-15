@@ -27,6 +27,7 @@ import { useRailFolders } from "@/hooks/useRailFolders";
 import {
   DEFAULT_FOLDER_ICON,
   folderMembers,
+  folderOfItem,
   layoutRail,
   type Folder,
 } from "@/lib/folders";
@@ -37,7 +38,7 @@ import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
 import { RailMenuRow, railItemLabel, targetForClick } from "./RailMenuRow";
 
 const RAIL_BUTTON_CLASS =
-  "relative size-8 shrink-0 rounded-md aria-[current=page]:bg-state-active aria-[current=page]:text-foreground";
+  "relative size-8 shrink-0 rounded-md data-[active]:bg-state-active data-[active]:text-foreground";
 
 // The SDK exports the icon component under a lowercase experimental_ name,
 // which JSX would read as an intrinsic element, so it needs an alias.
@@ -57,6 +58,7 @@ function HomeButton() {
       size="icon"
       aria-label="Домой"
       aria-current={isHomeActive ? "page" : undefined}
+      data-active={isHomeActive ? "" : undefined}
       data-rail-entry="home"
       onClick={(event) =>
         actions.goHome({ target: event.metaKey || event.ctrlKey ? "tab" : "current" })
@@ -64,6 +66,27 @@ function HomeButton() {
       className={RAIL_BUTTON_CLASS}
     >
       <Icon name="House" fallback="Home" className="size-4" aria-hidden="true" />
+    </Button>
+  );
+}
+
+function CustomizeButton() {
+  const { actions } = experimental_useSidebarNavigation();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Настроить рейл"
+      onClick={() => actions.openCustomize()}
+      className={RAIL_BUTTON_CLASS}
+    >
+      <Icon
+        name="SlidersHorizontal"
+        fallback="Settings2"
+        className="size-4"
+        aria-hidden="true"
+      />
     </Button>
   );
 }
@@ -90,7 +113,6 @@ function MoreItemsButton({
           variant="ghost"
           size="icon"
           aria-label="Ещё"
-          aria-haspopup="menu"
           className={RAIL_BUTTON_CLASS}
         >
           <Icon
@@ -108,7 +130,7 @@ function MoreItemsButton({
         aria-label="Скрытые иконки"
         className="w-64 p-1"
       >
-        <div role="menu" aria-label="Скрытые иконки" className="flex flex-col">
+        <div role="group" aria-label="Скрытые иконки" className="flex flex-col">
           {items.map((item) => (
             <RailMenuRow
               key={item.id}
@@ -116,6 +138,7 @@ function MoreItemsButton({
               isActive={item.id === activeItemId}
               showShortcut={showShortcut}
               menu={menu}
+              onClose={() => setOpen(false)}
               onActivate={(activated, target) => {
                 setOpen(false);
                 actions.activate(activated.id, { target });
@@ -148,8 +171,15 @@ function FolderButton({
   onDelete: (folder: Folder) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const hasBadge = members.some((member) => member.badge !== null);
+  const badgeLabels = members.flatMap((member) =>
+    member.badge === null ? [] : [member.badge.label],
+  );
+  const hasBadge = badgeLabels.length > 0;
   const isActive = members.some((member) => member.id === activeItemId);
+  // The dot is decorative, so the badges it stands for join the folder's name.
+  const label = hasBadge
+    ? `${folder.name}, ${badgeLabels.join(", ")}`
+    : folder.name;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -160,9 +190,9 @@ function FolderButton({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label={folder.name}
-              aria-current={isActive ? "page" : undefined}
-              aria-haspopup="menu"
+              aria-label={label}
+              aria-current={isActive ? "true" : undefined}
+              data-active={isActive ? "" : undefined}
               data-rail-entry={`folder:${folder.id}`}
               className={RAIL_BUTTON_CLASS}
             >
@@ -203,7 +233,7 @@ function FolderButton({
         aria-label={folder.name}
         className="w-64 p-1"
       >
-        <div role="menu" aria-label={folder.name} className="flex flex-col">
+        <div role="group" aria-label={folder.name} className="flex flex-col">
           {members.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               В папке пусто
@@ -216,6 +246,7 @@ function FolderButton({
                 isActive={item.id === activeItemId}
                 showShortcut={showShortcut}
                 menu={menu}
+                onClose={() => setOpen(false)}
                 onActivate={(activated, target) => {
                   setOpen(false);
                   actions.activate(activated.id, { target });
@@ -257,6 +288,7 @@ function RailItemButton({
           aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
           aria-current={isActive ? "page" : undefined}
           disabled={unavailable}
+          data-active={isActive ? "" : undefined}
           data-rail-entry={`item:${item.id}`}
           {...split.splitProps}
           onClick={(event) => {
@@ -299,8 +331,12 @@ export function RailFolders() {
   );
   const entries = useMemo(() => layoutRail(state, items), [state, items]);
   const hiddenItems = useMemo(
-    () => items.filter((item) => !item.isVisible),
-    [items],
+    () =>
+      items.filter(
+        (item) =>
+          !item.isVisible && folderOfItem(state, item.id) === null,
+      ),
+    [items, state],
   );
   const knownItemIds = useMemo(
     () => new Set(items.map((item) => item.id)),
@@ -378,6 +414,8 @@ export function RailFolders() {
             menu={menu}
           />
         )}
+        <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
+        <CustomizeButton />
         {error === null ? null : (
           <p
             role="alert"

@@ -85,14 +85,27 @@ export default async function plugin(bb: BbPluginApi) {
     return { state };
   }
 
-  async function mutate(
-    update: (state: RailFoldersState) => RailFoldersState,
-  ) {
-    const state = await readState();
-    const next = update(state);
-    // The pure helpers return the same object for a no-op, so an idempotent
-    // click neither rewrites storage nor wakes every open window.
-    return next === state ? { state } : writeState(next);
+  // kv has no compare-and-set, and two windows can mutate at once. Every
+  // read-modify-write goes through one queue so a concurrent create cannot
+  // overwrite the folder another request just added.
+  let mutations: Promise<unknown> = Promise.resolve();
+  function enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const run = mutations.then(operation, operation);
+    mutations = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  function mutate(update: (state: RailFoldersState) => RailFoldersState) {
+    return enqueue(async () => {
+      const state = await readState();
+      const next = update(state);
+      // The pure helpers return the same object for a no-op, so an idempotent
+      // click neither rewrites storage nor wakes every open window.
+      return next === state ? { state } : writeState(next);
+    });
   }
 
   function requireFolder(state: RailFoldersState, id: string) {
