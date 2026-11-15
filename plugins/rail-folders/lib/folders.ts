@@ -6,6 +6,11 @@ export const RAIL_STORAGE_KEY = "rail-folders";
 export const RAIL_FOLDERS_CHANGED = "rail-folders-changed";
 /** Icon used when a folder is created without a meaningful one. */
 export const DEFAULT_FOLDER_ICON = "Folder";
+/**
+ * `dataTransfer` type carrying the dragged rail item id, shared by the rail
+ * buttons, the popover rows and the rail's drop zones.
+ */
+export const RAIL_ITEM_DRAG_MIME = "text/rail-item-id";
 
 export const folderNameSchema = z.string().trim().min(1).max(60);
 export const folderIconSchema = z.string().trim().min(1).max(80);

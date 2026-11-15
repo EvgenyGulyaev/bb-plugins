@@ -18,7 +18,8 @@ import { DEFAULT_FOLDER_ICON, type Folder } from "@/lib/folders";
 
 export interface ItemMenuActions {
   folders: readonly Folder[];
-  onCreateFolder: (item: ExperimentalSidebarNavigationItem) => void;
+  /** Opens the create-folder dialog; the new folder starts empty. */
+  onNewFolder: () => void;
   onAddToFolder: (
     item: ExperimentalSidebarNavigationItem,
     folderId: string,
@@ -46,9 +47,9 @@ export function ItemContextMenu({
   return (
     <ContextMenuContent>
       <ContextMenuLabel className="truncate">{item.label}</ContextMenuLabel>
-      <ContextMenuItem onSelect={() => menu.onCreateFolder(item)}>
+      <ContextMenuItem onSelect={() => menu.onNewFolder()}>
         <Icon name="FolderPlus" className="size-4" aria-hidden="true" />
-        Новая папка с этой иконкой
+        Новая папка…
       </ContextMenuItem>
       {menu.folders.length === 0 ? null : (
         <ContextMenuSub>

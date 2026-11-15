@@ -250,12 +250,39 @@ describe("rail layout", () => {
     expect(slot.inspection.sidebarNavigationCalls).toEqual([]);
   });
 
-  it("opens bb's rail editor from the rail", () => {
+  it("draws a folder as an icon only, with the name in the label and tooltip", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_icon_only",
+        name: "Работа",
+        icon: "Briefcase",
+      }),
+    });
+    const folderButton = await screen.findByRole("button", { name: "Работа" });
+
+    expect(folderButton.textContent).not.toContain("Работа");
+    expect(folderButton.getAttribute("title")).toBe("Работа");
+    expect(folderButton.getAttribute("aria-label")).toBe("Работа");
+  });
+
+  it("opens bb's rail editor from the overflow menu", async () => {
     const slot = mount();
-    fireEvent.click(slot.getByRole("button", { name: "Настроить рейл" }));
+    fireEvent.click(slot.getByRole("button", { name: "Ещё" }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Настроить рейл/ }),
+    );
     expect(slot.inspection.sidebarNavigationCalls).toEqual([
       { method: "openCustomize" },
     ]);
+  });
+
+  it("keeps the rail editor reachable when nothing is hidden", async () => {
+    const slot = mount({ items: [NEW_THREAD, PANEL_A] });
+    fireEvent.click(slot.getByRole("button", { name: "Ещё" }));
+    expect(
+      await screen.findByRole("menuitem", { name: /Настроить рейл/ }),
+    ).toBeTruthy();
+    expect(slot.queryByText("Скрытая")).toBeNull();
   });
 });
 
@@ -377,9 +404,9 @@ describe("overflow", () => {
     ]);
   });
 
-  it("omits the overflow button when nothing is hidden", () => {
+  it("keeps the overflow menu for the rail editor when nothing is hidden", () => {
     mount({ items: [NEW_THREAD, PANEL_A] });
-    expect(screen.queryByRole("button", { name: "Ещё" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Ещё" })).toBeTruthy();
   });
 
   it("keeps a hidden grouped item inside its folder, not in the overflow", async () => {
@@ -392,7 +419,15 @@ describe("overflow", () => {
       }),
     });
     expect(await screen.findByRole("button", { name: "Скрытые" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Ещё" })).toBeNull();
+    // The overflow button is always there for the rail editor, but the grouped
+    // hidden icon must not be offered by it.
+    fireEvent.click(screen.getByRole("button", { name: "Ещё" }));
+    await screen.findByRole("menuitem", { name: /Настроить рейл/ });
+    expect(
+      screen.queryByRole("button", { name: "Скрытая" }),
+    ).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: /Настроить рейл/ })).toBeNull());
 
     fireEvent.click(screen.getByRole("button", { name: "Скрытые" }));
     const group = await screen.findByRole("group", { name: "Скрытые" });
@@ -401,29 +436,81 @@ describe("overflow", () => {
 });
 
 describe("item context menu", () => {
-  it("creates a folder from the icon", async () => {
+  it("opens the create-folder dialog instead of creating at once", async () => {
     const slot = mount();
     fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
 
     fireEvent.click(
-      await screen.findByRole("menuitem", { name: /Новая папка с этой иконкой/ }),
+      await screen.findByRole("menuitem", { name: /Новая папка/ }),
     );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.getAttribute("aria-labelledby")).toBeTruthy();
+    expect(within(dialog).getByRole("heading", { name: "Новая папка" })).toBeTruthy();
+    expect(rpcCalls(slot, "folders_create")).toEqual([]);
+  });
+
+  it("creates an empty folder with the picked icon and typed name", async () => {
+    const slot = mount();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Новая папка/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    const name = within(dialog).getByRole("textbox", { name: "Название папки" });
+    expect((name as HTMLInputElement).value).toBe("Папка");
+    fireEvent.change(name, { target: { value: "  Инструменты  " } });
+    fireEvent.click(
+      within(dialog).getByRole("radio", { name: "Briefcase" }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
 
     await waitFor(() =>
       expect(rpcCalls(slot, "folders_create")).toEqual([
         {
           method: "folders_create",
-          input: {
-            name: "Панель B",
-            icon: "Folder",
-            itemIds: [PANEL_B.id],
-          },
+          input: { name: "Инструменты", icon: "Briefcase" },
         },
+      ]),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("does not pre-fill the new folder with the clicked icon's name", async () => {
+    const slot = mount();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Новая папка/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_create")).toEqual([
+        { method: "folders_create", input: { name: "Папка", icon: "Folder" } },
       ]),
     );
   });
 
-  it("adds the icon to an existing folder through the submenu", async () => {
+  it("closes the create dialog on Cancel and Escape without creating", async () => {
+    const slot = mount();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Новая папка/ }));
+
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Отмена",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Новая папка/ }));
+    const reopened = await screen.findByRole("dialog");
+    fireEvent.keyDown(reopened, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(rpcCalls(slot, "folders_create")).toEqual([]);
+  });
+
+  it("keeps the whole menu reachable when a folder already exists", async () => {
     const slot = mount({ state: folderState() });
     await screen.findByRole("button", { name: /^Работа/ });
     fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
@@ -484,22 +571,52 @@ describe("item context menu", () => {
 });
 
 describe("folder context menu", () => {
-  it("renames a folder through the dialog", async () => {
+  it("renames a folder through the dialog's icon picker", async () => {
     const slot = mount({ state: folderState() });
     fireEvent.contextMenu(await screen.findByRole("button", { name: /^Работа/ }));
     fireEvent.click(
       await screen.findByRole("menuitem", { name: /Переименовать папку/ }),
     );
 
-    const input = await screen.findByRole("textbox", { name: "Название папки" });
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByRole("textbox", { name: "Название папки" });
     fireEvent.change(input, { target: { value: "  Дом  " } });
-    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    fireEvent.click(within(dialog).getByRole("radio", { name: "House" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
 
     await waitFor(() =>
       expect(rpcCalls(slot, "folders_rename")).toEqual([
         { method: "folders_rename", input: { id: "folder_a", name: "Дом" } },
       ]),
     );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_set_icon")).toEqual([
+        { method: "folders_set_icon", input: { id: "folder_a", icon: "House" } },
+      ]),
+    );
+  });
+
+  it("keeps the rename dialog's icon when only the name changes", async () => {
+    const slot = mount({ state: folderState() });
+    fireEvent.contextMenu(await screen.findByRole("button", { name: /^Работа/ }));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Переименовать папку/ }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("radio", { name: "Briefcase" }).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_rename")).toEqual([
+        { method: "folders_rename", input: { id: "folder_a", name: "Работа" } },
+      ]),
+    );
+    expect(rpcCalls(slot, "folders_set_icon")).toEqual([]);
   });
 
   it("deletes a folder only after confirmation", async () => {
@@ -516,6 +633,145 @@ describe("folder context menu", () => {
         { method: "folders_delete", input: { id: "folder_a" } },
       ]),
     );
+  });
+});
+
+describe("drag and drop", () => {
+  function transfer() {
+    const store: Record<string, string> = {};
+    return {
+      store,
+      // A real DataTransfer exposes the types it was written with, which the
+      // drop targets read during dragover.
+      get types() {
+        return Object.keys(store);
+      },
+      setData: (type: string, value: string) => {
+        store[type] = value;
+      },
+      getData: (type: string) => store[type] ?? "",
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+  }
+
+  it("drops a rail icon on a folder and adds it there", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+      }),
+    });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
+    const icon = slot.container.querySelector<HTMLElement>(
+      `[data-rail-entry="item:${PANEL_B.id}"]`,
+    )!;
+    expect(icon.draggable).toBe(true);
+
+    const data = transfer();
+    fireEvent.dragStart(icon, { dataTransfer: data });
+    expect(data.getData("text/rail-item-id")).toBe(PANEL_B.id);
+    fireEvent.dragOver(folderButton, { dataTransfer: data });
+    expect(folderButton.getAttribute("data-drop-active")).toBe("");
+    fireEvent.drop(folderButton, { dataTransfer: data });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_add_item")).toEqual([
+        {
+          method: "folders_add_item",
+          input: { folderId: "folder_a", itemId: PANEL_B.id },
+        },
+      ]),
+    );
+  });
+
+  it("clears the drop highlight when the drag leaves the folder", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_a",
+        name: "Работа",
+        icon: "Briefcase",
+      }),
+    });
+    const folderButton = await screen.findByRole("button", { name: /^Работа/ });
+    const icon = slot.container.querySelector<HTMLElement>(
+      `[data-rail-entry="item:${PANEL_B.id}"]`,
+    )!;
+    const data = transfer();
+    fireEvent.dragStart(icon, { dataTransfer: data });
+
+    fireEvent.dragOver(folderButton, { dataTransfer: data });
+    expect(folderButton.getAttribute("data-drop-active")).toBe("");
+    fireEvent.dragLeave(folderButton, { dataTransfer: data });
+    expect(folderButton.getAttribute("data-drop-active")).toBeNull();
+    expect(rpcCalls(slot, "folders_add_item")).toEqual([]);
+  });
+
+  it("drags a folder member out to the ungrouped area and removes it", async () => {
+    const slot = mount({
+      state: addItemToFolder(folderState(), "folder_a", PANEL_B.id),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const row = within(menu).getByRole("button", { name: "Панель B" });
+    expect(row.closest("[data-rail-menu-row]")?.getAttribute("draggable")).toBe(
+      "true",
+    );
+
+    const dropZone = slot.container.querySelector<HTMLElement>(
+      "[data-rail-dropzone]",
+    )!;
+    expect(dropZone).not.toBeNull();
+
+    const data = transfer();
+    fireEvent.dragStart(row.parentElement!, { dataTransfer: data });
+    expect(data.getData("text/rail-item-id")).toBe(PANEL_B.id);
+    fireEvent.dragOver(dropZone, { dataTransfer: data });
+    expect(dropZone.getAttribute("data-drop-active")).toBe("");
+    fireEvent.drop(dropZone, { dataTransfer: data });
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_remove_item")).toEqual([
+        { method: "folders_remove_item", input: { itemId: PANEL_B.id } },
+      ]),
+    );
+  });
+
+  it("keeps the split-drag contract on the icon button, not the drag wrapper", async () => {
+    const slot = mount({ items: [NEW_THREAD, PANEL_B] });
+    const button = slot.getByRole("button", { name: "Панель B" });
+
+    fireEvent.pointerDown(button);
+    expect(slot.inspection.sidebarNavigationCalls).toContainEqual({
+      method: "beginSplitDrag",
+      itemId: PANEL_B.id,
+    });
+
+    const wrapper = slot.container.querySelector<HTMLElement>(
+      `[data-rail-entry="item:${PANEL_B.id}"]`,
+    )!;
+    expect(wrapper).not.toBe(button);
+    expect(wrapper.getAttribute("draggable")).toBe("true");
+
+    slot.inspection.sidebarNavigationCalls.length = 0;
+    fireEvent.pointerDown(wrapper);
+    expect(slot.inspection.sidebarNavigationCalls).toEqual([]);
+  });
+
+  it("keeps the split-drag contract on a popover member row too", async () => {
+    const slot = mount({ state: folderState() });
+    fireEvent.click(await screen.findByRole("button", { name: /^Работа/ }));
+    const menu = await screen.findByRole("group", { name: /^Работа/ });
+    const row = within(menu).getByRole("button", {
+      name: "Панель A, 3 открытые задачи",
+    });
+
+    fireEvent.pointerDown(row);
+    expect(slot.inspection.sidebarNavigationCalls).toContainEqual({
+      method: "beginSplitDrag",
+      itemId: PANEL_A.id,
+    });
   });
 });
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { DragEvent } from "react";
 import {
   experimental_SidebarNavigationIcon,
   experimental_useSidebarNavigation,
@@ -9,7 +10,7 @@ import type {
   ExperimentalSidebarNavigationItem,
 } from "@get-bb/plugin-sdk/app";
 
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -26,67 +27,55 @@ import {
 import { useRailFolders } from "@/hooks/useRailFolders";
 import {
   DEFAULT_FOLDER_ICON,
+  RAIL_ITEM_DRAG_MIME,
   folderMembers,
   folderOfItem,
   layoutRail,
   type Folder,
 } from "@/lib/folders";
+import { cn } from "@/lib/utils";
 
-import { DeleteFolderDialog, RenameFolderDialog } from "./FolderDialogs";
+import {
+  CreateFolderDialog,
+  DeleteFolderDialog,
+  RenameFolderDialog,
+} from "./FolderDialogs";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
 import { RailMenuRow, railItemLabel, targetForClick } from "./RailMenuRow";
 
 const RAIL_BUTTON_CLASS =
   "relative size-8 shrink-0 rounded-md data-[active]:bg-state-active data-[active]:text-foreground";
 
+/** Whether a drag carries one of our item ids. */
+function carriesRailItem(dataTransfer: DataTransfer): boolean {
+  return dataTransfer.types.includes(RAIL_ITEM_DRAG_MIME);
+}
+
 // The SDK exports the icon component under a lowercase experimental_ name,
 // which JSX would read as an intrinsic element, so it needs an alias.
 const SidebarNavigationIcon = experimental_SidebarNavigationIcon;
 
-function folderFromLabel(label: string): string {
-  const trimmed = label.trim();
-  return trimmed === "" ? "Папка" : trimmed.slice(0, 60);
-}
-
 function HomeButton() {
   const { isHomeActive, actions } = experimental_useSidebarNavigation();
   return (
-    <Button
+    <button
       type="button"
-      variant="ghost"
-      size="icon"
       aria-label="Домой"
       aria-current={isHomeActive ? "page" : undefined}
       data-active={isHomeActive ? "" : undefined}
       data-rail-entry="home"
       onClick={(event) =>
-        actions.goHome({ target: event.metaKey || event.ctrlKey ? "tab" : "current" })
+        actions.goHome({
+          target: event.metaKey || event.ctrlKey ? "tab" : "current",
+        })
       }
-      className={RAIL_BUTTON_CLASS}
+      className={cn(
+        buttonVariants({ variant: "ghost", size: "icon" }),
+        RAIL_BUTTON_CLASS,
+      )}
     >
       <Icon name="House" fallback="Home" className="size-4" aria-hidden="true" />
-    </Button>
-  );
-}
-
-function CustomizeButton() {
-  const { actions } = experimental_useSidebarNavigation();
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      aria-label="Настроить рейл"
-      onClick={() => actions.openCustomize()}
-      className={RAIL_BUTTON_CLASS}
-    >
-      <Icon
-        name="SlidersHorizontal"
-        fallback="Settings2"
-        className="size-4"
-        aria-hidden="true"
-      />
-    </Button>
+    </button>
   );
 }
 
@@ -107,12 +96,13 @@ function MoreItemsButton({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
+        <button
           type="button"
-          variant="ghost"
-          size="icon"
           aria-label="Ещё"
-          className={RAIL_BUTTON_CLASS}
+          className={cn(
+            buttonVariants({ variant: "ghost", size: "icon" }),
+            RAIL_BUTTON_CLASS,
+          )}
         >
           <Icon
             name="MoreHorizontal"
@@ -120,31 +110,51 @@ function MoreItemsButton({
             className="size-4"
             aria-hidden="true"
           />
-        </Button>
+        </button>
       </PopoverTrigger>
       <PopoverContent
         side="right"
         align="start"
         sideOffset={8}
-        aria-label="Скрытые иконки"
+        aria-label="Ещё"
         className="w-64 p-1"
       >
-        <div role="group" aria-label="Скрытые иконки" className="flex flex-col">
-          {items.map((item) => (
-            <RailMenuRow
-              key={item.id}
-              item={item}
-              isActive={item.id === activeItemId}
-              showShortcut={showShortcut}
-              menu={menu}
-              onClose={() => setOpen(false)}
-              onActivate={(activated, target) => {
-                setOpen(false);
-                actions.activate(activated.id, { target });
-              }}
-            />
-          ))}
-        </div>
+        {items.length === 0 ? null : (
+          <div role="group" aria-label="Скрытые иконки" className="flex flex-col">
+            {items.map((item) => (
+              <RailMenuRow
+                key={item.id}
+                item={item}
+                isActive={item.id === activeItemId}
+                showShortcut={showShortcut}
+                menu={menu}
+                onClose={() => setOpen(false)}
+                onActivate={(activated, target) => {
+                  setOpen(false);
+                  actions.activate(activated.id, { target });
+                }}
+              />
+            ))}
+          </div>
+        )}
+        <div aria-hidden="true" className="my-1 h-px bg-border" />
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            actions.openCustomize();
+          }}
+          className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-xs outline-none hover:bg-state-hover focus-visible:bg-state-hover"
+        >
+          <Icon
+            name="SlidersHorizontal"
+            fallback="Settings2"
+            className="size-4 shrink-0"
+            aria-hidden="true"
+          />
+          Настроить рейл…
+        </button>
       </PopoverContent>
     </Popover>
   );
@@ -159,6 +169,7 @@ function FolderButton({
   menu,
   onRename,
   onDelete,
+  onDropItem,
 }: {
   folder: Folder;
   members: readonly ExperimentalSidebarNavigationItem[];
@@ -168,8 +179,10 @@ function FolderButton({
   menu: ItemMenuActions;
   onRename: (folder: Folder) => void;
   onDelete: (folder: Folder) => void;
+  onDropItem: (folderId: string, itemId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const badgeLabels = members.flatMap((member) =>
     member.badge === null ? [] : [member.badge.label],
   );
@@ -185,15 +198,38 @@ function FolderButton({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <PopoverTrigger asChild>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
               aria-label={label}
+              title={folder.name}
               aria-current={isActive ? "true" : undefined}
               data-active={isActive ? "" : undefined}
               data-rail-entry={`folder:${folder.id}`}
-              className={RAIL_BUTTON_CLASS}
+              data-drop-active={dropActive ? "" : undefined}
+              onDragOver={(event) => {
+                if (!carriesRailItem(event.dataTransfer)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                event.dataTransfer.dropEffect = "move";
+                setDropActive(true);
+              }}
+              onDragLeave={(event) => {
+                event.stopPropagation();
+                setDropActive(false);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setDropActive(false);
+                const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
+                if (itemId !== "") onDropItem(folder.id, itemId);
+              }}
+              className={cn(
+                buttonVariants({ variant: "ghost", size: "icon" }),
+                RAIL_BUTTON_CLASS,
+                "transition",
+                dropActive && "scale-110 ring-2 ring-ring",
+              )}
             >
               <Icon
                 name={folder.icon}
@@ -208,7 +244,7 @@ function FolderButton({
                   className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
                 />
               ) : null}
-            </Button>
+            </button>
           </PopoverTrigger>
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -232,6 +268,9 @@ function FolderButton({
         aria-label={folder.name}
         className="w-64 p-1"
       >
+        <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+          {folder.name}
+        </p>
         <div role="group" aria-label={folder.name} className="flex flex-col">
           {members.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
@@ -273,49 +312,64 @@ function RailItemButton({
   menu: ItemMenuActions;
 }) {
   const split = experimental_useSidebarNavigationSplit(item.id);
+  const [dragging, setDragging] = useState(false);
   const unavailable = item.isDisabled || item.isLoading;
   const label = railItemLabel(item);
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label={label}
-          aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
-          aria-current={isActive ? "page" : undefined}
-          disabled={unavailable}
-          data-active={isActive ? "" : undefined}
-          data-rail-entry={`item:${item.id}`}
-          {...split.splitProps}
-          onClick={(event) => {
-            if (unavailable) return;
-            actions.activate(item.id, { target: targetForClick(event) });
-          }}
-          className={RAIL_BUTTON_CLASS}
-        >
-          <SidebarNavigationIcon icon={item.icon} className="size-4" />
-          {showShortcut && item.shortcut !== null ? (
-            <kbd
-              data-rail-shortcut=""
-              className="pointer-events-none absolute -bottom-0.5 left-1/2 -translate-x-1/2 rounded bg-background px-0.5 text-[9px] leading-3 text-muted-foreground"
-            >
-              {item.shortcut.label}
-            </kbd>
-          ) : null}
-        </Button>
-      </ContextMenuTrigger>
-      <ItemContextMenu item={item} actions={actions} menu={menu} />
-    </ContextMenu>
+    // The wrapper owns the native drag so the button keeps the split gesture.
+    <div
+      draggable
+      data-rail-entry={`item:${item.id}`}
+      data-rail-dragging={dragging ? "" : undefined}
+      onDragStart={(event: DragEvent<HTMLDivElement>) => {
+        event.dataTransfer.setData(RAIL_ITEM_DRAG_MIME, item.id);
+        event.dataTransfer.effectAllowed = "move";
+        setDragging(true);
+      }}
+      onDragEnd={() => setDragging(false)}
+      className={cn("shrink-0 rounded-md transition", dragging && "opacity-40")}
+    >
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
+            aria-current={isActive ? "page" : undefined}
+            disabled={unavailable}
+            data-active={isActive ? "" : undefined}
+            {...split.splitProps}
+            onClick={(event) => {
+              if (unavailable) return;
+              actions.activate(item.id, { target: targetForClick(event) });
+            }}
+            className={cn(
+              buttonVariants({ variant: "ghost", size: "icon" }),
+              RAIL_BUTTON_CLASS,
+            )}
+          >
+            <SidebarNavigationIcon icon={item.icon} className="size-4" />
+            {showShortcut && item.shortcut !== null ? (
+              <kbd
+                data-rail-shortcut=""
+                className="pointer-events-none absolute -bottom-0.5 left-1/2 -translate-x-1/2 rounded bg-background px-0.5 text-[9px] leading-3 text-muted-foreground"
+              >
+                {item.shortcut.label}
+              </kbd>
+            ) : null}
+          </button>
+        </ContextMenuTrigger>
+        <ItemContextMenu item={item} actions={actions} menu={menu} />
+      </ContextMenu>
+    </div>
   );
 }
 
 /**
  * The whole left rail: Home, the folders and ungrouped icons of the user's
- * arrangement, and an overflow menu for items the user hid. bb draws Settings
- * below this column itself.
+ * arrangement, and an overflow menu for items the user hid plus the rail
+ * editor. bb draws Settings below this column itself.
  */
 export function RailFolders() {
   const { items, activeItemId, isShortcutModifierHeld, actions } =
@@ -323,6 +377,8 @@ export function RailFolders() {
   const { state, error, mutate } = useRailFolders();
   const [renameTarget, setRenameTarget] = useState<Folder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
 
   const itemsById = useMemo(
     () => new Map(items.map((item) => [item.id, item])),
@@ -342,18 +398,8 @@ export function RailFolders() {
     [items],
   );
 
-  const createFolderFor = (item: ExperimentalSidebarNavigationItem) => {
-    void mutate("folders_create", {
-      name: folderFromLabel(item.label),
-      icon: DEFAULT_FOLDER_ICON,
-      itemIds: [item.id],
-    });
-  };
-  const addToFolder = (
-    item: ExperimentalSidebarNavigationItem,
-    folderId: string,
-  ) => {
-    void mutate("folders_add_item", { folderId, itemId: item.id });
+  const addToFolder = (folderId: string, itemId: string) => {
+    void mutate("folders_add_item", { folderId, itemId });
   };
   const removeFromFolder = (item: ExperimentalSidebarNavigationItem) => {
     void mutate("folders_remove_item", { itemId: item.id });
@@ -361,8 +407,8 @@ export function RailFolders() {
 
   const menu: ItemMenuActions = {
     folders: state.folders,
-    onCreateFolder: createFolderFor,
-    onAddToFolder: addToFolder,
+    onNewFolder: () => setCreateOpen(true),
+    onAddToFolder: (item, folderId) => addToFolder(folderId, item.id),
     onRemoveFromFolder: removeFromFolder,
   };
 
@@ -372,7 +418,37 @@ export function RailFolders() {
         aria-label="Папки рейла"
         className="flex min-h-0 w-full flex-1 flex-col items-center"
       >
-        <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1 py-2">
+        <div
+          data-rail-dropzone=""
+          data-drop-active={dropActive ? "" : undefined}
+          onDragOver={(event) => {
+            if (!carriesRailItem(event.dataTransfer)) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            setDropActive(true);
+          }}
+          onDragLeave={(event) => {
+            if (
+              event.currentTarget.contains(event.relatedTarget as Node | null)
+            ) {
+              return;
+            }
+            setDropActive(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDropActive(false);
+            const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
+            // Only an icon that is in a folder can leave one; dropping an
+            // ungrouped icon back on the rail is already its place.
+            if (itemId === "" || folderOfItem(state, itemId) === null) return;
+            void mutate("folders_remove_item", { itemId });
+          }}
+          className={cn(
+            "flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-1 py-2 transition",
+            dropActive && "rounded-md bg-state-active",
+          )}
+        >
           <HomeButton />
           <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
           {entries.map((entry) =>
@@ -392,6 +468,7 @@ export function RailFolders() {
                 menu={menu}
                 onRename={setRenameTarget}
                 onDelete={setDeleteTarget}
+                onDropItem={addToFolder}
               />
             ) : (
               <RailItemButton
@@ -404,14 +481,12 @@ export function RailFolders() {
               />
             ),
           )}
-          {hiddenItems.length === 0 ? null : (
-            <MoreItemsButton
-              items={hiddenItems}
-              activeItemId={activeItemId}
-              showShortcut={isShortcutModifierHeld}
-              menu={menu}
-            />
-          )}
+          <MoreItemsButton
+            items={hiddenItems}
+            activeItemId={activeItemId}
+            showShortcut={isShortcutModifierHeld}
+            menu={menu}
+          />
           {error === null ? null : (
             <p
               role="alert"
@@ -421,17 +496,23 @@ export function RailFolders() {
             </p>
           )}
         </div>
-        <div aria-hidden="true" className="my-1 h-px w-6 shrink-0 bg-border" />
-        <div className="pb-2">
-          <CustomizeButton />
-        </div>
       </nav>
+      <CreateFolderDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreate={(input) => {
+          void mutate("folders_create", input);
+        }}
+      />
       <RenameFolderDialog
         folder={renameTarget}
         onClose={() => setRenameTarget(null)}
-        onSubmit={(name) => {
-          if (renameTarget !== null) {
-            void mutate("folders_rename", { id: renameTarget.id, name });
+        onSubmit={(name, icon) => {
+          if (renameTarget === null) return;
+          const target = renameTarget;
+          void mutate("folders_rename", { id: target.id, name });
+          if (icon !== target.icon) {
+            void mutate("folders_set_icon", { id: target.id, icon });
           }
         }}
       />

@@ -1,15 +1,21 @@
 Folders for the BB rail icons.
 
-Rail Folders takes over the left rail and lets you group its icons. A folder
-is one rail button; clicking it opens its members with their icons, names and
-badges. Clicking a member opens it in place, and with ⌘/Ctrl held it opens in a
-neighbouring pane, exactly like a normal rail icon. A folder shows a dot when
-any member carries a badge, and lights up while one of its members is open.
+Rail Folders takes over the left rail and lets you group its icons. A folder is
+one rail button drawn as its icon only; the name stays in the tooltip, the
+accessible name, the popover header and settings. Clicking the button opens its
+members with their icons, names and badges. Clicking a member opens it in place,
+and with ⌘/Ctrl held it opens in a neighbouring pane, exactly like a normal rail
+icon. A folder shows a dot when any member carries a badge, and lights up while
+one of its members is open.
 
-Right-click an icon to create a folder around it, add it to an existing
-folder, remove it, or open the owning plugin's details. Right-click a folder to
-rename or delete it. Icons the user hid stay reachable from the "More" menu
-instead of disappearing.
+Right-click an icon to start a new folder, add it to an existing folder, remove
+it, or open the owning plugin's details. "New folder…" opens a modal with a
+grid of BB icons and a name field (default "Папка"), and creates an empty folder
+after OK. Renaming a folder uses the same icon picker. Drag an icon onto a
+folder with the mouse to add it, and drag a member row out onto the free rail to
+return it. Icons the user hid stay reachable from the "More" menu instead of
+disappearing; that menu also holds "Customize rail…", which opens bb's own rail
+editor.
 
 Settings → Rail Folders creates folders and manages their name, BB icon name,
 order and removal. Deleting a folder never disables a plugin or deletes a
