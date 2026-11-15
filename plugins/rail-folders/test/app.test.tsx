@@ -489,6 +489,26 @@ describe("item context menu", () => {
     );
   });
 
+  it("moves through the icon grid with arrow keys", async () => {
+    mount();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Новая папка/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    const first = within(dialog).getByRole("radio", { name: "Folder" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+
+    const second = within(dialog).getByRole("radio", { name: "Briefcase" });
+    expect(second.getAttribute("aria-checked")).toBe("true");
+    fireEvent.keyDown(second, { key: "ArrowLeft" });
+    expect(
+      within(dialog).getByRole("radio", { name: "Folder" }).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+  });
+
   it("closes the create dialog on Cancel and Escape without creating", async () => {
     const slot = mount();
     fireEvent.contextMenu(screen.getByRole("button", { name: "Панель B" }));
@@ -619,6 +639,37 @@ describe("folder context menu", () => {
     expect(rpcCalls(slot, "folders_set_icon")).toEqual([]);
   });
 
+  it("shows a folder's saved icon even when it is not in the offered set", async () => {
+    const slot = mount({
+      state: createFolder(EMPTY_RAIL_STATE, {
+        id: "folder_custom",
+        name: "Своя",
+        icon: "Gauge",
+      }),
+    });
+    fireEvent.contextMenu(
+      await screen.findByRole("button", { name: "Своя" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /Переименовать папку/ }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("radio", { name: "Gauge" }).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "folders_rename")).toEqual([
+        { method: "folders_rename", input: { id: "folder_custom", name: "Своя" } },
+      ]),
+    );
+    expect(rpcCalls(slot, "folders_set_icon")).toEqual([]);
+  });
+
   it("deletes a folder only after confirmation", async () => {
     const slot = mount({ state: folderState() });
     fireEvent.contextMenu(await screen.findByRole("button", { name: /^Работа/ }));
@@ -736,6 +787,24 @@ describe("drag and drop", () => {
         { method: "folders_remove_item", input: { itemId: PANEL_B.id } },
       ]),
     );
+  });
+
+  it("does not offer the rail as a target for an icon that is already there", async () => {
+    const slot = mount();
+    const icon = slot.container.querySelector<HTMLElement>(
+      `[data-rail-entry="item:${PANEL_B.id}"]`,
+    )!;
+    const dropZone = slot.container.querySelector<HTMLElement>(
+      "[data-rail-dropzone]",
+    )!;
+
+    const data = transfer();
+    fireEvent.dragStart(icon, { dataTransfer: data });
+    fireEvent.dragOver(dropZone, { dataTransfer: data });
+    expect(dropZone.getAttribute("data-drop-active")).toBeNull();
+    fireEvent.drop(dropZone, { dataTransfer: data });
+
+    expect(rpcCalls(slot, "folders_remove_item")).toEqual([]);
   });
 
   it("keeps the split-drag contract on the icon button, not the drag wrapper", async () => {

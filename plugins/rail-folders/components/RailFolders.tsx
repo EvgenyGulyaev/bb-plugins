@@ -28,6 +28,7 @@ import { useRailFolders } from "@/hooks/useRailFolders";
 import {
   DEFAULT_FOLDER_ICON,
   RAIL_ITEM_DRAG_MIME,
+  RAIL_MEMBER_DRAG_MIME,
   folderMembers,
   folderOfItem,
   layoutRail,
@@ -49,6 +50,11 @@ const RAIL_BUTTON_CLASS =
 /** Whether a drag carries one of our item ids. */
 function carriesRailItem(dataTransfer: DataTransfer): boolean {
   return dataTransfer.types.includes(RAIL_ITEM_DRAG_MIME);
+}
+
+/** Whether a drag started from a row inside a folder. */
+function carriesFolderMember(dataTransfer: DataTransfer): boolean {
+  return dataTransfer.types.includes(RAIL_MEMBER_DRAG_MIME);
 }
 
 // The SDK exports the icon component under a lowercase experimental_ name,
@@ -215,6 +221,13 @@ function FolderButton({
               }}
               onDragLeave={(event) => {
                 event.stopPropagation();
+                // Moving between the button and its icon fires a dragleave on
+                // the button; only a real exit clears the highlight.
+                if (
+                  event.currentTarget.contains(event.relatedTarget as Node | null)
+                ) {
+                  return;
+                }
                 setDropActive(false);
               }}
               onDrop={(event) => {
@@ -422,7 +435,7 @@ export function RailFolders() {
           data-rail-dropzone=""
           data-drop-active={dropActive ? "" : undefined}
           onDragOver={(event) => {
-            if (!carriesRailItem(event.dataTransfer)) return;
+            if (!carriesFolderMember(event.dataTransfer)) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = "move";
             setDropActive(true);
@@ -439,9 +452,14 @@ export function RailFolders() {
             event.preventDefault();
             setDropActive(false);
             const itemId = event.dataTransfer.getData(RAIL_ITEM_DRAG_MIME);
-            // Only an icon that is in a folder can leave one; dropping an
-            // ungrouped icon back on the rail is already its place.
-            if (itemId === "" || folderOfItem(state, itemId) === null) return;
+            // Only an icon that came out of a folder can return to the rail.
+            if (
+              itemId === "" ||
+              !carriesFolderMember(event.dataTransfer) ||
+              folderOfItem(state, itemId) === null
+            ) {
+              return;
+            }
             void mutate("folders_remove_item", { itemId });
           }}
           className={cn(

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -38,7 +38,8 @@ export const FOLDER_ICON_CHOICES = [
 
 /**
  * The icon grid shared by the create and rename dialogs. A radio group, so
- * arrow keys walk the marks and the dialog keeps exactly one choice.
+ * arrow keys walk the marks and the dialog keeps exactly one choice. A folder
+ * whose saved icon is outside the offered set still shows it, first.
  */
 function FolderIconPicker({
   value,
@@ -47,13 +48,42 @@ function FolderIconPicker({
   value: string;
   onChange: (icon: string) => void;
 }) {
+  const choices: readonly string[] = (
+    FOLDER_ICON_CHOICES as readonly string[]
+  ).includes(value)
+    ? FOLDER_ICON_CHOICES
+    : [value, ...FOLDER_ICON_CHOICES];
+
+  const move = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0) return;
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    );
+    const index = buttons.indexOf(
+      document.activeElement as HTMLButtonElement,
+    );
+    if (index < 0) return;
+    event.preventDefault();
+    const next = (index + step + buttons.length) % buttons.length;
+    buttons[next]?.focus();
+    const name = choices[next];
+    if (name !== undefined) onChange(name);
+  };
+
   return (
     <div
       role="radiogroup"
       aria-label="Иконка папки"
+      onKeyDown={move}
       className="grid grid-cols-6 gap-1"
     >
-      {FOLDER_ICON_CHOICES.map((name) => {
+      {choices.map((name) => {
         const checked = name === value;
         return (
           <button

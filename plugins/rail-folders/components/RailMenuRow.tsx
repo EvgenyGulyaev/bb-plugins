@@ -14,7 +14,7 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { RAIL_ITEM_DRAG_MIME } from "@/lib/folders";
+import { RAIL_ITEM_DRAG_MIME, RAIL_MEMBER_DRAG_MIME } from "@/lib/folders";
 
 import { cn } from "../lib/utils";
 import { ItemContextMenu, type ItemMenuActions } from "./ItemContextMenu";
@@ -78,6 +78,9 @@ export function RailMenuRow({
       onDragStart={(event: DragEvent<HTMLDivElement>) => {
         event.stopPropagation();
         event.dataTransfer.setData(RAIL_ITEM_DRAG_MIME, item.id);
+        // Marks the drag as coming out of a folder, so the rail's free area
+        // offers itself only when removing the icon is meaningful.
+        event.dataTransfer.setData(RAIL_MEMBER_DRAG_MIME, item.id);
         event.dataTransfer.effectAllowed = "move";
         setDragging(true);
       }}

@@ -11,6 +11,11 @@ export const DEFAULT_FOLDER_ICON = "Folder";
  * buttons, the popover rows and the rail's drop zones.
  */
 export const RAIL_ITEM_DRAG_MIME = "text/rail-item-id";
+/**
+ * Extra `dataTransfer` type put on a folder member's drag, so the rail's free
+ * area only offers itself as a target when leaving the folder is possible.
+ */
+export const RAIL_MEMBER_DRAG_MIME = "text/rail-item-in-folder";
 
 export const folderNameSchema = z.string().trim().min(1).max(60);
 export const folderIconSchema = z.string().trim().min(1).max(80);
