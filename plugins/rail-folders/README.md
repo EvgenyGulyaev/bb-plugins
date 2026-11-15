@@ -81,3 +81,5 @@ bb plugin reload rail-folders
 ```
 
 Тесты: `lib/*.test.ts` — чистая модель, `server.test.ts` — RPC и установка на фейковом хосте BB, `test/app.test.tsx` — рейл и настройки через `renderSlot`.
+
+Четыре пакета в `devDependencies` — `better-sqlite3`, `@types/better-sqlite3`, `cron-parser` и `hono` — код плагина не импортирует. Их статически импортирует сам `@get-bb/plugin-sdk`: `better-sqlite3` и `hono` — в `bundled-types` (поэтому без них `tsc` с `skipLibCheck: false` падает на объявлениях SDK), все три, включая `cron-parser`, — в `dist/testing`, который загружает `server.test.ts`. Удалять их нельзя: без них не проходят `npm run typecheck` и серверные тесты.
