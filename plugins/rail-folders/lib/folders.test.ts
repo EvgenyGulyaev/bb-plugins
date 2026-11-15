@@ -12,9 +12,11 @@ import {
   layoutRail,
   moveFolder,
   moveFolderToIndex,
+  moveItemInOrder,
   normalizeState,
   orderedFolders,
   placeInOrder,
+  railEditableSequence,
   railFoldersStateSchema,
   railSequence,
   removeItemFromFolder,
@@ -22,6 +24,7 @@ import {
   reorderItems,
   setFolderIcon,
   setRailOrder,
+  singleIconIds,
 } from "./folders";
 
 const STATE = () =>
@@ -496,6 +499,167 @@ describe("placeInOrder", () => {
     expect(placeInOrder(atEnd, ITEMS, "folder_b", null)).toBe(atEnd);
     expect(placeInOrder(atEnd, ITEMS, "folder_a", "folder_a")).toBe(atEnd);
     expect(placeInOrder(atEnd, ITEMS, "gone/panel", null)).toBe(atEnd);
+  });
+});
+
+describe("railEditableSequence", () => {
+  it("keeps a hidden icon in its anchored slot, unlike railSequence", () => {
+    const state = {
+      ...STATE(),
+      order: ["plugin-a/hidden", "folder_a", "plugin-b/tools"],
+    };
+    expect(railEditableSequence(state, ITEMS)).toEqual([
+      "plugin-a/hidden",
+      "folder_a",
+      "plugin-b/tools",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "folder_b",
+    ]);
+    expect(railSequence(state, ITEMS)).not.toContain("plugin-a/hidden");
+  });
+
+  it("still skips grouped and unknown ids", () => {
+    const state = {
+      ...STATE(),
+      order: ["folder_a", "gone/panel", "plugin-a/panel", "plugin-b/tools"],
+    };
+    expect(railEditableSequence(state, ITEMS)).toEqual([
+      "folder_a",
+      "plugin-a/panel",
+      "plugin-b/tools",
+      "__bb__/new-thread",
+      "plugin-a/hidden",
+      "folder_b",
+    ]);
+  });
+});
+
+describe("singleIconIds", () => {
+  it("lists ungrouped icons in rail order, hidden ones included", () => {
+    const state = {
+      ...STATE(),
+      order: ["plugin-b/tools", "folder_a", "plugin-a/hidden"],
+    };
+    expect(singleIconIds(state, ITEMS)).toEqual([
+      "plugin-b/tools",
+      "plugin-a/hidden",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+    ]);
+  });
+
+  it("leaves out icons that belong to a folder", () => {
+    expect(singleIconIds(STATE(), ITEMS)).not.toContain("plugin-a/new-thread");
+  });
+});
+
+describe("moveItemInOrder", () => {
+  // folder_a holds one icon, folder_b is empty, and single icons sit before,
+  // between and after them, so an arrow has to cross a folder to work.
+  const state = () => ({
+    ...STATE(),
+    order: [
+      "__bb__/new-thread",
+      "folder_a",
+      "plugin-b/tools",
+      "folder_b",
+      "plugin-a/hidden",
+    ],
+  });
+
+  it("materializes the drawn order and swaps with the neighbour", () => {
+    const before = {
+      ...STATE(),
+      order: ["folder_a", "folder_b"],
+    };
+    const after = moveItemInOrder(before, ITEMS, "plugin-b/tools", "up");
+    expect(after.order).toEqual([
+      "folder_a",
+      "folder_b",
+      "__bb__/new-thread",
+      "plugin-a/panel",
+      "plugin-b/tools",
+      "plugin-a/hidden",
+    ]);
+  });
+
+  it("steps an icon over a folder anchor", () => {
+    expect(
+      moveItemInOrder(state(), ITEMS, "plugin-b/tools", "up").order,
+    ).toEqual([
+      "__bb__/new-thread",
+      "plugin-b/tools",
+      "folder_a",
+      "folder_b",
+      "plugin-a/hidden",
+      "plugin-a/panel",
+    ]);
+    expect(
+      moveItemInOrder(state(), ITEMS, "__bb__/new-thread", "down").order,
+    ).toEqual([
+      "folder_a",
+      "__bb__/new-thread",
+      "plugin-b/tools",
+      "folder_b",
+      "plugin-a/hidden",
+      "plugin-a/panel",
+    ]);
+  });
+
+  it("steps an icon past a hidden one", () => {
+    expect(
+      moveItemInOrder(state(), ITEMS, "plugin-b/tools", "down").order,
+    ).toEqual([
+      "__bb__/new-thread",
+      "folder_a",
+      "folder_b",
+      "plugin-b/tools",
+      "plugin-a/hidden",
+      "plugin-a/panel",
+    ]);
+    expect(
+      moveItemInOrder(state(), ITEMS, "plugin-a/hidden", "up").order,
+    ).toEqual([
+      "__bb__/new-thread",
+      "folder_a",
+      "plugin-b/tools",
+      "plugin-a/hidden",
+      "folder_b",
+      "plugin-a/panel",
+    ]);
+  });
+
+  it("drops a stale anchor from the saved order while materializing", () => {
+    const stale = {
+      ...STATE(),
+      order: ["gone/panel", "folder_a", "plugin-b/tools"],
+    };
+    expect(moveItemInOrder(stale, ITEMS, "plugin-b/tools", "up").order).toEqual(
+      [
+        "plugin-b/tools",
+        "folder_a",
+        "__bb__/new-thread",
+        "plugin-a/panel",
+        "plugin-a/hidden",
+        "folder_b",
+      ],
+    );
+  });
+
+  it("is a no-op at either edge, for a grouped icon and for a folder", () => {
+    const before = state();
+    expect(moveItemInOrder(before, ITEMS, "__bb__/new-thread", "up")).toBe(
+      before,
+    );
+    expect(moveItemInOrder(before, ITEMS, "plugin-a/panel", "down")).toBe(
+      before,
+    );
+    expect(moveItemInOrder(before, ITEMS, "plugin-a/new-thread", "up")).toBe(
+      before,
+    );
+    expect(moveItemInOrder(before, ITEMS, "folder_a", "down")).toBe(before);
+    expect(moveItemInOrder(before, ITEMS, "gone/panel", "up")).toBe(before);
   });
 });
 

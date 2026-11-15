@@ -454,6 +454,91 @@ export function railSequence(
   );
 }
 
+/**
+ * The mixed order the rail would draw if every icon were visible: folders and
+ * ungrouped icons, hidden ones included, each keeping the slot it is anchored
+ * to. Unlike `railSequence` this keeps an icon the user hid in its place, so
+ * the rail editor can list it and step another icon past it. Grouped icons and
+ * unknown ids still get no slot.
+ */
+export function railEditableSequence(
+  state: RailFoldersState,
+  items: readonly RailItemRef[],
+): string[] {
+  const known = new Set(items.map((item) => item.id));
+  const folderIds = new Set(state.folders.map((folder) => folder.id));
+  const grouped = new Set(state.folders.flatMap((folder) => folder.itemIds));
+
+  const sequence: string[] = [];
+  const placed = new Set<string>();
+
+  const placeFolder = (folderId: string) => {
+    if (placed.has(folderId) || folderById(state, folderId) === null) return;
+    placed.add(folderId);
+    sequence.push(folderId);
+  };
+  const placeItem = (itemId: string) => {
+    if (placed.has(itemId)) return;
+    if (!known.has(itemId) || grouped.has(itemId)) return;
+    placed.add(itemId);
+    sequence.push(itemId);
+  };
+
+  for (const key of state.order) {
+    if (folderIds.has(key)) placeFolder(key);
+    else placeItem(key);
+  }
+  for (const item of items) placeItem(item.id);
+  for (const folder of state.folders) placeFolder(folder.id);
+
+  return sequence;
+}
+
+/**
+ * The single icons the rail editor lists, in the mixed rail order: every
+ * ungrouped icon, hidden ones included so their switch is reachable. Grouped
+ * icons live inside their folder and get no row of their own.
+ */
+export function singleIconIds(
+  state: RailFoldersState,
+  items: readonly RailItemRef[],
+): string[] {
+  return railEditableSequence(state, items).filter(
+    (id) => folderById(state, id) === null,
+  );
+}
+
+/**
+ * Move one single icon a slot through the mixed rail order, past a sibling
+ * icon or a folder anchor. The whole editable sequence is materialized first,
+ * so an icon that only the host's item order places gets a real slot and the
+ * new order can be saved as is. An arrow at either end, a grouped icon and an
+ * id the rail does not know all return the same state, so a dead click writes
+ * nothing.
+ */
+export function moveItemInOrder(
+  state: RailFoldersState,
+  items: readonly RailItemRef[],
+  itemId: string,
+  direction: FolderMoveDirection,
+): RailFoldersState {
+  // A folder moves through `moveFolder`; this arrow is for single icons only.
+  if (folderById(state, itemId) !== null) return state;
+  const sequence = railEditableSequence(state, items);
+  const from = sequence.indexOf(itemId);
+  if (from < 0) return state;
+  const to = direction === "up" ? from - 1 : from + 1;
+  if (to < 0 || to >= sequence.length) return state;
+
+  const order = [...sequence];
+  const neighbour = order[to]!;
+  order[from] = neighbour;
+  order[to] = itemId;
+
+  if (sameOrder(order, state.order)) return state;
+  return { folders: state.folders, order };
+}
+
 function sameOrder(left: readonly string[], right: readonly string[]): boolean {
   return (
     left.length === right.length &&
