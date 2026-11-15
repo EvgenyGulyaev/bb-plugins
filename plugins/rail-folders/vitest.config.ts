@@ -5,6 +5,10 @@ import { defineConfig } from "vitest/config";
 
 const rootDir = dirname(fileURLToPath(import.meta.url));
 
+// A shell that exports NODE_ENV=production makes React resolve to its
+// production CJS build, which has no `act`; Testing Library needs it.
+process.env.NODE_ENV = "test";
+
 // Plain vitest config on purpose: this plugin lives outside the bb monorepo,
 // so the workspace test config is neither available nor meaningful here.
 export default defineConfig({

@@ -11,6 +11,7 @@ import {
   layoutRail,
   moveFolder,
   normalizeState,
+  orderedFolders,
   railFoldersStateSchema,
   removeItemFromFolder,
   renameFolder,
@@ -219,6 +220,19 @@ describe("editing folders", () => {
     );
     expect(moveFolder(state, "folder_a", "up")).toBe(state);
     expect(moveFolder(state, "folder_b", "down")).toBe(state);
+  });
+});
+
+describe("orderedFolders", () => {
+  it("follows the saved order and appends folders it forgot", () => {
+    const state = {
+      ...STATE(),
+      order: ["folder_b"],
+    };
+    expect(orderedFolders(state).map((folder) => folder.id)).toEqual([
+      "folder_b",
+      "folder_a",
+    ]);
   });
 });
 

@@ -269,6 +269,25 @@ export function folderMembers(
   return folder.itemIds.filter((itemId) => knownItemIds.has(itemId));
 }
 
+/** Folders in their saved rail order, then any folder `order` forgot. */
+export function orderedFolders(state: RailFoldersState): Folder[] {
+  const folders: Folder[] = [];
+  const seen = new Set<string>();
+  for (const id of state.order) {
+    if (seen.has(id)) continue;
+    const folder = folderById(state, id);
+    if (folder === null) continue;
+    seen.add(id);
+    folders.push(folder);
+  }
+  for (const folder of state.folders) {
+    if (seen.has(folder.id)) continue;
+    seen.add(folder.id);
+    folders.push(folder);
+  }
+  return folders;
+}
+
 /**
  * Flatten the arrangement into the order the rail draws: `order` first, then
  * folders it does not mention, then ungrouped items in the host's order.
