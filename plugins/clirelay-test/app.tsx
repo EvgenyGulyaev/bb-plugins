@@ -2,7 +2,7 @@
 // (GET /models минус подключённые), справа подключённые с формой настроек pi.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { definePluginApp, experimental_THREAD_CONTEXT_SEGMENT_GROUPS, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
@@ -12,8 +12,6 @@ import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { successPercent, groupAccountsByProvider, partitionByQuota, shouldGroupByProvider } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
-import { ModelBadgesTab } from "./components/model-badges-tab";
-import { ThreadModelBadge, ThreadModelSummary, useThreadBadges } from "./components/thread-model-badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -642,7 +640,7 @@ function ApiModelsPage() {
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ editing: ProviderView | null } | null>(null);
-  const [tab, setTab] = useState<"accounts" | "connect" | "badges">("accounts");
+  const [tab, setTab] = useState<"accounts" | "connect">("accounts");
   const report = useCallback((cause: unknown) => { const text = message(cause); setError(text); toast.error(text); }, []);
   const refetch = useCallback(() => {
     rpc.call("providers_list").then(({ providers }) => { setProviders(providers as ProviderView[]); setError(null); }, report);
@@ -668,16 +666,10 @@ function ApiModelsPage() {
             className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "connect" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
             <Icon name="Workflow" className="size-4" />Подключение
           </button>
-          <button type="button" role="tab" aria-selected={tab === "badges"} onClick={() => setTab("badges")}
-            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "badges" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-            <Icon name="Sparkles" className="size-4" />Значки моделей
-          </button>
         </div>
         {error ? <p className="mb-4 text-sm text-destructive" role="alert">{error}</p> : null}
         {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
           <AccountsTab providers={providers} rpc={rpc} report={report} />
-        ) : tab === "badges" ? (
-          <ModelBadgesTab providers={providers} rpc={rpc} report={report} />
         ) : (
           <div className="flex flex-col gap-3">
             {groupProvidersByBaseUrl(providers).map((group) =>
@@ -702,20 +694,4 @@ function ApiModelsPage() {
 
 export default definePluginApp((app) => {
   app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Workflow", path: "api-models", component: ApiModelsPage });
-  // Марка модели у pi-треда: строка метаданных в списке и контекст открытого
-  // треда. Row metadata рисуется, только когда в bb включён эксперимент
-  // threadRowMetadata и Organize → Rows → Metadata (см. README).
-  app.slots.experimental_threadRowMetadata<ReturnType<typeof useThreadBadges>>({
-    id: "model-badge",
-    order: 20,
-    useData: useThreadBadges,
-    component: ThreadModelBadge,
-  });
-  app.slots.experimental_threadContextSegment({
-    id: "model-badge",
-    title: "Модель",
-    group: experimental_THREAD_CONTEXT_SEGMENT_GROUPS.thread,
-    order: 20,
-    summary: ThreadModelSummary,
-  });
 });
