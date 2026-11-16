@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { forgetThread, recordModel, threadBadge, type ThreadModels } from "./model-badges";
+import { forgetThread, mergeResolved, recordModel, threadBadge, type ThreadModels } from "./model-badges";
 import { resolveMarks } from "./model-marks";
 
 const marks = resolveMarks({});
@@ -25,6 +25,27 @@ describe("forgetThread", () => {
     const first = recordModel({}, "t1", "pi", "gpt-x", 1000);
     expect(forgetThread(first, "t1")).toEqual({});
     expect(forgetThread(first, "t2")).toBe(first);
+  });
+});
+
+describe("mergeResolved", () => {
+  it("добавляет новые и обновляет устаревшие записи", () => {
+    const current = recordModel({}, "t1", "pi", "gpt-old", 1000);
+    const merged = mergeResolved(current, {
+      t1: { providerId: "pi", model: "claude-new", updatedAt: 2000 },
+      t2: { providerId: "pi", model: "grok-4.7", updatedAt: 1500 },
+    });
+    expect(merged.t1).toMatchObject({ model: "claude-new", updatedAt: 2000 });
+    expect(merged.t2).toMatchObject({ model: "grok-4.7" });
+  });
+
+  it("не затирает более свежую запись из hook", () => {
+    const current = recordModel({}, "t1", "pi", "claude-from-hook", 3000);
+    const merged = mergeResolved(current, {
+      t1: { providerId: "pi", model: "gpt-stale", updatedAt: 2000 },
+    });
+    expect(merged).toBe(current);
+    expect(merged.t1!.model).toBe("claude-from-hook");
   });
 });
 

@@ -31,5 +31,11 @@ export function ModelMark({ mark, label, className }: { mark: FamilyMark; label:
       </span>
     );
   }
-  return <Icon name={mark.value} fallback="Zap" className={`size-3 shrink-0 ${className ?? ""}`} aria-label={label} />;
+  // host experimental_Icon не обязан рендерить title, поэтому подсказку
+  // держит собственная обёртка.
+  return (
+    <span title={label} className={`inline-flex shrink-0 items-center ${className ?? ""}`}>
+      <Icon name={mark.value} fallback="Zap" className="size-3 shrink-0" aria-label={label} />
+    </span>
+  );
 }

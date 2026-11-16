@@ -44,6 +44,20 @@ export function forgetThread(threads: ThreadModels, threadId: string): ThreadMod
   return next;
 }
 
+/**
+ * Слить лениво разрешённые модели в карту, не затирая более свежую запись:
+ * hook мог обновить тред, пока SDK-разрешение летело.
+ */
+export function mergeResolved(threads: ThreadModels, resolved: ThreadModels): ThreadModels {
+  let next = threads;
+  for (const [threadId, entry] of Object.entries(resolved)) {
+    const current = next[threadId];
+    if (current && current.updatedAt > entry.updatedAt) continue;
+    next = recordModel(next, threadId, entry.providerId, entry.model, entry.updatedAt);
+  }
+  return next;
+}
+
 /** Бейдж треда: только pi, только при известной модели, иначе null. */
 export function threadBadge(
   threads: ThreadModels,

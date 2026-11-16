@@ -76,6 +76,8 @@ describe("threadRowMetadata — марка модели", () => {
   it("рисует марку семейства для pi-треда", async () => {
     const slot = renderBadge({ thread: thread(), data: { t1: badge() } });
     expect(await slot.findByLabelText("claude-sonnet-5-5")).toBeTruthy();
+    // tooltip с полным id не должен зависеть от host experimental_Icon
+    expect(slot.getByTitle("claude-sonnet-5-5")).toBeTruthy();
   });
 
   it("рисует текстовую марку х5", async () => {

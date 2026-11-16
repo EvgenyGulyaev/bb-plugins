@@ -13,7 +13,7 @@ import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, provider
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
 import { normalizeMark, resolveMarks } from "./lib/model-marks";
-import { PI_PROVIDER_ID, forgetThread, recordModel, threadBadge, type ThreadModels } from "./lib/model-badges";
+import { PI_PROVIDER_ID, forgetThread, mergeResolved, recordModel, threadBadge, type ThreadModels } from "./lib/model-badges";
 import { modelBadgesContract } from "./lib/model-badges-contract";
 
 const providerViewSchema = z.object({
@@ -372,11 +372,7 @@ export default async function plugin(bb: BbPluginApi) {
         if (ids.length > 0) {
           threads = await badgeLocked(async () => {
             const current = await readThreadModels();
-            let next = current;
-            for (const threadId of ids) {
-              const entry = resolved[threadId]!;
-              next = recordModel(next, threadId, entry.providerId, entry.model, entry.updatedAt);
-            }
+            const next = mergeResolved(current, resolved);
             if (next !== current) {
               await bb.storage.kv.set(THREADS_KEY, next);
               bb.realtime.publish(BADGES_CHANGED, {});
