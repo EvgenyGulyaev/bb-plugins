@@ -27,7 +27,6 @@
     "app.tsx",
     "components",
     "lib",
-    "hooks",
-    "test"
+    "hooks"
   ]
 }
