@@ -15,6 +15,15 @@ describe("familyOf", () => {
     expect(familyOf("mistral-large")).toBe("mistral");
   });
 
+  it("распознаёт подстроки, а не только префикс", () => {
+    expect(familyOf("router/gpt-6.1")).toBe("gpt");
+    expect(familyOf("openai-codex-mini")).toBe("gpt");
+    expect(familyOf("anthropic/claude-sonnet")).toBe("claude");
+    expect(familyOf("vendor/deepseek-v4")).toBe("deepseek");
+    expect(familyOf("proxy/kimi-k3")).toBe("kimi");
+    expect(familyOf("proxy/moonshot-v1")).toBe("kimi");
+  });
+
   it("x5-префиксы → х5", () => {
     expect(familyOf("x5-airun-large")).toBe("x5");
     expect(familyOf("copilot-x5")).toBe("x5");
