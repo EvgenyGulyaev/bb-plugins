@@ -318,49 +318,57 @@ export type FolderMoveDirection = "up" | "down";
 
 /**
  * Move a folder one slot through the mixed rail order, so it can pass both a
- * sibling folder and a single icon anchor. The neighbour takes the folder's
- * old slot, which keeps every other anchor where it was.
+ * sibling folder and a single icon anchor. The whole editable sequence is
+ * materialized first, so a folder in an old folders-only order gets a real
+ * slot next to the single icons and can step past them. The neighbour takes
+ * the folder's old slot, which keeps every other anchor where it was.
  */
 export function moveFolder(
   state: RailFoldersState,
+  items: readonly RailItemRef[],
   folderId: string,
   direction: FolderMoveDirection,
 ): RailFoldersState {
-  const from = state.order.indexOf(folderId);
+  if (folderById(state, folderId) === null) return state;
+  const sequence = railEditableSequence(state, items);
+  const from = sequence.indexOf(folderId);
   if (from < 0) return state;
   const to = direction === "up" ? from - 1 : from + 1;
-  const neighbour = state.order[to];
+  const neighbour = sequence[to];
   if (neighbour === undefined) return state;
 
-  const order = [...state.order];
+  const order = [...sequence];
   order[from] = neighbour;
   order[to] = folderId;
+  if (sameOrder(order, state.order)) return state;
   return { folders: state.folders, order };
 }
 
 /**
- * Move a folder to an absolute position in the mixed rail order. The index is
- * clamped to `0..order.length-1`; single icon anchors shift around the folder,
- * and the `folders` array keeps the rail's relative folder order.
+ * Move a folder to an absolute position in the mixed rail order. The editable
+ * sequence is materialized first, so the index addresses the rail the user
+ * sees, single icons included, even in an old folders-only order. The index is
+ * clamped to `0..sequence.length-1`; single icon anchors shift around the
+ * folder, and the `folders` array keeps the rail's relative folder order.
  */
 export function moveFolderToIndex(
   state: RailFoldersState,
+  items: readonly RailItemRef[],
   folderId: string,
   index: number,
 ): RailFoldersState {
   if (folderById(state, folderId) === null) return state;
 
-  const from = state.order.indexOf(folderId);
-  // A folder `order` forgot still has a logical slot at the end, which is
-  // where `orderedFolders` and `layoutRail` draw it.
-  const sequence = from < 0 ? [...state.order, folderId] : [...state.order];
-  const start = from < 0 ? sequence.length - 1 : from;
-  const target = Number.isFinite(index) ? Math.trunc(index) : start;
+  const sequence = railEditableSequence(state, items);
+  const from = sequence.indexOf(folderId);
+  if (from < 0) return state;
+  const target = Number.isFinite(index) ? Math.trunc(index) : from;
   const to = Math.min(Math.max(target, 0), sequence.length - 1);
-  if (start === to) return state;
+  if (from === to) return state;
 
-  sequence.splice(start, 1);
+  sequence.splice(from, 1);
   sequence.splice(to, 0, folderId);
+  if (sameOrder(sequence, state.order)) return state;
 
   return {
     folders: orderedFolders({ folders: state.folders, order: sequence }),

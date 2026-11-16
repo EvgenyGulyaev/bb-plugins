@@ -9,6 +9,7 @@ import {
   EMPTY_RAIL_STATE,
   addItemToFolder,
   createFolder,
+  setRailOrder,
   type RailFoldersState,
 } from "../lib/folders";
 
@@ -1280,10 +1281,95 @@ describe("settings section", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Ниже: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_move",
-          input: { id: "folder_a", direction: "down" },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("lowers a folder below the single icons on an old folders-only order", async () => {
+    const slot = mount({ state: twoFolders(), settings: true });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    // The saved order lists only folders, so the arrow has to materialize the
+    // icons the rail draws after them first and then step past the first one.
+    const down = screen.getByRole("button", {
+      name: "Ниже: Инструменты",
+    }) as HTMLButtonElement;
+    expect(down.disabled).toBe(false);
+    fireEvent.click(down);
+
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              "folder_b",
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("steps a folder the saved order forgot out of the drawn tail", async () => {
+    const slot = mount({
+      state: { ...twoFolders(), order: ["folder_a"] },
+      settings: true,
+    });
+    await screen.findByRole("textbox", { name: "Название папки Работа" });
+
+    // A forgotten folder is drawn after every single icon (`railEditableSequence`
+    // appends it), so its arrows must follow that drawn slot, not a missing
+    // saved one.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Выше: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Ниже: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Выше: Инструменты" }));
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              "folder_b",
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
@@ -1307,20 +1393,30 @@ describe("settings section", () => {
       (screen.getByRole("button", { name: "Ниже: Работа" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
+    // The last folder is still above the single icons, so it can step down.
     expect(
       (
         screen.getByRole("button", {
           name: "Ниже: Инструменты",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
+    ).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "Выше: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
         {
-          method: "folders_move",
-          input: { id: "folder_a", direction: "up" },
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              PANEL_B.id,
+              "folder_b",
+              NEW_THREAD.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
         },
       ]),
     );
@@ -1384,6 +1480,19 @@ describe("settings section", () => {
   });
 });
 
+/** RPCs that keep the rail arrangement in memory, so a mutation shows up. */
+function orderRpc(initial: RailFoldersState) {
+  let current = initial;
+  return {
+    rail_state: () => ({ state: current }),
+    rail_set_order: (input: unknown) => {
+      const { order } = input as { order: string[] };
+      current = setRailOrder(current, order);
+      return { state: current };
+    },
+  };
+}
+
 describe("customize dialog", () => {
   async function openCustomize(
     options: Parameters<typeof mount>[0] = {},
@@ -1395,6 +1504,37 @@ describe("customize dialog", () => {
     );
     const dialog = await screen.findByRole("dialog");
     return { slot, dialog };
+  }
+
+  /** The dialog's one list, as the row ids it draws top to bottom. */
+  function rowOrder(dialog: HTMLElement): string[] {
+    return Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        "[data-customize-folder], [data-customize-item]",
+      ),
+    ).map((row) =>
+      row.dataset.customizeFolder === undefined
+        ? `item:${row.dataset.customizeItem}`
+        : `folder:${row.dataset.customizeFolder}`,
+    );
+  }
+
+  /** The position badge each row shows, top to bottom. */
+  function badges(dialog: HTMLElement): string[] {
+    return Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        "[data-customize-folder] > [data-customize-badge], [data-customize-item] > [data-customize-badge]",
+      ),
+    ).map((badge) => badge.textContent ?? "");
+  }
+
+  /** The badge a single row shows, as the user reads it. */
+  function rowBadge(dialog: HTMLElement, rowId: string): string {
+    return (
+      dialog
+        .querySelector<HTMLElement>(`${rowId} > [data-customize-badge]`)
+        ?.textContent ?? ""
+    );
   }
 
   it("is a labelled modal dialog with a description and a close path", async () => {
@@ -1431,67 +1571,213 @@ describe("customize dialog", () => {
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
 
-  it("lists folders with their icon, name and member count", async () => {
+  it("is one list headed by the rail order and its hint", async () => {
+    const { dialog } = await openCustomize();
+
+    expect(
+      within(dialog).getByRole("heading", { name: "Порядок рейла" }),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByText(
+        "Строки идут так же, как иконки на рейле; стрелки двигают строку.",
+      ),
+    ).toBeTruthy();
+    expect(within(dialog).getAllByRole("list")).toHaveLength(1);
+    within(dialog).getByRole("list", { name: "Порядок рейла" });
+  });
+
+  it("draws the folders and the single icons in one rail order", async () => {
     const { dialog } = await openCustomize({ state: folderState() });
 
-    const folders = within(dialog).getByRole("list", { name: "Папки" });
-    const row = folders.querySelector<HTMLElement>(
+    // The legacy saved order lists only the folder, so it keeps the first slot
+    // and the single icons follow in the host's order.
+    expect(rowOrder(dialog)).toEqual([
+      "folder:folder_a",
+      `item:${NEW_THREAD.id}`,
+      `item:${PANEL_B.id}`,
+      `item:${HIDDEN.id}`,
+      `item:${DISABLED.id}`,
+    ]);
+    expect(badges(dialog)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
+  it("lists a folder with its icon, name and member count", async () => {
+    const { dialog } = await openCustomize({ state: folderState() });
+
+    const row = dialog.querySelector<HTMLElement>(
       '[data-customize-folder="folder_a"]',
     )!;
     expect(row.textContent).toContain("Работа");
     expect(row.textContent).toContain("Иконок: 1");
-  });
-
-  it("explains how to make the first folder when there are none", async () => {
-    const { dialog } = await openCustomize();
     expect(
-      within(dialog).getByText(
-        "Папок нет — создай через правый клик по иконке рейла.",
-      ),
+      within(row as HTMLElement).getByRole("button", { name: "Переименовать" }),
+    ).toBeTruthy();
+    expect(
+      within(row as HTMLElement).getByRole("button", {
+        name: "Удалить папку Работа",
+      }),
     ).toBeTruthy();
   });
 
-  it("keeps the empty state while the arrangement is loading", async () => {
-    const { dialog } = await openCustomize({
-      rpc: { rail_state: () => new Promise(() => {}) },
+  it("draws a folder below the first single icon after one arrow, live", async () => {
+    const { slot, dialog } = await openCustomize({
+      state: twoFolders(),
+      rpc: orderRpc(twoFolders()),
     });
-    expect(within(dialog).getByRole("status").textContent).toBe(
-      "Загрузка папок…",
+    expect(rowOrder(dialog)).toEqual([
+      "folder:folder_a",
+      "folder:folder_b",
+      `item:${NEW_THREAD.id}`,
+      `item:${PANEL_B.id}`,
+      `item:${HIDDEN.id}`,
+      `item:${DISABLED.id}`,
+    ]);
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Ниже: Инструменты" }),
     );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              "folder_b",
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+
+    // The state comes back from the RPC, so the folder row itself moves below
+    // the icon row it just passed, and its badge follows.
+    await waitFor(() =>
+      expect(rowOrder(dialog)).toEqual([
+        "folder:folder_a",
+        `item:${NEW_THREAD.id}`,
+        "folder:folder_b",
+        `item:${PANEL_B.id}`,
+        `item:${HIDDEN.id}`,
+        `item:${DISABLED.id}`,
+      ]),
+    );
+    expect(badges(dialog)).toEqual(["1", "2", "3", "4", "5", "6"]);
+    expect(rowBadge(dialog, '[data-customize-folder="folder_b"]')).toBe("3");
+    expect(rowBadge(dialog, `[data-customize-item="${NEW_THREAD.id}"]`)).toBe(
+      "2",
+    );
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Выше: Инструменты" }),
+    );
+    await waitFor(() =>
+      expect(rowOrder(dialog)).toEqual([
+        "folder:folder_a",
+        "folder:folder_b",
+        `item:${NEW_THREAD.id}`,
+        `item:${PANEL_B.id}`,
+        `item:${HIDDEN.id}`,
+        `item:${DISABLED.id}`,
+      ]),
+    );
+    expect(rpcCalls(slot, "rail_set_order")).toHaveLength(2);
   });
 
   it("moves a folder through the mixed order with the arrows", async () => {
-    const { slot, dialog } = await openCustomize({ state: twoFolders() });
+    const { slot, dialog } = await openCustomize({
+      state: twoFolders(),
+      rpc: orderRpc(twoFolders()),
+    });
 
     const up = within(dialog).getByRole("button", { name: "Выше: Работа" }) as HTMLButtonElement;
     expect(up.disabled).toBe(true);
-    expect(
-      (within(dialog).getByRole("button", { name: "Ниже: Инструменты" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-
     fireEvent.click(within(dialog).getByRole("button", { name: "Ниже: Работа" }));
     await waitFor(() =>
-      expect(rpcCalls(slot, "folders_move")).toEqual([
-        { method: "folders_move", input: { id: "folder_a", direction: "down" } },
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_b",
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+    await waitFor(() =>
+      expect(rowOrder(dialog).slice(0, 2)).toEqual([
+        "folder:folder_b",
+        "folder:folder_a",
       ]),
     );
   });
 
-  it("lists single icons in rail order and steps one over a folder", async () => {
+  it("steps a folder the saved order forgot out of the drawn tail", async () => {
+    const { slot, dialog } = await openCustomize({
+      state: { ...twoFolders(), order: ["folder_a"] },
+    });
+
+    // The forgotten folder sits at the end of the drawn sequence, so it can
+    // step up over the last single icon and has nowhere left to go down.
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Выше: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Ниже: Инструменты",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(rowOrder(dialog).at(-1)).toBe("folder:folder_b");
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Выше: Инструменты" }),
+    );
+    await waitFor(() =>
+      expect(rpcCalls(slot, "rail_set_order")).toEqual([
+        {
+          method: "rail_set_order",
+          input: {
+            order: [
+              "folder_a",
+              NEW_THREAD.id,
+              PANEL_B.id,
+              HIDDEN.id,
+              "folder_b",
+              DISABLED.id,
+            ],
+          },
+        },
+      ]),
+    );
+  });
+
+  it("steps a single icon over a folder and keeps the edge arrows off", async () => {
     const { slot, dialog } = await openCustomize({
       state: {
         ...twoFolders(),
         order: [NEW_THREAD.id, "folder_a", "folder_b"],
       },
+      rpc: orderRpc({
+        ...twoFolders(),
+        order: [NEW_THREAD.id, "folder_a", "folder_b"],
+      }),
     });
-
-    const list = within(dialog).getByRole("list", { name: "Одиночные иконки" });
-    expect(
-      Array.from(list.querySelectorAll("[data-customize-item]")).map(
-        (element) => (element as HTMLElement).dataset.customizeItem,
-      ),
-    ).toEqual([NEW_THREAD.id, PANEL_B.id, HIDDEN.id, DISABLED.id]);
 
     expect(
       (within(dialog).getByRole("button", { name: "Выше: Новый поток" }) as HTMLButtonElement)
@@ -1522,6 +1808,40 @@ describe("customize dialog", () => {
         },
       ]),
     );
+    await waitFor(() =>
+      expect(rowOrder(dialog).slice(0, 2)).toEqual([
+        "folder:folder_a",
+        `item:${NEW_THREAD.id}`,
+      ]),
+    );
+  });
+
+  it("keeps the whole rail order reachable while there are no folders", async () => {
+    const { dialog } = await openCustomize();
+
+    expect(rowOrder(dialog)).toEqual([
+      `item:${NEW_THREAD.id}`,
+      `item:${PANEL_A.id}`,
+      `item:${PANEL_B.id}`,
+      `item:${HIDDEN.id}`,
+      `item:${DISABLED.id}`,
+    ]);
+    expect(
+      within(dialog).getByText(
+        "Папок нет — создай через правый клик по иконке рейла.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps the loading state while the arrangement is loading", async () => {
+    const { dialog } = await openCustomize({
+      rpc: { rail_state: () => new Promise(() => {}) },
+    });
+    expect(within(dialog).getByRole("status").textContent).toBe(
+      "Загрузка папок…",
+    );
+    expect(within(dialog).queryByRole("list")).toBeNull();
+    expect(within(dialog).queryByText(/Папок нет/)).toBeNull();
   });
 
   it("names a row's controls with the same label the row shows", async () => {
@@ -1540,7 +1860,7 @@ describe("customize dialog", () => {
     ).toBeTruthy();
   });
 
-  it("shows a hidden icon dimmed with its switch off", async () => {
+  it("shows a hidden icon dimmed on its own slot with its switch off", async () => {
     const { dialog } = await openCustomize();
 
     const row = dialog.querySelector<HTMLElement>(
@@ -1548,6 +1868,7 @@ describe("customize dialog", () => {
     )!;
     expect(row.getAttribute("data-hidden")).toBe("");
     expect(row.className).toContain("opacity-60");
+    expect(rowOrder(dialog).indexOf(`item:${HIDDEN.id}`)).toBe(3);
     expect(
       (within(row).getByRole("checkbox") as HTMLInputElement).checked,
     ).toBe(false);

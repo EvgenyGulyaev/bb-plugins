@@ -16,10 +16,10 @@ import {
 import { Icon } from "@/components/ui/icon";
 import {
   DEFAULT_FOLDER_ICON,
+  folderById,
+  moveFolder,
   moveItemInOrder,
-  orderedFolders,
   railEditableSequence,
-  singleIconIds,
   type Folder,
   type FolderMoveDirection,
   type RailFoldersState,
@@ -32,8 +32,62 @@ import { railItemLabel } from "./RailMenuRow";
 // which JSX would read as an intrinsic element, so it needs an alias.
 const SidebarNavigationIcon = experimental_SidebarNavigationIcon;
 
+/** The row's slot in the rail, numbered from 1 like the rail is drawn. */
+function PositionBadge({ position }: { position: number }) {
+  return (
+    <span
+      data-customize-badge={position}
+      className="w-5 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground"
+    >
+      {position}
+    </span>
+  );
+}
+
+function MoveButtons({
+  label,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
+}: {
+  label: string;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  return (
+    <>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        aria-label={`Выше: ${label}`}
+        disabled={!canMoveUp}
+        onClick={onMoveUp}
+        className="size-7"
+      >
+        <Icon name="ArrowUp" className="size-3.5" aria-hidden="true" />
+      </Button>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        aria-label={`Ниже: ${label}`}
+        disabled={!canMoveDown}
+        onClick={onMoveDown}
+        className="size-7"
+      >
+        <Icon name="ArrowDown" className="size-3.5" aria-hidden="true" />
+      </Button>
+    </>
+  );
+}
+
 function FolderRow({
   folder,
+  position,
   canMoveUp,
   canMoveDown,
   onMove,
@@ -41,6 +95,7 @@ function FolderRow({
   onDelete,
 }: {
   folder: Folder;
+  position: number;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onMove: (folder: Folder, direction: FolderMoveDirection) => void;
@@ -52,6 +107,7 @@ function FolderRow({
       data-customize-folder={folder.id}
       className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5"
     >
+      <PositionBadge position={position} />
       <Icon
         name={folder.icon}
         fallback={DEFAULT_FOLDER_ICON}
@@ -62,28 +118,13 @@ function FolderRow({
       <span className="shrink-0 text-xs text-muted-foreground">
         Иконок: {folder.itemIds.length}
       </span>
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        aria-label={`Выше: ${folder.name}`}
-        disabled={!canMoveUp}
-        onClick={() => onMove(folder, "up")}
-        className="size-7"
-      >
-        <Icon name="ArrowUp" className="size-3.5" aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        aria-label={`Ниже: ${folder.name}`}
-        disabled={!canMoveDown}
-        onClick={() => onMove(folder, "down")}
-        className="size-7"
-      >
-        <Icon name="ArrowDown" className="size-3.5" aria-hidden="true" />
-      </Button>
+      <MoveButtons
+        label={folder.name}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        onMoveUp={() => onMove(folder, "up")}
+        onMoveDown={() => onMove(folder, "down")}
+      />
       <Button
         type="button"
         size="sm"
@@ -108,12 +149,14 @@ function FolderRow({
 
 function SingleIconRow({
   item,
+  position,
   canMoveUp,
   canMoveDown,
   onMove,
   onSetVisible,
 }: {
   item: ExperimentalSidebarNavigationItem;
+  position: number;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onMove: (item: ExperimentalSidebarNavigationItem, direction: FolderMoveDirection) => void;
@@ -129,6 +172,7 @@ function SingleIconRow({
         !item.isVisible && "opacity-60",
       )}
     >
+      <PositionBadge position={position} />
       <SidebarNavigationIcon icon={item.icon} className="size-4 shrink-0" />
       <span
         className={cn(
@@ -148,38 +192,25 @@ function SingleIconRow({
         />
         Видно
       </label>
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        aria-label={`Выше: ${label}`}
-        disabled={!canMoveUp}
-        onClick={() => onMove(item, "up")}
-        className="size-7"
-      >
-        <Icon name="ArrowUp" className="size-3.5" aria-hidden="true" />
-      </Button>
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        aria-label={`Ниже: ${label}`}
-        disabled={!canMoveDown}
-        onClick={() => onMove(item, "down")}
-        className="size-7"
-      >
-        <Icon name="ArrowDown" className="size-3.5" aria-hidden="true" />
-      </Button>
+      <MoveButtons
+        label={label}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        onMoveUp={() => onMove(item, "up")}
+        onMoveDown={() => onMove(item, "down")}
+      />
     </li>
   );
 }
 
 /**
- * The plugin's own rail editor, opened from "Настроить рейл…". One modal holds
- * everything the arrangement controls from a single place: the folders with
- * their arrows, rename and delete, and the single icons in the mixed rail
- * order with their arrows and visibility switch. "Редактор BB…" still hands
- * over to bb's own editor for the host-side settings this plugin does not own.
+ * The plugin's own rail editor, opened from "Настроить рейл…". It lists the
+ * rail top to bottom in one list: every folder and every single icon in the
+ * exact slots the rail draws them, hidden icons included. An arrow saves the
+ * new order, the state comes back from the RPC, and the row moves right there,
+ * so the dialog is a live preview of the rail instead of two static sections.
+ * "Редактор BB…" still hands over to bb's own editor for the host-side
+ * settings this plugin does not own.
  */
 export function RailCustomizeDialog({
   open,
@@ -188,7 +219,6 @@ export function RailCustomizeDialog({
   isLoaded,
   items,
   actions,
-  onMoveFolder,
   onRenameFolder,
   onDeleteFolder,
   onSetOrder,
@@ -200,19 +230,22 @@ export function RailCustomizeDialog({
   isLoaded: boolean;
   items: readonly ExperimentalSidebarNavigationItem[];
   actions: ExperimentalSidebarNavigationActions;
-  onMoveFolder: (folder: Folder, direction: FolderMoveDirection) => void;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
   onSetOrder: (order: string[]) => void;
   onSetVisible: (itemId: string, isVisible: boolean) => void;
 }) {
-  const folders = orderedFolders(state);
   const sequence = railEditableSequence(state, items);
+  const folders = sequence.filter((id) => folderById(state, id) !== null);
   const itemsById = new Map(items.map((item) => [item.id, item]));
-  const singleIcons = singleIconIds(state, items).flatMap((itemId) => {
-    const item = itemsById.get(itemId);
-    return item === undefined ? [] : [item];
-  });
+
+  // The dialog owns the host's item list, so it materializes the rail order
+  // itself and saves it whole. A folder in an old folders-only order can then
+  // step past single icons too, and the server never has to guess them.
+  const moveFolderTo = (folder: Folder, direction: FolderMoveDirection) => {
+    const next = moveFolder(state, items, folder.id, direction);
+    if (next !== state) onSetOrder(next.order);
+  };
 
   const moveSingle = (
     item: ExperimentalSidebarNavigationItem,
@@ -239,83 +272,74 @@ export function RailCustomizeDialog({
         </DialogHeader>
 
         <section
-          aria-labelledby="rail-customize-folders"
+          aria-labelledby="rail-customize-order"
           className="flex flex-col gap-2"
         >
           <h3
-            id="rail-customize-folders"
+            id="rail-customize-order"
             className="text-sm font-medium text-foreground"
           >
-            Папки
+            Порядок рейла
           </h3>
+          <p className="text-xs text-muted-foreground">
+            Строки идут так же, как иконки на рейле; стрелки двигают строку.
+          </p>
           {!isLoaded ? (
             <p role="status" className="text-xs text-muted-foreground">
               Загрузка папок…
             </p>
-          ) : folders.length === 0 ? (
-            <p
-              role="status"
-              className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
-            >
-              Папок нет — создай через правый клик по иконке рейла.
-            </p>
           ) : (
-            <ul aria-label="Папки" className="flex flex-col gap-1.5">
-              {folders.map((folder) => {
-                const position = state.order.indexOf(folder.id);
-                return (
-                  <FolderRow
-                    key={folder.id}
-                    folder={folder}
-                    canMoveUp={position > 0}
-                    canMoveDown={
-                      position >= 0 && position < state.order.length - 1
+            <>
+              {folders.length > 0 ? null : (
+                <p
+                  role="status"
+                  className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
+                >
+                  Папок нет — создай через правый клик по иконке рейла.
+                </p>
+              )}
+              {sequence.length === 0 ? (
+                <p role="status" className="text-xs text-muted-foreground">
+                  Иконок рейла нет.
+                </p>
+              ) : (
+                <ul aria-label="Порядок рейла" className="flex flex-col gap-1.5">
+                  {sequence.map((id, index) => {
+                    const position = index + 1;
+                    const canMoveUp = index > 0;
+                    const canMoveDown = index < sequence.length - 1;
+                    const folder = folderById(state, id);
+                    if (folder !== null) {
+                      return (
+                        <FolderRow
+                          key={`folder:${folder.id}`}
+                          folder={folder}
+                          position={position}
+                          canMoveUp={canMoveUp}
+                          canMoveDown={canMoveDown}
+                          onMove={moveFolderTo}
+                          onRename={onRenameFolder}
+                          onDelete={onDeleteFolder}
+                        />
+                      );
                     }
-                    onMove={onMoveFolder}
-                    onRename={onRenameFolder}
-                    onDelete={onDeleteFolder}
-                  />
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section
-          aria-labelledby="rail-customize-icons"
-          className="flex flex-col gap-2"
-        >
-          <h3
-            id="rail-customize-icons"
-            className="text-sm font-medium text-foreground"
-          >
-            Одиночные иконки
-          </h3>
-          {singleIcons.length === 0 ? (
-            <p
-              role="status"
-              className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
-            >
-              Одиночных иконок нет: все иконки рейла собраны в папки.
-            </p>
-          ) : (
-            <ul aria-label="Одиночные иконки" className="flex flex-col gap-1.5">
-              {singleIcons.map((item) => {
-                const position = sequence.indexOf(item.id);
-                return (
-                  <SingleIconRow
-                    key={item.id}
-                    item={item}
-                    canMoveUp={position > 0}
-                    canMoveDown={
-                      position >= 0 && position < sequence.length - 1
-                    }
-                    onMove={moveSingle}
-                    onSetVisible={onSetVisible}
-                  />
-                );
-              })}
-            </ul>
+                    const item = itemsById.get(id);
+                    if (item === undefined) return null;
+                    return (
+                      <SingleIconRow
+                        key={`item:${item.id}`}
+                        item={item}
+                        position={position}
+                        canMoveUp={canMoveUp}
+                        canMoveDown={canMoveDown}
+                        onMove={moveSingle}
+                        onSetVisible={onSetVisible}
+                      />
+                    );
+                  })}
+                </ul>
+              )}
+            </>
           )}
         </section>
 

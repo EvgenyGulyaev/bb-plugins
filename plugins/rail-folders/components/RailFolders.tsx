@@ -760,9 +760,6 @@ export function RailFolders() {
         isLoaded={isLoaded}
         items={items}
         actions={actions}
-        onMoveFolder={(folder, direction) => {
-          void mutate("folders_move", { id: folder.id, direction });
-        }}
         onRenameFolder={setRenameTarget}
         onDeleteFolder={setDeleteTarget}
         onSetOrder={(order) => {
