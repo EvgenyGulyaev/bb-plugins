@@ -35,8 +35,18 @@ describe("sanitizeSvg", () => {
   it("отклоняет обработчики и DOCTYPE", () => {
     expect(sanitizeSvg('<svg onload="alert(1)"></svg>')).toBeNull();
     expect(sanitizeSvg('<svg><rect onclick="x()"/></svg>')).toBeNull();
+    expect(sanitizeSvg('<svg><rect width="1"/onload=alert(1)></svg>')).toBeNull();
+    expect(sanitizeSvg('<svg><img src="x"/onerror=alert(1)></svg>')).toBeNull();
     expect(sanitizeSvg('<!DOCTYPE svg><svg></svg>')).toBeNull();
     expect(sanitizeSvg('<?xml version="1.0"?><svg></svg>')).toBeNull();
+  });
+
+  it("отклоняет unquoted и entity-encoded обходы", () => {
+    expect(sanitizeSvg("<svg><a href=https://example.com>x</a></svg>")).toBeNull();
+    expect(sanitizeSvg("<svg><a href=//example.com/x>y</a></svg>")).toBeNull();
+    expect(sanitizeSvg('<svg><rect fill="url(&#104;ttps://example.com/a)"/></svg>')).toBeNull();
+    expect(sanitizeSvg('<svg><rect style="fill:expression(alert(1))"/></svg>')).toBeNull();
+    expect(sanitizeSvg('<svg><source src="https://example.com/a.png"/></svg>')).toBeNull();
   });
 
   it("отклоняет не-SVG и слишком длинное", () => {

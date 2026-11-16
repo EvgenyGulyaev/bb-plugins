@@ -74,8 +74,11 @@ BB-плагин для лёгкого подключения моделей с A
     встроенные иконки, `x5` — текст «х5», «Другие» — `Bot`.
   - SVG валидируется на сервере (`lib/sanitize-svg.ts`) и повторно на клиенте:
     принимается только безопасный inline SVG без `script`, `foreignObject`,
-    `iframe`/`object`/`embed`/`image`/`use`, обработчиков `on*`, `javascript:`
-    и внешних `href`/`url(...)`; лимит 8000 символов. Небезопасный markup
+    `iframe`/`object`/`embed`/`img`/`image`/`source`/`use`/`style` и
+    анимационных `set`/`animate`, без обработчиков `on*`, схем
+    `javascript:`/`vbscript:`/`data:`, `expression()`, внешних
+    `href`/`xlink:href` (в т.ч. без кавычек) и любых `src`/`url(...)`, кроме
+    внутреннего `url(#id)`; лимит 8000 символов. Небезопасный markup
     отклоняется с ошибкой в строке семейства.
   - Марки — kv `model-badges:marks` (только переопределения; ответ RPC
     `model_badges_state` отдаёт уже разрешённые дефолты), realtime-канал
