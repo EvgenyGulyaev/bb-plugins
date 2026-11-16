@@ -1,22 +1,8 @@
-// Семейство модели по id — для группировки списков в панели.
-const FAMILIES: Array<[RegExp, string]> = [
-  [/^claude/, "Claude"],
-  [/^(gpt|chatgpt|o[134]|codex)/, "GPT"],
-  [/^gemini/, "Gemini"],
-  [/^qwen/, "Qwen"],
-  [/^(kimi|moonshot)/, "Kimi"],
-  [/^deepseek/, "DeepSeek"],
-  [/^grok/, "Grok"],
-  [/^llama/, "Llama"],
-  [/^(mistral|mixtral)/, "Mistral"],
-];
+// Семейство модели по имени/id — для группировки списков в панели.
+import { FAMILY_LABELS, familyOf } from "./model-families";
 
 export function modelFamily(id: string): string {
-  const lower = id.toLowerCase();
-  for (const [pattern, family] of FAMILIES) {
-    if (pattern.test(lower)) return family;
-  }
-  return "Другие";
+  return FAMILY_LABELS[familyOf(id)];
 }
 
 export function groupByFamily<T extends { id: string }>(items: T[]): Array<{ family: string; items: T[] }> {

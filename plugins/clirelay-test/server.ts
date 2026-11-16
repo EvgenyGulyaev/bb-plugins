@@ -12,6 +12,9 @@ import {
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
+import { normalizeMark, resolveMarks } from "./lib/model-marks";
+import { PI_PROVIDER_ID, forgetThread, mergeResolved, recordModel, threadBadge, type ThreadModels } from "./lib/model-badges";
+import { modelBadgesContract } from "./lib/model-badges-contract";
 
 const providerViewSchema = z.object({
   id: z.string(),
@@ -81,8 +84,8 @@ export const rpcContract = defineRpcContract({
     input: z.object({ providerId: providerIdSchema, authIndex: z.string().min(1).max(200), enabled: z.boolean() }).strict(),
     output: z.object({ disabled: z.boolean() }),
   },
+  ...modelBadgesContract,
 });
-
 const CHANGED = "api-models-changed";
 
 export default async function plugin(bb: BbPluginApi) {
@@ -117,6 +120,56 @@ export default async function plugin(bb: BbPluginApi) {
   const disabledKey = (providerId: string) => `disabled-models:${providerId}`;
   const readDisabled = async (providerId: string): Promise<ModelEntry[]> =>
     (await bb.storage.kv.get<ModelEntry[]>(disabledKey(providerId))) ?? [];
+
+  // Модель текущего хода треда — из диспетчера (hook) и ленивого разрешения
+  // через SDK threads.get + defaultExecutionOptions. Событий «модель сменилась»
+  // в SDK нет, поэтому карта обновляется этими двумя путями.
+  const THREADS_KEY = "model-badges:threads";
+  const MARKS_KEY = "model-badges:marks";
+  const BADGES_CHANGED = "model-badges-changed";
+  let badgeQueue: Promise<unknown> = Promise.resolve();
+  function badgeLocked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = badgeQueue.then(fn);
+    badgeQueue = run.catch(() => undefined);
+    return run;
+  }
+  const readThreadModels = async (): Promise<ThreadModels> =>
+    (await bb.storage.kv.get<ThreadModels>(THREADS_KEY)) ?? {};
+  const readMarks = async () => resolveMarks(await bb.storage.kv.get<Record<string, unknown>>(MARKS_KEY));
+  async function storeThreadModel(threadId: string, providerId: string, model: string): Promise<void> {
+    await badgeLocked(async () => {
+      const current = await readThreadModels();
+      const next = recordModel(current, threadId, providerId, model, Date.now());
+      if (next === current) return;
+      await bb.storage.kv.set(THREADS_KEY, next);
+      bb.realtime.publish(BADGES_CHANGED, {});
+    });
+  }
+  async function forgetThreadModel(threadId: string): Promise<void> {
+    await badgeLocked(async () => {
+      const current = await readThreadModels();
+      const next = forgetThread(current, threadId);
+      if (next === current) return;
+      await bb.storage.kv.set(THREADS_KEY, next);
+      bb.realtime.publish(BADGES_CHANGED, {});
+    });
+  }
+  // Ленивое разрешение: только pi-треды, только когда карта ещё не знает тред.
+  async function resolveThreadModels(threadIds: string[]): Promise<ThreadModels> {
+    const resolved: ThreadModels = {};
+    await Promise.all(threadIds.map(async (threadId) => {
+      try {
+        const thread = await bb.sdk.threads.get({ threadId });
+        if (thread.providerId !== PI_PROVIDER_ID) return;
+        const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
+        if (!options?.model) return;
+        resolved[threadId] = { providerId: PI_PROVIDER_ID, model: options.model, updatedAt: Date.now() };
+      } catch {
+        // тред недоступен (удалён/чужой) — просто без бейджа
+      }
+    }));
+    return resolved;
+  }
 
   // Management-доступ: креды per-origin (kv) → глобальный fallback; токен из
   // кэша сессии, при отзыве — один повторный логин.
@@ -304,6 +357,59 @@ export default async function plugin(bb: BbPluginApi) {
       await bb.storage.kv.set(`relay-auth:${origin}`, null);
       return { cleared: true };
     },
+    model_badges_state: async () => ({
+      threads: await readThreadModels(),
+      marks: await readMarks(),
+    }),
+    model_badges_for: async ({ keys }) => {
+      const unique = [...new Set(keys)];
+      const known = await readThreadModels();
+      const missing = unique.filter((threadId) => !(threadId in known));
+      let threads = known;
+      if (missing.length > 0) {
+        const resolved = await resolveThreadModels(missing);
+        const ids = Object.keys(resolved);
+        if (ids.length > 0) {
+          threads = await badgeLocked(async () => {
+            const current = await readThreadModels();
+            const next = mergeResolved(current, resolved);
+            if (next !== current) {
+              await bb.storage.kv.set(THREADS_KEY, next);
+              bb.realtime.publish(BADGES_CHANGED, {});
+            }
+            return next;
+          });
+        }
+      }
+      const marks = await readMarks();
+      const rows: Record<string, ReturnType<typeof threadBadge>> = {};
+      for (const threadId of unique) rows[threadId] = threadBadge(threads, marks, threadId);
+      return rows;
+    },
+    model_badges_marks_set: async ({ family, mark }) => {
+      const normalized = normalizeMark(mark);
+      if (!normalized) {
+        throw new Error(mark.kind === "svg"
+          ? "SVG отклонён: нужен безопасный inline SVG без script/foreignObject и внешних ссылок"
+          : "марка некорректна");
+      }
+      await badgeLocked(async () => {
+        const stored = (await bb.storage.kv.get<Record<string, unknown>>(MARKS_KEY)) ?? {};
+        await bb.storage.kv.set(MARKS_KEY, { ...stored, [family]: normalized });
+      });
+      bb.realtime.publish(BADGES_CHANGED, {});
+      return { marks: await readMarks() };
+    },
+  });
+
+  // Модель при каждом диспетче (первый ход, продолжение, retry): hook отвечает
+  // решением, а карту обновляет побочно. Архив/удаление — карту чистим.
+  bb.events.on("thread.archived", ({ thread }) => { void forgetThreadModel(thread.id); });
+  bb.events.on("thread.deleted", ({ thread }) => { void forgetThreadModel(thread.id); });
+  bb.experimental_hooks.on("message.dispatch", async (ctx) => {
+    const { providerId, model } = ctx.requestedExecution;
+    if (providerId && model) await storeThreadModel(ctx.thread.id, providerId, model);
+    return { action: "proceed" };
   });
 
   bb.log.info("api-models loaded");
