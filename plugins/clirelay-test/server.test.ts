@@ -1,19 +1,20 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeMessageDispatchHookContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin from "./server.js";
 
 type Host = ReturnType<typeof createFakePluginHost>;
+type HostOptions = NonNullable<Parameters<typeof createFakePluginHost>[0]>;
 const hosts: Host[] = [];
 
-async function load(content?: string) {
+async function load(content?: string, sdk?: HostOptions["sdk"]) {
   const dir = await mkdtemp(join(tmpdir(), "api-models-rpc-"));
   const path = join(dir, "models.json");
   if (content !== undefined) await writeFile(path, content);
   process.env.PI_MODELS_PATH = path;
-  const host = createFakePluginHost({ pluginId: "clirelay-test" });
+  const host = createFakePluginHost({ pluginId: "clirelay-test", ...(sdk ? { sdk } : {}) });
   await plugin(host.bb);
   hosts.push(host);
   return { host, path };
@@ -209,5 +210,108 @@ describe("RPC", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("http://localhost:4010/v1/models");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-key");
+  });
+  it("model badges: hook обновляет карту моделей, keyed RPC отдаёт марку pi-треда", async () => {
+    const { host } = await load();
+    const hook = host.harness.registrations.hooks["message.dispatch"];
+    expect(hook).not.toBeNull();
+    const decision = await hook!(makeMessageDispatchHookContext({
+      thread: { id: "t1" },
+      requestedExecution: { providerId: "pi", model: "gpt-6.1-sol" },
+    }));
+    expect(decision).toEqual({ action: "proceed" });
+    await hook!(makeMessageDispatchHookContext({
+      thread: { id: "t2" },
+      requestedExecution: { providerId: "claude-code", model: "claude-sonnet-5-5" },
+    }));
+    const state = await host.harness.behavior.callRpc("model_badges_state", null) as {
+      threads: Record<string, { providerId: string; model: string }>;
+      marks: Record<string, { kind: string; value: string }>;
+    };
+    expect(state.threads.t1).toMatchObject({ providerId: "pi", model: "gpt-6.1-sol" });
+    expect(state.threads.t2).toMatchObject({ providerId: "claude-code", model: "claude-sonnet-5-5" });
+    expect(state.marks.x5).toEqual({ kind: "text", value: "х5" });
+    const rows = await host.harness.behavior.callRpc("model_badges_for", { keys: ["t1", "t2"] }) as Record<
+      string,
+      { family: string; model: string; mark: { kind: string; value: string } } | null
+    >;
+    expect(rows.t1).toMatchObject({ family: "gpt", model: "gpt-6.1-sol" });
+    expect(rows.t1!.mark.kind).toBe("icon");
+    expect(rows.t2).toBeNull();
+    expect(Object.keys(rows).sort()).toEqual(["t1", "t2"]);
+  });
+  it("model badges: неизвестный pi-тред разрешается через SDK и кешируется", async () => {
+    const { host } = await load(undefined, {
+      threads: {
+        get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, providerId: "pi" }),
+        defaultExecutionOptions: async () => ({
+          model: "deepseek-v4.1-flash",
+          permissionMode: "auto",
+          reasoningLevel: "low",
+          serviceTier: "standard",
+          source: "client/turn/start",
+        }),
+      },
+    });
+    const rows = await host.harness.behavior.callRpc("model_badges_for", { keys: ["t3"] }) as Record<
+      string,
+      { family: string; model: string } | null
+    >;
+    expect(rows.t3).toMatchObject({ family: "deepseek", model: "deepseek-v4.1-flash" });
+    const state = await host.harness.behavior.callRpc("model_badges_state", null) as {
+      threads: Record<string, { providerId: string; model: string }>;
+    };
+    expect(state.threads.t3).toMatchObject({ providerId: "pi", model: "deepseek-v4.1-flash" });
+    const cached = await host.harness.behavior.callRpc("model_badges_for", { keys: ["t3"] }) as Record<string, unknown>;
+    expect(cached.t3).toMatchObject({ family: "deepseek" });
+    expect(host.harness.inspection.sdk.callsTo("threads.get")).toHaveLength(1);
+  });
+  it("model badges: не-pi тред из SDK не получает марку", async () => {
+    const { host } = await load(undefined, {
+      threads: {
+        get: async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, providerId: "claude-code" }),
+      },
+    });
+    const rows = await host.harness.behavior.callRpc("model_badges_for", { keys: ["t4"] }) as Record<string, unknown>;
+    expect(rows.t4).toBeNull();
+    expect(host.harness.inspection.sdk.callsTo("threads.defaultExecutionOptions")).toHaveLength(0);
+  });
+  it("model badges: архив/удаление чистит карту", async () => {
+    const { host } = await load();
+    const hook = host.harness.registrations.hooks["message.dispatch"]!;
+    await hook(makeMessageDispatchHookContext({
+      thread: { id: "t1" },
+      requestedExecution: { providerId: "pi", model: "claude-sonnet-5-5" },
+    }));
+    await host.harness.behavior.emitThreadEvent("thread.archived", { thread: makeThreadResponse({ id: "t1" }) });
+    await vi.waitFor(async () => {
+      const state = await host.harness.behavior.callRpc("model_badges_state", null) as { threads: Record<string, unknown> };
+      expect(state.threads).not.toHaveProperty("t1");
+    });
+    await hook(makeMessageDispatchHookContext({
+      thread: { id: "t2" },
+      requestedExecution: { providerId: "pi", model: "grok-4.7" },
+    }));
+    await host.harness.behavior.emitThreadEvent("thread.deleted", { thread: makeThreadResponse({ id: "t2" }) });
+    await vi.waitFor(async () => {
+      const state = await host.harness.behavior.callRpc("model_badges_state", null) as { threads: Record<string, unknown> };
+      expect(state.threads).not.toHaveProperty("t2");
+    });
+  });
+  it("model badges: марки сохраняются, небезопасный SVG отклоняется", async () => {
+    const { host } = await load();
+    const set = (family: string, mark: Record<string, string>) =>
+      host.harness.behavior.callRpc("model_badges_marks_set", { family, mark });
+    const saved = await set("gpt", { kind: "text", value: "G" }) as { marks: Record<string, { kind: string; value: string }> };
+    expect(saved.marks.gpt).toEqual({ kind: "text", value: "G" });
+    expect(saved.marks.claude).toEqual({ kind: "icon", value: "MessageSquare" });
+    const safeSvg = '<svg viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>';
+    const withSvg = await set("gemini", { kind: "svg", value: safeSvg }) as { marks: Record<string, { kind: string; value: string }> };
+    expect(withSvg.marks.gemini).toEqual({ kind: "svg", value: safeSvg });
+    await expect(set("grok", { kind: "svg", value: "<svg><script>alert(1)</script></svg>" })).rejects.toThrow(/SVG отклонён/);
+    await expect(set("grok", { kind: "svg", value: '<svg><foreignObject/></svg>' })).rejects.toThrow(/SVG отклонён/);
+    const state = await host.harness.behavior.callRpc("model_badges_state", null) as { marks: Record<string, { kind: string }> };
+    expect(state.marks.grok).toEqual({ kind: "icon", value: "Zap" });
+    await expect(set("gpt", { kind: "text", value: "" })).rejects.toThrow();
   });
 });

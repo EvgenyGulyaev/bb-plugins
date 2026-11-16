@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Api модели",
-    "description": "Подключение моделей с API-адресов в pi: аккордеоны адресов, доступные/подключённые модели, настройки.",
+    "description": "Подключение моделей с API-адресов в pi: аккордеоны адресов, доступные/подключённые модели, настройки и значки моделей у тредов.",
     "branding": {
       "icon": "Workflow"
     },
@@ -28,6 +28,7 @@
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.132",
     "@radix-ui/react-dialog": "^1.2.1",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
@@ -37,6 +38,9 @@
     "clsx": "^2.1.1",
     "cron-parser": "^5.5.0",
     "hono": "^4.11.9",
+    "jsdom": "^29.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "sonner": "^1.7.4",
     "tailwind-merge": "^3.7.0",
     "typescript": "^5.7.0",
