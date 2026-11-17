@@ -30,6 +30,12 @@ import {
   type RailFoldersState,
   type RailItemRef,
 } from "./lib/folders.js";
+import {
+  dedupeProjectPaths,
+  projectPathsInputSchema,
+  projectPathsOutputSchema,
+  type ProjectPathItem,
+} from "./lib/project-paths.js";
 
 const folderIdSchema = z.string().min(1).max(120);
 const orderSchema = z
@@ -99,6 +105,10 @@ export const rpcContract = defineRpcContract({
   rail_set_order: {
     input: z.object({ order: orderSchema }),
     output: stateOutput,
+  },
+  project_paths: {
+    input: projectPathsInputSchema,
+    output: projectPathsOutputSchema,
   },
 });
 
@@ -209,6 +219,27 @@ export default async function plugin(bb: BbPluginApi) {
       }),
     rail_set_order: ({ order }) =>
       mutate((state) => setRailOrder(state, order)),
+    project_paths: async ({ projectName }) => {
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      const matching = projects.filter((project) => project.name === projectName);
+      const items: ProjectPathItem[] = [];
+      for (const project of matching) {
+        const environments = await bb.sdk.environments.list({ projectId: project.id });
+        for (const environment of environments) {
+          if (environment.path === null) continue;
+          items.push({
+            projectId: project.id,
+            projectName: project.name,
+            path: environment.path,
+            ...(environment.name === null ? {} : { environmentName: environment.name }),
+            ...(environment.branchName === null
+              ? {}
+              : { branchName: environment.branchName }),
+          });
+        }
+      }
+      return { items: dedupeProjectPaths(items) };
+    },
   });
 
   // Installing picks this navigation, the same one-time setup bb's own guide
