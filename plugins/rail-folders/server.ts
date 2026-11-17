@@ -5,6 +5,7 @@
 // whole state back, and publishes "rail-folders-changed" so every open window
 // reloads. The frontend never writes storage directly; it calls these RPCs.
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -31,7 +32,9 @@ import {
   type RailItemRef,
 } from "./lib/folders.js";
 import {
+  checkoutLabel,
   dedupeProjectPaths,
+  isUsableCheckoutPath,
   projectPathsInputSchema,
   projectPathsOutputSchema,
   type ProjectPathItem,
@@ -226,12 +229,12 @@ export default async function plugin(bb: BbPluginApi) {
       for (const project of matching) {
         const environments = await bb.sdk.environments.list({ projectId: project.id });
         for (const environment of environments) {
-          if (environment.path === null) continue;
+          if (!isUsableCheckoutPath(environment.path, tmpdir())) continue;
           items.push({
             projectId: project.id,
             projectName: project.name,
+            environmentName: checkoutLabel(environment),
             path: environment.path,
-            ...(environment.name === null ? {} : { environmentName: environment.name }),
             ...(environment.branchName === null
               ? {}
               : { branchName: environment.branchName }),

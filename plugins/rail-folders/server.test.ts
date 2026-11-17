@@ -1,4 +1,5 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RAIL_FOLDERS_CHANGED, RAIL_STORAGE_KEY } from "./lib/folders.js";
@@ -472,6 +473,7 @@ type EnvironmentFixture = {
   path: string | null;
   name?: string | null;
   branchName?: string | null;
+  isWorktree?: boolean;
 };
 
 async function loadProjects(options: {
@@ -500,6 +502,7 @@ async function loadProjects(options: {
             projectId: projectId ?? "",
             branchName: environment.branchName ?? null,
             name: environment.name ?? null,
+            isWorktree: environment.isWorktree ?? false,
           }))) as never,
       },
     },
@@ -586,8 +589,57 @@ describe("project_paths", () => {
     });
 
     expect(await projectPaths(host, "personal")).toEqual({
-      items: [{ projectId: "proj_1", projectName: "personal", path: "/work/personal" }],
+      items: [
+        {
+          projectId: "proj_1",
+          projectName: "personal",
+          environmentName: "чекаут",
+          path: "/work/personal",
+        },
+      ],
     });
+  });
+
+  it("drops bb temporary checkouts and blank paths", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: {
+        proj_1: [
+          { path: "/work/bb-plugins", name: "main" },
+          { path: "   " },
+          { path: `${tmpdir()}/bb-x5-connect-1` },
+        ],
+      },
+    });
+
+    expect((await projectPaths(host, "bb-plugins")).items.map((item) => item.path)).toEqual([
+      "/work/bb-plugins",
+    ]);
+  });
+
+  it("returns no items when every checkout is temporary", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: { proj_1: [{ path: `${tmpdir()}/bb-x5-connect-1` }] },
+    });
+
+    expect(await projectPaths(host, "bb-plugins")).toEqual({ items: [] });
+  });
+
+  it("labels unnamed worktrees and branch-only checkouts", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: {
+        proj_1: [
+          { path: "/work/wt", branchName: "feat/x", isWorktree: true },
+          { path: "/work/dev", branchName: "dev" },
+        ],
+      },
+    });
+
+    expect(
+      (await projectPaths(host, "bb-plugins")).items.map((item) => item.environmentName),
+    ).toEqual(["worktree feat/x", "dev"]);
   });
 
   it("returns no items for an unknown project name", async () => {

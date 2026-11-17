@@ -21,6 +21,33 @@ export const projectPathsOutputSchema = z.object({
   items: z.array(projectPathItemSchema),
 });
 
+// bb Connect and friends park ephemeral checkouts in the platform tmpdir;
+// they are not the project's own pwd. ponytail: prefix compare only — a
+// symlinked tmpdir would slip through; upgrade path is realpath() on the
+// server if that ever shows up in practice.
+export function isUsableCheckoutPath(
+  path: string | null | undefined,
+  tmpRoot: string,
+): path is string {
+  if (typeof path !== "string") return false;
+  const trimmed = path.trim();
+  if (!trimmed) return false;
+  const root = tmpRoot.endsWith("/") ? tmpRoot.slice(0, -1) : tmpRoot;
+  return trimmed !== root && !trimmed.startsWith(`${root}/`);
+}
+
+export function checkoutLabel(environment: {
+  name?: string | null;
+  branchName?: string | null;
+  isWorktree?: boolean;
+}): string {
+  if (environment.name) return environment.name;
+  if (environment.isWorktree) {
+    return environment.branchName ? `worktree ${environment.branchName}` : "worktree";
+  }
+  return environment.branchName || "чекаут";
+}
+
 export function dedupeProjectPaths(items: ProjectPathItem[]): ProjectPathItem[] {
   const seen = new Set<string>();
   return items.filter((item) => {

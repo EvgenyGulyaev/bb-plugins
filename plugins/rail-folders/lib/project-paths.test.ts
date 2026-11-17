@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  checkoutLabel,
   dedupeProjectPaths,
+  isUsableCheckoutPath,
   projectPathsInputSchema,
   projectPathsOutputSchema,
   type ProjectPathItem,
@@ -60,5 +62,45 @@ describe("dedupeProjectPaths", () => {
 
   it("returns an empty list unchanged", () => {
     expect(dedupeProjectPaths([])).toEqual([]);
+  });
+});
+
+describe("isUsableCheckoutPath", () => {
+  const tmp = "/var/folders/2n/test/T";
+
+  it("rejects missing, empty and blank paths", () => {
+    expect(isUsableCheckoutPath(null, tmp)).toBe(false);
+    expect(isUsableCheckoutPath(undefined, tmp)).toBe(false);
+    expect(isUsableCheckoutPath("", tmp)).toBe(false);
+    expect(isUsableCheckoutPath("   ", tmp)).toBe(false);
+  });
+
+  it("rejects bb temporary checkouts inside the platform tmpdir", () => {
+    expect(isUsableCheckoutPath(`${tmp}/bb-x5-connect-1`, tmp)).toBe(false);
+    expect(isUsableCheckoutPath(`${tmp}/bb-x5-connect-1`, `${tmp}/`)).toBe(false);
+    expect(isUsableCheckoutPath(tmp, tmp)).toBe(false);
+  });
+
+  it("keeps real checkouts and sibling prefixes of the tmpdir", () => {
+    expect(isUsableCheckoutPath("/Users/dev/work/repo", tmp)).toBe(true);
+    expect(isUsableCheckoutPath("/var/folders/2n/test/T2/repo", tmp)).toBe(true);
+  });
+});
+
+describe("checkoutLabel", () => {
+  it("prefers the environment name", () => {
+    expect(checkoutLabel({ name: "main", branchName: "dev", isWorktree: true })).toBe("main");
+  });
+
+  it("marks unnamed worktrees with their branch", () => {
+    expect(checkoutLabel({ name: null, branchName: "feat/x", isWorktree: true })).toBe(
+      "worktree feat/x",
+    );
+    expect(checkoutLabel({ name: null, branchName: null, isWorktree: true })).toBe("worktree");
+  });
+
+  it("falls back to the branch and then to a generic label", () => {
+    expect(checkoutLabel({ name: null, branchName: "dev", isWorktree: false })).toBe("dev");
+    expect(checkoutLabel({ name: null, branchName: null, isWorktree: false })).toBe("чекаут");
   });
 });
