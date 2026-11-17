@@ -7,6 +7,7 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { RailFolders } from "./components/RailFolders";
 import { RailFoldersSettings } from "./components/RailFoldersSettings";
+import { mountProjectPathMenu } from "./lib/project-menu";
 
 export default definePluginApp((app) => {
   // Exclusive navigation provider: this component draws the whole rail.
@@ -24,5 +25,12 @@ export default definePluginApp((app) => {
     title: "Папки рейла",
     description: "Создавайте папки, переименовывайте их, меняйте иконки, порядок папок и участников.",
     component: RailFoldersSettings,
+  });
+
+  // Decorates bb's own project context menu with "Скопировать путь" items.
+  // The host menu stays untouched: the script only adds siblings to it.
+  app.contentScripts.register({
+    id: "project-path-menu",
+    mount: mountProjectPathMenu,
   });
 });
