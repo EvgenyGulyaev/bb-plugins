@@ -540,13 +540,20 @@ describe("project path menu hover highlight", () => {
     dispose();
   });
 
-  it("clears its own highlight on pointerleave", async () => {
+  it("keeps the highlight after pointerleave until the next enter", async () => {
     const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
 
     enter(copies[0]!);
     leave(copies[0]!);
+    // The host keeps `last-hovered` on the row it left, so the injected row
+    // must not clear it either.
+    expect(highlighted(hostMenu)).toEqual([copies[0]]);
 
-    expect(highlighted(hostMenu)).toEqual([]);
+    enter(copies[1]!);
+    expect(highlighted(hostMenu)).toEqual([copies[1]]);
+
+    leave(copies[1]!);
+    expect(highlighted(hostMenu)).toEqual([copies[1]]);
     dispose();
   });
 

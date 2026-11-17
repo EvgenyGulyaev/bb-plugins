@@ -247,16 +247,14 @@ export function createProjectPathMenuMount(deps: ProjectPathMenuDeps = {}) {
         }
         // The injected rows sit outside Radix's item collection, so only a bare
         // pointerenter reaches them; the highlight is moved by hand to whoever
-        // is hovered, exactly like the host's own rows behave.
+        // is hovered and, like the host, is kept on pointerleave until the next
+        // enter or until the menu drops the node.
         item.addEventListener("pointerenter", () => {
           if (!isLive()) return;
           menu.querySelectorAll<HTMLElement>('[role="menuitem"]').forEach((other) => {
             if (other !== item) other.removeAttribute(highlight);
           });
           item.setAttribute(highlight, "");
-        });
-        item.addEventListener("pointerleave", () => {
-          item.removeAttribute(highlight);
         });
         nodes.push(item);
       }
