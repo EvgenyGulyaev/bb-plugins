@@ -16,7 +16,15 @@ function item(partial: Partial<ProjectPathItem> & { path: string }): ProjectPath
   };
 }
 
-function menu(items: string[], label = "picker-routes actions"): HTMLElement {
+const HOST_ITEM_CLASS =
+  "bb-menu-item data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[last-hovered]:bg-state-hover data-[last-hovered]:text-foreground";
+const HIGHLIGHT_ATTRIBUTE = "data-last-hovered";
+
+function menu(
+  items: string[],
+  label = "picker-routes actions",
+  className = "bb-menu-item",
+): HTMLElement {
   const menu = document.createElement("div");
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", label);
@@ -24,7 +32,7 @@ function menu(items: string[], label = "picker-routes actions"): HTMLElement {
     const row = document.createElement("div");
     row.setAttribute("role", "menuitem");
     row.setAttribute("tabindex", "-1");
-    row.className = "bb-menu-item";
+    row.className = className;
     row.textContent = text;
     menu.appendChild(row);
   }
@@ -56,7 +64,10 @@ function setClipboard(value: { writeText: (text: string) => Promise<void> } | un
   Object.defineProperty(navigator, "clipboard", { configurable: true, value });
 }
 
+const pendingDisposers: Array<() => void> = [];
+
 afterEach(() => {
+  for (const dispose of pendingDisposers.splice(0)) dispose();
   document.body.innerHTML = "";
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -455,6 +466,136 @@ describe("project path menu mount", () => {
     await flush();
 
     expect(labels(hostMenu)).toEqual(["Настройки проекта", "Убрать"]);
+    dispose();
+  });
+});
+
+describe("project path menu hover highlight", () => {
+  function hostMenuWithHighlightClass(className = HOST_ITEM_CLASS): HTMLElement {
+    return menu(["Настройки проекта", "Переименовать", "Убрать"], undefined, className);
+  }
+
+  async function mounted(hostMenu: HTMLElement) {
+    const mount = createProjectPathMenuMount({
+      fetchItems: async () => [
+        item({ environmentName: "main", path: "/work/a" }),
+        item({ environmentName: "feat", path: "/work/b" }),
+      ],
+      writeClipboard: async () => {},
+    });
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: new AbortController().signal,
+    });
+    pendingDisposers.push(dispose);
+    await flush();
+    const copies = Array.from(
+      hostMenu.querySelectorAll<HTMLElement>('[data-rail-folders-action="copy"]'),
+    );
+    return { hostMenu, dispose, copies };
+  }
+
+  function highlighted(menuElement: HTMLElement): HTMLElement[] {
+    return Array.from(
+      menuElement.querySelectorAll<HTMLElement>(`[${HIGHLIGHT_ATTRIBUTE}]`),
+    );
+  }
+
+  function enter(element: HTMLElement): void {
+    element.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+  }
+
+  function leave(element: HTMLElement): void {
+    element.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false }));
+  }
+
+  it("marks the hovered injected item and clears the host items", async () => {
+    const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
+    const [first] = copies;
+
+    enter(first!);
+
+    expect(highlighted(hostMenu)).toEqual([first]);
+    expect(first!.getAttribute(HIGHLIGHT_ATTRIBUTE)).toBe("");
+    for (const hostItem of Array.from(
+      hostMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    )) {
+      if (hostItem === first) continue;
+      expect(hostItem.hasAttribute(HIGHLIGHT_ATTRIBUTE)).toBe(false);
+    }
+    expect(first!.getAttribute("tabindex")).toBe("-1");
+    expect(first!.hasAttribute("data-disabled")).toBe(false);
+    dispose();
+  });
+
+  it("steals the highlight from a host item that already carries it", async () => {
+    const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
+    const hostItem = hostMenu.querySelector<HTMLElement>('[role="menuitem"]')!;
+    hostItem.setAttribute(HIGHLIGHT_ATTRIBUTE, "");
+
+    enter(copies[1]!);
+
+    expect(highlighted(hostMenu)).toEqual([copies[1]]);
+    dispose();
+  });
+
+  it("clears its own highlight on pointerleave", async () => {
+    const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
+
+    enter(copies[0]!);
+    leave(copies[0]!);
+
+    expect(highlighted(hostMenu)).toEqual([]);
+    dispose();
+  });
+
+  it("keeps a single highlight across repeated enters", async () => {
+    const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
+
+    enter(copies[0]!);
+    enter(copies[0]!);
+    expect(highlighted(hostMenu)).toEqual([copies[0]]);
+
+    enter(copies[1]!);
+    expect(highlighted(hostMenu)).toEqual([copies[1]]);
+    dispose();
+  });
+
+  it("drops highlights and nodes on dispose", async () => {
+    const { hostMenu, dispose, copies } = await mounted(hostMenuWithHighlightClass());
+
+    enter(copies[0]!);
+    dispose();
+
+    expect(document.querySelectorAll("[data-rail-folders-action]")).toHaveLength(0);
+    expect(document.querySelectorAll(`[${HIGHLIGHT_ATTRIBUTE}]`)).toHaveLength(0);
+    expect(hostMenu).not.toBe(null);
+  });
+
+  it("keys the highlight on the attribute the host classes actually use", async () => {
+    const hostMenuElement = hostMenuWithHighlightClass(
+      "bb-menu-item data-[highlighted]:bg-state-hover data-[highlighted]:text-foreground",
+    );
+    const { dispose, copies } = await mounted(hostMenuElement);
+
+    enter(copies[0]!);
+
+    expect(copies[0]!.getAttribute("data-highlighted")).toBe("");
+    expect(highlighted(hostMenuElement)).toEqual([]);
+    dispose();
+  });
+
+  it("ignores unrelated data attributes in the host classes", async () => {
+    const hostMenuElement = hostMenuWithHighlightClass(
+      "bb-menu-item data-[state=open]:bg-state-active data-[last-hovered]:bg-state-hover",
+    );
+    const { dispose, copies } = await mounted(hostMenuElement);
+
+    enter(copies[0]!);
+
+    expect(copies[0]!.getAttribute(HIGHLIGHT_ATTRIBUTE)).toBe("");
+    expect(copies[0]!.hasAttribute("data-state")).toBe(false);
     dispose();
   });
 });

@@ -17,6 +17,28 @@ const COPY_LABEL = "Скопировать путь";
 const COPY_ALL_LABEL = "Скопировать все пути";
 const COPY_FAILED_LABEL = "Не удалось скопировать";
 const ACTION_DATA_ATTRIBUTE = "rail-folders-action";
+// Hover is painted through a data attribute referenced by the host item
+// classes, e.g. `data-[last-hovered]:bg-state-hover`. Radix renders rows in
+// its own collection on its own; the rows injected here are outside it, so the
+// host never marks them. The key is read back from those classes so a rename
+// in bb keeps this working.
+const HIGHLIGHT_ATTRIBUTE_PATTERN = /data-\[([a-z0-9-]+)\](?=:)/g;
+// Radix and bb also hang structure and disabled styling off data attributes;
+// those must not be mistaken for the hover key.
+const NON_HOVER_ATTRIBUTES = new Set([
+  "state",
+  "orientation",
+  "side",
+  "align",
+  "disabled",
+  "open",
+  "checked",
+  "active",
+]);
+const FALLBACK_HIGHLIGHT_ATTRIBUTE = "data-last-hovered";
+// bb drives hover with `last-hovered`; plain Radix items carry `highlighted`.
+// Both may appear in the classes, so the bb key wins.
+const HOVER_ATTRIBUTE_KEYS = ["last-hovered", "highlighted"] as const;
 
 export interface ProjectMenuEntry {
   kind: "copy" | "copy-all";
@@ -107,6 +129,19 @@ function hasProjectSettingsItem(menu: HTMLElement): boolean {
   );
 }
 
+function highlightAttribute(classes: string): string {
+  const candidates = new Set<string>();
+  for (const match of classes.matchAll(HIGHLIGHT_ATTRIBUTE_PATTERN)) {
+    const key = match[1]!;
+    if (!NON_HOVER_ATTRIBUTES.has(key)) candidates.add(key);
+  }
+  for (const key of HOVER_ATTRIBUTE_KEYS) {
+    if (candidates.delete(key)) return `data-${key}`;
+  }
+  const [first] = candidates;
+  return first === undefined ? FALLBACK_HIGHLIGHT_ATTRIBUTE : `data-${first}`;
+}
+
 // Radix labels a portalled menu through aria-labelledby, pointing at its
 // trigger — the "…" button whose aria-label is "<project name> actions".
 // The visible menu rarely carries an aria-label of its own.
@@ -172,6 +207,7 @@ export function createProjectPathMenuMount(deps: ProjectPathMenuDeps = {}) {
       const hostItems = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
       const anchor = hostItems.at(-1) ?? null;
       const className = hostItems[0]?.className ?? "";
+      const highlight = highlightAttribute(className);
       const nodes: HTMLElement[] = [];
 
       const hostSeparator = menu.querySelector<HTMLElement>('[role="separator"]');
@@ -209,6 +245,19 @@ export function createProjectPathMenuMount(deps: ProjectPathMenuDeps = {}) {
             void copyText(path, item, label);
           });
         }
+        // The injected rows sit outside Radix's item collection, so only a bare
+        // pointerenter reaches them; the highlight is moved by hand to whoever
+        // is hovered, exactly like the host's own rows behave.
+        item.addEventListener("pointerenter", () => {
+          if (!isLive()) return;
+          menu.querySelectorAll<HTMLElement>('[role="menuitem"]').forEach((other) => {
+            if (other !== item) other.removeAttribute(highlight);
+          });
+          item.setAttribute(highlight, "");
+        });
+        item.addEventListener("pointerleave", () => {
+          item.removeAttribute(highlight);
+        });
         nodes.push(item);
       }
 
