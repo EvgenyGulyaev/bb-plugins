@@ -42,9 +42,29 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function response(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  };
+}
+
+const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+
+function setClipboard(value: { writeText: (text: string) => Promise<void> } | undefined) {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value });
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  if (clipboardDescriptor !== undefined) {
+    Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+  } else {
+    Reflect.deleteProperty(navigator, "clipboard");
+  }
 });
 
 describe("parseProjectMenuLabel", () => {
@@ -255,10 +275,11 @@ describe("project path menu mount", () => {
     dispose();
   });
 
-  it("survives host menu rebuilds without duplicating its items", async () => {
+  it("survives host menu rebuilds without duplicating its items or refetching", async () => {
     const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const fetchItems = vi.fn(async () => [item({ path: "/work/a" })]);
     const mount = createProjectPathMenuMount({
-      fetchItems: async () => [item({ path: "/work/a" })],
+      fetchItems,
       writeClipboard: async () => {},
     });
     const dispose = mount({
@@ -274,6 +295,31 @@ describe("project path menu mount", () => {
     await flush();
 
     expect(labels(hostMenu).filter((text) => text === "Скопировать путь")).toHaveLength(1);
+    expect(fetchItems).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it("does not decorate a menu that already carries its items", async () => {
+    const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const existing = document.createElement("div");
+    existing.setAttribute("role", "menuitem");
+    existing.dataset.railFoldersAction = "copy";
+    existing.textContent = "Скопировать путь";
+    hostMenu.insertBefore(existing, hostMenu.lastElementChild);
+
+    const fetchItems = vi.fn(async () => [item({ path: "/work/a" })]);
+    const mount = createProjectPathMenuMount({
+      fetchItems,
+      writeClipboard: async () => {},
+    });
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: new AbortController().signal,
+    });
+    await flush();
+
+    expect(labels(hostMenu)).toEqual(["Настройки проекта", "Скопировать путь", "Убрать"]);
     dispose();
   });
 
@@ -409,6 +455,123 @@ describe("project path menu mount", () => {
     await flush();
 
     expect(labels(hostMenu)).toEqual(["Настройки проекта", "Убрать"]);
+    dispose();
+  });
+});
+
+describe("default rpc and clipboard", () => {
+  it("posts to the plugin rpc endpoint and unwraps the result envelope", async () => {
+    const fetchMock = vi.fn(async () =>
+      response({
+        ok: true,
+        result: {
+          items: [
+            {
+              projectId: "proj_1",
+              projectName: "picker-routes",
+              environmentName: "main",
+              path: "/work/picker-routes",
+            },
+          ],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const writeText = vi.fn(async () => {});
+    setClipboard({ writeText });
+
+    const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const mount = createProjectPathMenuMount();
+    const controller = new AbortController();
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: controller.signal,
+    });
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/v1/plugins/rail-folders/rpc/project_paths");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ projectName: "picker-routes" });
+    expect(init.signal).toBe(controller.signal);
+
+    expect(labels(hostMenu)).toEqual(["Настройки проекта", "Скопировать путь", "Убрать"]);
+
+    hostMenu.querySelector<HTMLElement>('[data-rail-folders-action="copy"]')!.click();
+    await flush();
+    expect(writeText).toHaveBeenCalledWith("/work/picker-routes");
+    dispose();
+  });
+
+  it("leaves the menu alone when the rpc answers with an http error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        // A valid envelope behind a failed status proves the status check runs
+        // before the payload is trusted.
+        response(
+          { ok: true, result: { items: [item({ path: "/work/a" })] } },
+          500,
+        ),
+      ),
+    );
+
+    const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const mount = createProjectPathMenuMount();
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: new AbortController().signal,
+    });
+    await flush();
+
+    expect(labels(hostMenu)).toEqual(["Настройки проекта", "Убрать"]);
+    dispose();
+  });
+
+  it("leaves the menu alone when the rpc payload fails validation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => response({ ok: true, result: { items: [{ path: "" }] } })),
+    );
+
+    const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const mount = createProjectPathMenuMount();
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: new AbortController().signal,
+    });
+    await flush();
+
+    expect(labels(hostMenu)).toEqual(["Настройки проекта", "Убрать"]);
+    dispose();
+  });
+
+  it("reports a missing clipboard api instead of throwing", async () => {
+    setClipboard(undefined);
+    const keys: string[] = [];
+    document.addEventListener("keydown", (event) => keys.push(event.key));
+
+    const hostMenu = menu(["Настройки проекта", "Убрать"]);
+    const mount = createProjectPathMenuMount({
+      fetchItems: async () => [item({ path: "/work/a" })],
+    });
+    const dispose = mount({
+      pluginId: "rail-folders",
+      generation: 1,
+      signal: new AbortController().signal,
+    });
+    await flush();
+
+    const copy = hostMenu.querySelector<HTMLElement>('[data-rail-folders-action="copy"]')!;
+    copy.click();
+    await flush();
+
+    expect(copy.textContent).toBe("Не удалось скопировать");
+    expect(keys).toEqual([]);
     dispose();
   });
 });
