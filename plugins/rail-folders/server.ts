@@ -240,6 +240,19 @@ export default async function plugin(bb: BbPluginApi) {
               : { branchName: environment.branchName }),
           });
         }
+        // Environments only exist once a thread ran in the project; the
+        // project's own local_path sources carry the pwd even for empty
+        // projects. Dedupe keeps the environment label when paths repeat.
+        for (const source of project.sources) {
+          if (source.type !== "local_path") continue;
+          if (!isUsableCheckoutPath(source.path, tmpdir())) continue;
+          items.push({
+            projectId: project.id,
+            projectName: project.name,
+            environmentName: "путь проекта",
+            path: source.path,
+          });
+        }
       }
       return { items: dedupeProjectPaths(items) };
     },

@@ -468,7 +468,11 @@ describe("mixed rail order", () => {
   });
 });
 
-type ProjectFixture = { id: string; name: string };
+type ProjectFixture = {
+  id: string;
+  name: string;
+  sources?: { path: string }[];
+};
 type EnvironmentFixture = {
   path: string | null;
   name?: string | null;
@@ -490,7 +494,16 @@ async function loadProjects(options: {
             createdAt: 0,
             gitRemoteUrl: null,
             kind: "standard",
-            sources: [],
+            sources: (project.sources ?? []).map((source, index) => ({
+              id: `src_${project.id}_${index}`,
+              projectId: project.id,
+              type: "local_path",
+              hostId: "host_1",
+              isDefault: true,
+              createdAt: 0,
+              updatedAt: 0,
+              ...source,
+            })),
             updatedAt: 0,
           }))) as never,
       },
@@ -640,6 +653,59 @@ describe("project_paths", () => {
     expect(
       (await projectPaths(host, "bb-plugins")).items.map((item) => item.environmentName),
     ).toEqual(["worktree feat/x", "dev"]);
+  });
+
+  it("falls back to the project source path when no thread checkout exists", async () => {
+    const host = await loadProjects({
+      projects: [
+        { id: "proj_1", name: "picker-routes", sources: [{ path: "/work/scm/picker-routes" }] },
+      ],
+      environments: {},
+    });
+
+    expect(await projectPaths(host, "picker-routes")).toEqual({
+      items: [
+        {
+          projectId: "proj_1",
+          projectName: "picker-routes",
+          environmentName: "путь проекта",
+          path: "/work/scm/picker-routes",
+        },
+      ],
+    });
+  });
+
+  it("prefers the environment label when a source repeats the checkout", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "repo", sources: [{ path: "/work/repo" }] }],
+      environments: { proj_1: [{ path: "/work/repo", name: "main" }] },
+    });
+
+    expect((await projectPaths(host, "repo")).items).toEqual([
+      {
+        projectId: "proj_1",
+        projectName: "repo",
+        environmentName: "main",
+        path: "/work/repo",
+      },
+    ]);
+  });
+
+  it("drops temporary and blank source paths", async () => {
+    const host = await loadProjects({
+      projects: [
+        {
+          id: "proj_1",
+          name: "repo",
+          sources: [{ path: `${tmpdir()}/bb-x1` }, { path: "   " }, { path: "/work/real" }],
+        },
+      ],
+      environments: {},
+    });
+
+    expect((await projectPaths(host, "repo")).items.map((item) => item.path)).toEqual([
+      "/work/real",
+    ]);
   });
 
   it("returns no items for an unknown project name", async () => {
