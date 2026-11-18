@@ -12,6 +12,18 @@ import {
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
+import {
+  RINGS_CHANGED,
+  RINGS_KV_KEY,
+  clampRingPerRow,
+  clampRingSize,
+  normalizeRingsState,
+  ringsPerRowInputSchema,
+  ringsSizeInputSchema,
+  ringsStateSchema,
+  ringsToggleInputSchema,
+  type RingsState,
+} from "./lib/rings";
 
 const providerViewSchema = z.object({
   id: z.string(),
@@ -81,6 +93,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ providerId: providerIdSchema, authIndex: z.string().min(1).max(200), enabled: z.boolean() }).strict(),
     output: z.object({ disabled: z.boolean() }),
   },
+  rings_state: { input: z.null(), output: ringsStateSchema },
+  rings_toggle: { input: ringsToggleInputSchema, output: ringsStateSchema },
+  rings_size: { input: ringsSizeInputSchema, output: ringsStateSchema },
+  rings_per_row: { input: ringsPerRowInputSchema, output: ringsStateSchema },
 });
 
 const CHANGED = "api-models-changed";
@@ -117,6 +133,20 @@ export default async function plugin(bb: BbPluginApi) {
   const disabledKey = (providerId: string) => `disabled-models:${providerId}`;
   const readDisabled = async (providerId: string): Promise<ModelEntry[]> =>
     (await bb.storage.kv.get<ModelEntry[]>(disabledKey(providerId))) ?? [];
+
+  // Кольца квот: выбранные аккаунты и размер живут в kv плагина. Читаем с
+  // нормализацией — kv может содержать состояние прошлой версии.
+  async function readRings(): Promise<RingsState> {
+    return normalizeRingsState(await bb.storage.kv.get(RINGS_KV_KEY));
+  }
+  function mutateRings(fn: (state: RingsState) => RingsState): Promise<RingsState> {
+    return locked(async () => {
+      const next = normalizeRingsState(fn(await readRings()));
+      await bb.storage.kv.set(RINGS_KV_KEY, next);
+      bb.realtime.publish(RINGS_CHANGED, {});
+      return next;
+    });
+  }
 
   // Management-доступ: креды per-origin (kv) → глобальный fallback; токен из
   // кэша сессии, при отзыве — один повторный логин.
@@ -304,6 +334,14 @@ export default async function plugin(bb: BbPluginApi) {
       await bb.storage.kv.set(`relay-auth:${origin}`, null);
       return { cleared: true };
     },
+    rings_state: async () => readRings(),
+    rings_toggle: async ({ key, on }) =>
+      mutateRings((state) => ({
+        ...state,
+        selected: on ? [...state.selected, key] : state.selected.filter((entry) => entry !== key),
+      })),
+    rings_size: async ({ size }) => mutateRings((state) => ({ ...state, size: clampRingSize(size) })),
+    rings_per_row: async ({ perRow }) => mutateRings((state) => ({ ...state, perRow: clampRingPerRow(perRow) })),
   });
 
   bb.log.info("api-models loaded");

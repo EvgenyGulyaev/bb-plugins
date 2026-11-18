@@ -158,6 +158,20 @@ export function partitionByQuota(groups: Array<{ provider: string; accounts: Rel
   };
 }
 
+// Имя карточки аккаунта: почта → осмысленный label → auth_index.
+export function accountDisplayName(account: {
+  auth_index: string;
+  email?: string;
+  label?: string;
+  provider?: string;
+}): string {
+  return (
+    account.email
+    ?? (account.label && account.label !== account.provider ? account.label : undefined)
+    ?? account.auth_index
+  );
+}
+
 // relay отдаёт success_rate долей 0..1; старые сборки могли слать проценты.
 export function successPercent(rate: number | undefined): number | undefined {
   if (typeof rate !== "number" || !Number.isFinite(rate)) return undefined;

@@ -1,6 +1,6 @@
 // «Api модели» — панель: аккордеоны API-адресов, внутри слева доступные модели
 // (GET /models минус подключённые), справа подключённые с формой настроек pi.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { FormEvent } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
@@ -8,10 +8,26 @@ import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
+import { countdown } from "./lib/countdown";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
-import { successPercent, groupAccountsByProvider, partitionByQuota, shouldGroupByProvider } from "./lib/relay-accounts";
+import { accountDisplayName, groupAccountsByProvider, partitionByQuota, relayOrigin, shouldGroupByProvider, successPercent } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
+import {
+  RINGS_CHANGED,
+  RING_PER_ROW_MAX,
+  RING_PER_ROW_MIN,
+  RING_SIZE_MAX,
+  RING_SIZE_MIN,
+  clampRingPerRow,
+  clampRingSize,
+  normalizeRingsState,
+  ringAccountKey,
+  type RingsState,
+} from "./lib/rings";
+import { getRailTarget, mountRingsRail, subscribeRail } from "./lib/rings-rail";
+import { RelayRings } from "./components/relay-rings";
+import "./app.css";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +38,118 @@ type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type Report = (cause: unknown) => void;
 
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+
+/** Состояние колец: выбранные аккаунты, размер и число колонок. */
+interface RingsControl {
+  state: RingsState;
+  toggle: (key: string, on: boolean) => void;
+  setSize: (size: number) => void;
+  setPerRow: (perRow: number) => void;
+}
+
+const RingsContext = createContext<RingsControl | null>(null);
+
+function useRingsControl(rpc: Rpc): RingsControl {
+  const [state, setState] = useState<RingsState>(() => normalizeRingsState(undefined));
+  const pendingSize = useRef<number | null>(null);
+  const timer = useRef<number | null>(null);
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+
+  const apply = useCallback((next: RingsState) => setState(normalizeRingsState(next)), []);
+  // Отложенный размер: панель могли закрыть раньше debounce, поэтому
+  // размонтирование отправляет последнее значение, а не теряет его.
+  const flushSize = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const value = pendingSize.current;
+    if (value === null) return;
+    pendingSize.current = null;
+    rpcRef.current.call("rings_size", { size: value }).then(apply, () => {});
+  }, [apply]);
+  useEffect(() => {
+    let alive = true;
+    rpcRef.current.call("rings_state").then((next) => { if (alive) apply(next); }, () => {});
+    return () => {
+      alive = false;
+      flushSize();
+    };
+  }, [apply, flushSize]);
+  useRealtime(RINGS_CHANGED, () => {
+    rpcRef.current.call("rings_state").then(apply, () => {});
+  });
+
+  const toggle = useCallback((key: string, on: boolean) => {
+    // Оптимистично: галочка должна отзываться сразу, RPC подтверждает.
+    setState((current) => normalizeRingsState({
+      ...current,
+      selected: on ? [...current.selected, key] : current.selected.filter((entry) => entry !== key),
+    }));
+    rpcRef.current.call("rings_toggle", { key, on }).then(apply, () => {});
+  }, [apply]);
+
+  const setSize = useCallback((size: number) => {
+    const next = clampRingSize(size);
+    setState((current) => ({ ...current, size: next }));
+    pendingSize.current = next;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      flushSize();
+    }, 150);
+  }, [flushSize]);
+
+  const setPerRow = useCallback((perRow: number) => {
+    const next = clampRingPerRow(perRow);
+    setState((current) => ({ ...current, perRow: next }));
+    rpcRef.current.call("rings_per_row", { perRow: next }).then(apply, () => {});
+  }, [apply]);
+
+  return useMemo(() => ({ state, toggle, setSize, setPerRow }), [state, toggle, setSize, setPerRow]);
+}
+
+/** Галочка «Кольцо в рейле» на карточке аккаунта. */
+function RingCheckbox({ accountKey, label }: { accountKey: string; label: string }) {
+  const control = useContext(RingsContext);
+  if (!control) return null;
+  const checked = control.state.selected.includes(accountKey);
+  return (
+    <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+      <Checkbox checked={checked} onCheckedChange={(value) => control.toggle(accountKey, value === true)}
+        aria-label={`Кольцо в рейле ${label}`} />
+      Кольцо в рейле
+    </label>
+  );
+}
+
+// Ключ кольца строится из origin адреса, а карточки живут глубоко в дереве
+// аккордеонов — поэтому origin идёт через контекст, а не через пять пропсов.
+const OriginContext = createContext<string | null>(null);
+
+/** Тулбар «Аккаунтов»: размер колец и число колонок в рейле. */
+function RingsToolbar() {
+  const control = useContext(RingsContext);
+  if (!control) return null;
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-4 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        Размер колец
+        <input type="range" className="accent-foreground" min={RING_SIZE_MIN} max={RING_SIZE_MAX} step={2}
+          value={control.state.size} aria-label="Размер колец"
+          onChange={(event) => control.setSize(Number(event.target.value))} />
+        <span className="w-8 text-right tabular-nums text-foreground">{control.state.size}px</span>
+      </label>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        В строке
+        <Input type="number" className="h-7 w-14" min={RING_PER_ROW_MIN} max={RING_PER_ROW_MAX} step={1}
+          value={control.state.perRow} aria-label="Колец в строке"
+          onChange={(event) => control.setPerRow(Number(event.target.value))} />
+      </label>
+    </div>
+  );
+}
 
 /** Тумблер вкл/выкл модели (role=switch, без новых зависимостей). */
 function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
@@ -335,23 +463,14 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
   );
 }
 
-/** Countdown до сброса окна: 3d2h / 5h12m / 40m. */
-function countdown(resetAt?: string): string | null {
-  if (!resetAt) return null;
-  const ms = new Date(resetAt).getTime() - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  return days > 0 ? `${days}d${hours % 24}h` : hours > 0 ? `${hours}h${minutes % 60}m` : `${minutes}m`;
-}
-
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
 function AccountCard({ account, onToggle, compact = false }: { account: RelayAccount; onToggle?: (enabled: boolean) => void; compact?: boolean }) {
   const success = successPercent(account.usage?.success_rate);
-  const displayName = account.email ?? (account.label && account.label !== account.provider ? account.label : undefined) ?? account.auth_index;
+  const displayName = accountDisplayName(account);
+  const origin = useContext(OriginContext);
   const controls = (
     <span className="flex shrink-0 items-center gap-2">
+      {origin ? <RingCheckbox accountKey={ringAccountKey(origin, account)} label={displayName} /> : null}
       {account.health_status && !(onToggle && account.auth_name && ["ok", "active", "disabled"].includes(account.health_status)) ? (
         <span className="rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground">{account.health_status}</span>
       ) : null}
@@ -467,7 +586,9 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
     );
   }, [rpc, providerId, report]);
   useEffect(() => { load(); }, [load]);
+  const origin = relayOrigin(baseUrl);
   return (
+    <OriginContext.Provider value={origin}>
     <section>
       <div className="mb-2 flex items-center gap-2">
         <Icon name="Folder" className="size-4 shrink-0 text-muted-foreground" />
@@ -488,6 +609,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
         <div className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Аккаунтов нет</div>
       ) : (
         <>
+          <RingsToolbar />
           <div className="mb-3 flex flex-wrap gap-1" role="group" aria-label="Фильтр по состоянию аккаунтов">
             {([["all", "Все"], ["on", "Вкл"], ["off", "Выкл"]] as const).map(([id, label]) => {
               const count = id === "all" ? data.items.length : id === "on" ? data.items.filter((a) => !a.disabled).length : data.items.filter((a) => a.disabled).length;
@@ -511,6 +633,7 @@ function RelayAccountsGroup({ baseUrl, providerId, rpc, report }: { baseUrl: str
       )}
       {credsOpen ? <RelayCredsDialog providerId={providerId} rpc={rpc} report={report} onClose={() => setCredsOpen(false)} onSaved={load} /> : null}
     </section>
+    </OriginContext.Provider>
   );
 }
 
@@ -637,6 +760,7 @@ function AccountsTab({ providers, rpc, report }: { providers: ProviderView[]; rp
 
 function ApiModelsPage() {
   const rpc = useRpc<typeof rpcContract>();
+  const rings = useRingsControl(rpc);
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ editing: ProviderView | null } | null>(null);
@@ -648,6 +772,7 @@ function ApiModelsPage() {
   useEffect(() => { refetch(); }, [refetch]);
   useRealtime("api-models-changed", refetch);
   return (
+    <RingsContext.Provider value={rings}>
     <div className="h-full min-h-0 flex-1 overflow-auto">
       <div className="mx-auto w-full max-w-[1200px] px-4 pb-6 pt-4 md:px-6">
         <div className="mb-4 flex items-start justify-between gap-4">
@@ -689,9 +814,25 @@ function ApiModelsPage() {
       </div>
       {dialog ? <ProviderDialog editing={dialog.editing} rpc={rpc} report={report} onClose={() => setDialog(null)} /> : null}
     </div>
+    </RingsContext.Provider>
   );
 }
 
+/** Оверлей: кольца выбранных аккаунтов в якоре рейла. */
+function RingsOverlay() {
+  const rpc = useRpc<typeof rpcContract>();
+  const control = useRingsControl(rpc);
+  const target = useSyncExternalStore(subscribeRail, getRailTarget, () => null);
+  const [reloadSignal, setReloadSignal] = useState(0);
+  const bump = useCallback(() => setReloadSignal((value) => value + 1), []);
+  // Опрос раз в минуту живёт в RelayRings; здесь только realtime-сигналы.
+  useRealtime(RINGS_CHANGED, bump);
+  useRealtime("api-models-changed", bump);
+  return <RelayRings rpc={rpc} state={control.state} target={target} reloadSignal={reloadSignal} />;
+}
+
 export default definePluginApp((app) => {
+  app.contentScripts.register({ id: "relay-rings-anchor", mount: ({ pluginId }) => mountRingsRail(document, pluginId) });
   app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Workflow", path: "api-models", component: ApiModelsPage });
+  app.slots.experimental_appOverlay({ id: "relay-rings", component: RingsOverlay });
 });
