@@ -1,4 +1,5 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RAIL_FOLDERS_CHANGED, RAIL_STORAGE_KEY } from "./lib/folders.js";
@@ -369,6 +370,7 @@ describe("rail state", () => {
       "folders_reorder",
       "folders_reorder_items",
       "folders_set_icon",
+      "project_paths",
       "rail_set_order",
       "rail_state",
     ]);
@@ -463,6 +465,264 @@ describe("mixed rail order", () => {
       "__bb__/new-thread",
       "folder_a",
     ]);
+  });
+});
+
+type ProjectFixture = {
+  id: string;
+  name: string;
+  sources?: { path: string }[];
+};
+type EnvironmentFixture = {
+  path: string | null;
+  name?: string | null;
+  branchName?: string | null;
+  isWorktree?: boolean;
+};
+
+async function loadProjects(options: {
+  projects: ProjectFixture[];
+  environments: Record<string, EnvironmentFixture[]>;
+}) {
+  const host = createFakePluginHost({
+    pluginId: "rail-folders",
+    sdk: {
+      projects: {
+        list: (async () =>
+          options.projects.map((project) => ({
+            ...project,
+            createdAt: 0,
+            gitRemoteUrl: null,
+            kind: "standard",
+            sources: (project.sources ?? []).map((source, index) => ({
+              id: `src_${project.id}_${index}`,
+              projectId: project.id,
+              type: "local_path",
+              hostId: "host_1",
+              isDefault: true,
+              createdAt: 0,
+              updatedAt: 0,
+              ...source,
+            })),
+            updatedAt: 0,
+          }))) as never,
+      },
+      environments: {
+        list: (async ({ projectId }: { projectId?: string }) =>
+          (options.environments[projectId ?? ""] ?? []).map((environment, index) => ({
+            ...environment,
+            id: `env_${projectId}_${index}`,
+            projectId: projectId ?? "",
+            branchName: environment.branchName ?? null,
+            name: environment.name ?? null,
+            isWorktree: environment.isWorktree ?? false,
+          }))) as never,
+      },
+    },
+  });
+  await plugin(host.bb);
+  hosts.push(host);
+  return host;
+}
+
+async function projectPaths(host: Host, projectName: string) {
+  return (await host.harness.behavior.callRpc("project_paths", {
+    projectName,
+  })) as {
+    items: {
+      projectId: string;
+      projectName: string;
+      environmentName?: string;
+      path: string;
+      branchName?: string;
+    }[];
+  };
+}
+
+describe("project_paths", () => {
+  it("returns every checkout of the project matched by exact name", async () => {
+    const host = await loadProjects({
+      projects: [
+        { id: "proj_1", name: "picker-routes" },
+        { id: "proj_2", name: "Picker-Routes" },
+      ],
+      environments: {
+        proj_1: [
+          { path: "/work/picker-routes", name: "main", branchName: "main" },
+          { path: "/work/picker-routes-feat", name: "feat", branchName: "feat/x" },
+        ],
+        proj_2: [{ path: "/work/other", name: "main" }],
+      },
+    });
+
+    expect(await projectPaths(host, "picker-routes")).toEqual({
+      items: [
+        {
+          projectId: "proj_1",
+          projectName: "picker-routes",
+          environmentName: "main",
+          path: "/work/picker-routes",
+          branchName: "main",
+        },
+        {
+          projectId: "proj_1",
+          projectName: "picker-routes",
+          environmentName: "feat",
+          path: "/work/picker-routes-feat",
+          branchName: "feat/x",
+        },
+      ],
+    });
+  });
+
+  it("merges projects that share a name and dedupes checkouts by path", async () => {
+    const host = await loadProjects({
+      projects: [
+        { id: "proj_1", name: "picker-routes" },
+        { id: "proj_2", name: "picker-routes" },
+      ],
+      environments: {
+        proj_1: [{ path: "/work/picker-routes", name: "main" }],
+        proj_2: [{ path: "/work/picker-routes", name: "same" }, { path: "/work/second" }],
+      },
+    });
+
+    expect((await projectPaths(host, "picker-routes")).items.map((item) => item.path)).toEqual([
+      "/work/picker-routes",
+      "/work/second",
+    ]);
+  });
+
+  it("omits checkouts without a path and unknown environment fields", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "personal" }],
+      environments: {
+        proj_1: [{ path: null, name: "destroyed" }, { path: "/work/personal" }],
+      },
+    });
+
+    expect(await projectPaths(host, "personal")).toEqual({
+      items: [
+        {
+          projectId: "proj_1",
+          projectName: "personal",
+          environmentName: "чекаут",
+          path: "/work/personal",
+        },
+      ],
+    });
+  });
+
+  it("drops bb temporary checkouts and blank paths", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: {
+        proj_1: [
+          { path: "/work/bb-plugins", name: "main" },
+          { path: "   " },
+          { path: `${tmpdir()}/bb-x5-connect-1` },
+        ],
+      },
+    });
+
+    expect((await projectPaths(host, "bb-plugins")).items.map((item) => item.path)).toEqual([
+      "/work/bb-plugins",
+    ]);
+  });
+
+  it("returns no items when every checkout is temporary", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: { proj_1: [{ path: `${tmpdir()}/bb-x5-connect-1` }] },
+    });
+
+    expect(await projectPaths(host, "bb-plugins")).toEqual({ items: [] });
+  });
+
+  it("labels unnamed worktrees and branch-only checkouts", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "bb-plugins" }],
+      environments: {
+        proj_1: [
+          { path: "/work/wt", branchName: "feat/x", isWorktree: true },
+          { path: "/work/dev", branchName: "dev" },
+        ],
+      },
+    });
+
+    expect(
+      (await projectPaths(host, "bb-plugins")).items.map((item) => item.environmentName),
+    ).toEqual(["worktree feat/x", "dev"]);
+  });
+
+  it("falls back to the project source path when no thread checkout exists", async () => {
+    const host = await loadProjects({
+      projects: [
+        { id: "proj_1", name: "picker-routes", sources: [{ path: "/work/scm/picker-routes" }] },
+      ],
+      environments: {},
+    });
+
+    expect(await projectPaths(host, "picker-routes")).toEqual({
+      items: [
+        {
+          projectId: "proj_1",
+          projectName: "picker-routes",
+          environmentName: "путь проекта",
+          path: "/work/scm/picker-routes",
+        },
+      ],
+    });
+  });
+
+  it("prefers the environment label when a source repeats the checkout", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "repo", sources: [{ path: "/work/repo" }] }],
+      environments: { proj_1: [{ path: "/work/repo", name: "main" }] },
+    });
+
+    expect((await projectPaths(host, "repo")).items).toEqual([
+      {
+        projectId: "proj_1",
+        projectName: "repo",
+        environmentName: "main",
+        path: "/work/repo",
+      },
+    ]);
+  });
+
+  it("drops temporary and blank source paths", async () => {
+    const host = await loadProjects({
+      projects: [
+        {
+          id: "proj_1",
+          name: "repo",
+          sources: [{ path: `${tmpdir()}/bb-x1` }, { path: "   " }, { path: "/work/real" }],
+        },
+      ],
+      environments: {},
+    });
+
+    expect((await projectPaths(host, "repo")).items.map((item) => item.path)).toEqual([
+      "/work/real",
+    ]);
+  });
+
+  it("returns no items for an unknown project name", async () => {
+    const host = await loadProjects({
+      projects: [{ id: "proj_1", name: "picker-routes" }],
+      environments: { proj_1: [{ path: "/work/picker-routes" }] },
+    });
+
+    expect(await projectPaths(host, "nope")).toEqual({ items: [] });
+  });
+
+  it("rejects a blank project name at the wire boundary", async () => {
+    const host = await loadProjects({ projects: [], environments: {} });
+
+    await expect(
+      host.harness.behavior.callRpc("project_paths", { projectName: "  " }),
+    ).rejects.toThrow(/validation/);
   });
 });
 

@@ -13,7 +13,10 @@ import {
 } from "../lib/folders";
 import type { rpcContract } from "../server";
 
-export type RailMutation = Exclude<keyof typeof rpcContract, "rail_state">;
+export type RailMutation = Exclude<
+  keyof typeof rpcContract,
+  "rail_state" | "project_paths"
+>;
 export type RailMutationInput<Method extends RailMutation> =
   StandardSchemaV1InferInput<(typeof rpcContract)[Method]["input"]>;
 

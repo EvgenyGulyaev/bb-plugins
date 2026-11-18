@@ -5,6 +5,7 @@
 // whole state back, and publishes "rail-folders-changed" so every open window
 // reloads. The frontend never writes storage directly; it calls these RPCs.
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
@@ -30,6 +31,14 @@ import {
   type RailFoldersState,
   type RailItemRef,
 } from "./lib/folders.js";
+import {
+  checkoutLabel,
+  dedupeProjectPaths,
+  isUsableCheckoutPath,
+  projectPathsInputSchema,
+  projectPathsOutputSchema,
+  type ProjectPathItem,
+} from "./lib/project-paths.js";
 
 const folderIdSchema = z.string().min(1).max(120);
 const orderSchema = z
@@ -99,6 +108,10 @@ export const rpcContract = defineRpcContract({
   rail_set_order: {
     input: z.object({ order: orderSchema }),
     output: stateOutput,
+  },
+  project_paths: {
+    input: projectPathsInputSchema,
+    output: projectPathsOutputSchema,
   },
 });
 
@@ -209,6 +222,40 @@ export default async function plugin(bb: BbPluginApi) {
       }),
     rail_set_order: ({ order }) =>
       mutate((state) => setRailOrder(state, order)),
+    project_paths: async ({ projectName }) => {
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      const matching = projects.filter((project) => project.name === projectName);
+      const items: ProjectPathItem[] = [];
+      for (const project of matching) {
+        const environments = await bb.sdk.environments.list({ projectId: project.id });
+        for (const environment of environments) {
+          if (!isUsableCheckoutPath(environment.path, tmpdir())) continue;
+          items.push({
+            projectId: project.id,
+            projectName: project.name,
+            environmentName: checkoutLabel(environment),
+            path: environment.path,
+            ...(environment.branchName === null
+              ? {}
+              : { branchName: environment.branchName }),
+          });
+        }
+        // Environments only exist once a thread ran in the project; the
+        // project's own local_path sources carry the pwd even for empty
+        // projects. Dedupe keeps the environment label when paths repeat.
+        for (const source of project.sources) {
+          if (source.type !== "local_path") continue;
+          if (!isUsableCheckoutPath(source.path, tmpdir())) continue;
+          items.push({
+            projectId: project.id,
+            projectName: project.name,
+            environmentName: "путь проекта",
+            path: source.path,
+          });
+        }
+      }
+      return { items: dedupeProjectPaths(items) };
+    },
   });
 
   // Installing picks this navigation, the same one-time setup bb's own guide
