@@ -310,7 +310,6 @@ describe("ring items", () => {
     const [item] = ringItems(["http://a:1|kimi:1"], [{ origin: "http://a:1", accounts: [kimi] }]);
     expect(item!.logo).toBe("kimi");
     expect(item!.accounts[0]!.quotas).toHaveLength(1);
-    expect(item!.provider).toBe("kimi");
   });
 
   it("names an unknown provider type by its id and keeps it apart", () => {

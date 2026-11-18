@@ -40,7 +40,6 @@ export interface RingItem {
   key: string;
   type: string;
   label: string;
-  provider: string | null;
   logo: string | null;
   percent: number | null;
   tone: RingTone;
@@ -227,7 +226,6 @@ export function ringItems(selected: string[], sources: RingsSource[]): RingItem[
       key: group.type,
       type: group.type,
       label: providerTypeLabel(group.type),
-      provider: sample.provider ?? null,
       logo: providerLogoKey(sample.provider, sample.label, sample.email, sample.auth_index),
       percent,
       tone: ringTone(percent),

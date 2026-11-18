@@ -43,7 +43,6 @@ const item = (partial: Partial<RingItem> = {}): RingItem => ({
   key: "kimi",
   type: "kimi",
   label: "Kimi",
-  provider: "kimi",
   logo: "kimi",
   percent: 63,
   tone: "normal",
@@ -96,7 +95,7 @@ describe("RelayRing", () => {
   });
 
   it("shows a dash and the unknown tone without a percent", () => {
-    render(<RelayRing item={item({ key: "claude", type: "claude", label: "Claude", provider: "claude", logo: "claude", percent: null, tone: "unknown", accounts: [entry({ key: KEY("claude:1") })] })} />);
+    render(<RelayRing item={item({ key: "claude", type: "claude", label: "Claude", logo: "claude", percent: null, tone: "unknown", accounts: [entry({ key: KEY("claude:1") })] })} />);
     const button = screen.getByRole("button", { name: "Claude: квота недоступна" });
     expect(button.getAttribute("data-tone")).toBe("unknown");
     expect(button.querySelector(".relay-ring-percent")?.textContent).toBe("—");
@@ -139,7 +138,7 @@ describe("RelayRing", () => {
   });
 
   it("falls back to the type initial when no logo is vendored", () => {
-    const { container } = render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", provider: "gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
+    const { container } = render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     expect(container.querySelector(".relay-ring-initial")?.textContent).toBe("G");
     expect(container.querySelector(".relay-ring-logo")).toBeNull();
   });
@@ -195,7 +194,7 @@ describe("RelayRing", () => {
   });
 
   it("explains an account without quotas in the popover", async () => {
-    render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", provider: "gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
+    render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     fireEvent.click(screen.getByRole("button", { name: /квота недоступна/ }));
     const dialog = await screen.findByLabelText("Квоты Gemini");
     expect(within(dialog).getByText("gemini-work")).toBeTruthy();
