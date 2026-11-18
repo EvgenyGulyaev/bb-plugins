@@ -200,6 +200,62 @@ describe("RPC", () => {
     const after = await host.harness.behavior.callRpc("relay_accounts", { providerId: "p" }) as { configured: boolean };
     expect(after.configured).toBe(false);
   });
+  it("rings_state по умолчанию пуст, size 40, perRow 1", async () => {
+    const { host } = await load();
+    expect(await host.harness.behavior.callRpc("rings_state", null)).toEqual({ selected: [], size: 40, perRow: 1 });
+  });
+  it("rings_toggle добавляет и убирает ключ + реалтайм", async () => {
+    const { host } = await load();
+    expect(await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k1", on: true })).toEqual({
+      selected: ["http://a:1|k1"], size: 40, perRow: 1,
+    });
+    expect(await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k1", on: true })).toEqual({
+      selected: ["http://a:1|k1"], size: 40, perRow: 1,
+    });
+    expect(await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k2", on: true })).toEqual({
+      selected: ["http://a:1|k1", "http://a:1|k2"], size: 40, perRow: 1,
+    });
+    expect(await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k1", on: false })).toEqual({
+      selected: ["http://a:1|k2"], size: 40, perRow: 1,
+    });
+    expect(await host.harness.behavior.callRpc("rings_state", null)).toEqual({ selected: ["http://a:1|k2"], size: 40, perRow: 1 });
+    expect(host.harness.inspection.realtimeSignals.filter((signal) => signal.channel === "relay-rings-changed")).toHaveLength(4);
+  });
+  it("rings_size клампит 24..64 и не даёт NaN на JSON-границе", async () => {
+    const { host } = await load();
+    expect(await host.harness.behavior.callRpc("rings_size", { size: 100 })).toEqual({ selected: [], size: 64, perRow: 1 });
+    expect(await host.harness.behavior.callRpc("rings_size", { size: 10 })).toEqual({ selected: [], size: 24, perRow: 1 });
+    expect(await host.harness.behavior.callRpc("rings_size", { size: 48 })).toEqual({ selected: [], size: 48, perRow: 1 });
+    expect(host.harness.inspection.realtimeSignals.filter((signal) => signal.channel === "relay-rings-changed")).toHaveLength(3);
+    await expect(host.harness.behavior.callRpc("rings_size", { size: "48" })).rejects.toThrow();
+  });
+  it("rings_per_row клампит 1..4, сохраняет выбор и публикует реалтайм", async () => {
+    const { host } = await load();
+    await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k1", on: true });
+    expect(await host.harness.behavior.callRpc("rings_per_row", { perRow: 3 })).toEqual({
+      selected: ["http://a:1|k1"], size: 40, perRow: 3,
+    });
+    expect(await host.harness.behavior.callRpc("rings_per_row", { perRow: 9 })).toEqual({
+      selected: ["http://a:1|k1"], size: 40, perRow: 4,
+    });
+    expect(await host.harness.behavior.callRpc("rings_per_row", { perRow: 0 })).toEqual({
+      selected: ["http://a:1|k1"], size: 40, perRow: 1,
+    });
+    expect(host.harness.inspection.realtimeSignals.filter((signal) => signal.channel === "relay-rings-changed")).toHaveLength(4);
+    await expect(host.harness.behavior.callRpc("rings_per_row", { perRow: "2" })).rejects.toThrow();
+  });
+  it("rings_* не трогают models.json и переживают перезагрузку плагина", async () => {
+    const { host, path } = await load(JSON.stringify({ providers: {} }));
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions" });
+    const before = await readFile(path, "utf8");
+    await host.harness.behavior.callRpc("rings_toggle", { key: "http://a:1|k1", on: true });
+    await host.harness.behavior.callRpc("rings_size", { size: 33 });
+    await host.harness.behavior.callRpc("rings_per_row", { perRow: 2 });
+    expect(await readFile(path, "utf8")).toBe(before);
+    const reloaded = await host.harness.lifecycle.reload((bb) => plugin(bb));
+    hosts.push(reloaded);
+    expect(await reloaded.harness.behavior.callRpc("rings_state", null)).toEqual({ selected: ["http://a:1|k1"], size: 33, perRow: 2 });
+  });
   it("models_discover ходит с Bearer и отдаёт id", async () => {
     const { host } = await load();
     await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "test-key" });
