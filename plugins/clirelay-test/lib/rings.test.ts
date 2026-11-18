@@ -7,8 +7,11 @@ import {
   RING_SIZE_MAX,
   RING_SIZE_MIN,
   RINGS_KV_KEY,
+  RING_GAP,
+  RING_DISPLAY_MIN_SIZE,
   clampRingPerRow,
   clampRingSize,
+  effectiveRingSize,
   normalizeRingsState,
   providerLogoKey,
   ringAccountKey,
@@ -153,6 +156,49 @@ describe("percent and tone", () => {
     expect(ringShowPercent(32)).toBe(true);
     expect(ringShowPercent(RING_SIZE_DEFAULT)).toBe(true);
     expect(ringTitle("kimi", 41)).toContain("41%");
+  });
+});
+
+describe("effective ring size", () => {
+  it("uses the very gap the grid draws", () => {
+    expect(RING_GAP).toBe(4);
+    expect(RING_DISPLAY_MIN_SIZE).toBe(12);
+  });
+
+  it("keeps the setting in one column", () => {
+    expect(effectiveRingSize(40, 1, 40)).toBe(40);
+    expect(effectiveRingSize(40, 1, 64)).toBe(40);
+    expect(effectiveRingSize(120, 1, 40)).toBe(40);
+  });
+
+  it("shrinks two columns into a narrow 40px rail", () => {
+    // (40 - 4) / 2 = 18
+    expect(effectiveRingSize(40, 2, 40)).toBe(18);
+    expect(effectiveRingSize(40, 3, 40)).toBe(12);
+    expect(effectiveRingSize(40, 4, 40)).toBe(12);
+  });
+
+  it("never grows past the setting, so a wide rail changes nothing", () => {
+    expect(effectiveRingSize(200, 2, 40)).toBe(40);
+    expect(effectiveRingSize(200, 4, 24)).toBe(24);
+    expect(effectiveRingSize(48, 2, 64)).toBe(22);
+  });
+
+  it("falls back to the setting until the rail is measured", () => {
+    expect(effectiveRingSize(0, 2, 40)).toBe(40);
+    expect(effectiveRingSize(-10, 3, 48)).toBe(48);
+    expect(effectiveRingSize(Number.NaN, 2, 40)).toBe(40);
+    expect(effectiveRingSize(Number.POSITIVE_INFINITY, 2, 40)).toBe(40);
+  });
+
+  it("clamps what it returns to a drawable range", () => {
+    expect(effectiveRingSize(40, 2, 4)).toBe(12);
+    expect(effectiveRingSize(1_000, 1, 999)).toBe(64);
+  });
+
+  it("honours a custom gap", () => {
+    expect(effectiveRingSize(40, 2, 40, 8)).toBe(16);
+    expect(effectiveRingSize(40, 1, 40, 8)).toBe(40);
   });
 });
 

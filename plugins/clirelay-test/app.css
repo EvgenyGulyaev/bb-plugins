@@ -6,8 +6,11 @@
   --relay-ring-size: 40px;
   --relay-ring-per-row: 1;
   display: grid;
-  grid-template-columns: repeat(var(--relay-ring-per-row), max-content);
+  /* Колонки делят ширину якоря, а не просят max-content: рейл ~40px, и
+     сетка в две колонки иначе вылезала бы за него с обеих сторон. */
+  grid-template-columns: repeat(var(--relay-ring-per-row), minmax(0, 1fr));
   justify-content: center;
+  width: 100%;
   gap: 4px;
   max-height: 40dvh;
   overflow-y: auto;
@@ -20,7 +23,9 @@
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  width: var(--relay-ring-size);
+  width: 100%;
+  max-width: var(--relay-ring-size);
+  justify-self: center;
   padding: 2px;
   border: 0;
   border-radius: 7px;
@@ -37,8 +42,9 @@
   position: relative;
   display: grid;
   place-items: center;
-  width: calc(var(--relay-ring-size) - 8px);
-  height: calc(var(--relay-ring-size) - 8px);
+  width: 100%;
+  max-width: calc(var(--relay-ring-size) - 8px);
+  aspect-ratio: 1;
 }
 
 .relay-ring-progress {

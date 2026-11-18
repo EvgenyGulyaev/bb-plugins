@@ -13,6 +13,10 @@ export const RING_PER_ROW_MAX = 4;
 export const RING_PER_ROW_DEFAULT = 1;
 // Ниже этого размера подпись процента не помещается под кольцом.
 export const RING_PERCENT_MIN_SIZE = 32;
+// Тот же зазор, что рисует сетка колец в app.css.
+export const RING_GAP = 4;
+// Меньше этого кольцо уже не читается; лучше чуть выйти за рейл, чем исчезнуть.
+export const RING_DISPLAY_MIN_SIZE = 12;
 
 export interface RingsState {
   selected: string[];
@@ -47,6 +51,19 @@ export function clampRingSize(value: unknown): number {
 export function clampRingPerRow(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return RING_PER_ROW_DEFAULT;
   return Math.min(RING_PER_ROW_MAX, Math.max(RING_PER_ROW_MIN, Math.round(value)));
+}
+
+// Рейл узкий (~40px), поэтому в несколько колонок кольцо должно ужаться под
+// ширину якоря; до первого замера (railWidth 0/NaN) отдаём размер из настройки.
+export function effectiveRingSize(railWidth: number, perRow: number, setting: number, gap: number = RING_GAP): number {
+  const wanted = typeof setting === "number" && Number.isFinite(setting) ? setting : RING_SIZE_DEFAULT;
+  if (typeof railWidth !== "number" || !Number.isFinite(railWidth) || railWidth <= 0) {
+    return Math.min(RING_SIZE_MAX, Math.max(RING_DISPLAY_MIN_SIZE, wanted));
+  }
+  const columns = clampRingPerRow(perRow);
+  const available = Math.floor((railWidth - (columns - 1) * gap) / columns);
+  const size = Math.min(wanted, available);
+  return Math.min(RING_SIZE_MAX, Math.max(RING_DISPLAY_MIN_SIZE, size));
 }
 
 // kv может хранить что угодно (старая версия плагина, ручная правка) —

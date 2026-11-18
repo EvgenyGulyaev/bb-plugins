@@ -5,7 +5,7 @@ import { countdown } from "@/lib/countdown";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
-import { ringDashArray, ringItems, ringPercentText, ringShowPercent, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
+import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringShowPercent, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
 import { loadRingsSources, type RingsRpc } from "@/lib/rings-source";
 
 // Логотипы вендорены в lib/provider-logos.ts (lobe-icons, MIT) и содержат
@@ -90,6 +90,7 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   reloadSignal?: number;
 }) {
   const [items, setItems] = useState<RingItem[]>([]);
+  const [railWidth, setRailWidth] = useState(0);
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
   const selectedKey = state.selected.join("\n");
@@ -113,14 +114,37 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
     // selectedKey покрывает порядок выбора: сам массив приходит новым объектом.
   }, [selectedKey, reloadSignal]);
 
+  // Рейл ~40px: без замера сетка в две колонки шире рейла и кольца режутся.
+  // Один coalesced замер на изменение размера якоря (плюс окна).
+  useEffect(() => {
+    if (target === null) {
+      setRailWidth(0);
+      return;
+    }
+    const measure = () => setRailWidth(target.getBoundingClientRect().width);
+    measure();
+    const win = target.ownerDocument.defaultView ?? window;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(target);
+    win.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      win.removeEventListener("resize", measure);
+    };
+  }, [target]);
+
   if (items.length === 0 || target === null) return null;
+  // До замера (ширина 0) размер берётся из настройки — кольца не исчезают.
+  const size = effectiveRingSize(railWidth, state.perRow, state.size);
   const layout = {
-    "--relay-ring-size": `${state.size}px`,
+    "--relay-ring-size": `${size}px`,
     "--relay-ring-per-row": String(state.perRow),
+    gridTemplateColumns: `repeat(${state.perRow}, minmax(0, 1fr))`,
+    width: "100%",
   } as CSSProperties;
   return createPortal(
     <div className="relay-rings-list" aria-label="Кольца квот relay" style={layout}>
-      {items.map((item) => <RelayRing key={item.key} item={item} size={state.size} />)}
+      {items.map((item) => <RelayRing key={item.key} item={item} size={size} />)}
     </div>,
     target,
   );

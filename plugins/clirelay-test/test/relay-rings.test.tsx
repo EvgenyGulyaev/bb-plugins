@@ -169,6 +169,66 @@ describe("RelayRings", () => {
     expect(screen.getByRole("button", { name: "k@example.com: осталось 63%" })).toBeTruthy();
   });
 
+  it("ties each column to a fraction of the anchor instead of its own max-content", async () => {
+    const stub = rpc([kimi, claude]);
+    const { container } = render(
+      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, 2)} target={document.body} />,
+    );
+    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(2));
+    const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
+    expect(list.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    expect(list.style.width).toBe("100%");
+    expect(container).toBeTruthy();
+  });
+
+  it("shrinks the rings into a narrow rail so they are not clipped", async () => {
+    const anchor = document.createElement("div");
+    anchor.getBoundingClientRect = () => ({ width: 40, height: 200, top: 0, left: 0, right: 40, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    document.body.append(anchor);
+    const stub = rpc([kimi, claude, gemini]);
+    render(
+      <RelayRings
+        rpc={stub}
+        state={state([KEY("kimi:1"), KEY("claude:1"), KEY("gemini:1")], 40, 2)}
+        target={anchor}
+      />,
+    );
+    await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(3));
+    const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
+    // (40 - 4) / 2 = 18
+    expect(list.style.getPropertyValue("--relay-ring-size")).toBe("18px");
+    expect(list.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+  });
+
+  it("hides the printed percent when the measured rail makes the ring small", async () => {
+    const anchor = document.createElement("div");
+    anchor.getBoundingClientRect = () => ({ width: 40, height: 200, top: 0, left: 0, right: 40, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    document.body.append(anchor);
+    const stub = rpc([kimi]);
+    render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 64, 1)} target={anchor} />);
+    await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(1));
+    // one column in a 40px rail keeps 40px, so the percent stays
+    expect(anchor.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("40px");
+    expect(anchor.querySelector(".relay-ring-percent")?.textContent).toBe("63%");
+
+    const narrow = document.createElement("div");
+    narrow.getBoundingClientRect = () => ({ width: 28, height: 200, top: 0, left: 0, right: 28, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    document.body.append(narrow);
+    cleanup();
+    render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 64, 1)} target={narrow} />);
+    await waitFor(() => expect(narrow.querySelectorAll(".relay-ring-button")).toHaveLength(1));
+    expect(narrow.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("28px");
+    expect(narrow.querySelector(".relay-ring-percent")).toBeNull();
+    expect(screen.getByRole("button", { name: "k@example.com: осталось 63%" })).toBeTruthy();
+  });
+
+  it("falls back to the setting while the anchor is not measured", async () => {
+    const stub = rpc([kimi]);
+    render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 48, 3)} target={document.body} />);
+    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
+    expect(document.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("48px");
+  });
+
   it("draws the vendored gpt artwork for an OpenAI account", async () => {
     const gpt: RelayAccount = {
       auth_index: "gpt:1",
