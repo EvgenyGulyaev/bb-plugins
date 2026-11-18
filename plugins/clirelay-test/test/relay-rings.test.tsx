@@ -166,6 +166,24 @@ describe("RelayRing", () => {
     expect(accounts[2]?.getAttribute("data-disabled")).toBe("");
   });
 
+  it("lets the logo inherit the ring tone instead of forcing its own color", async () => {
+    render(<RelayRing item={item({ percent: 3, tone: "critical" })} />);
+    const button = document.querySelector<HTMLElement>(".relay-ring-button")!;
+    expect(button.getAttribute("data-tone")).toBe("critical");
+    // currentColor в вендоренном SVG должен идти от тона кнопки: собственный
+    // `color` у логотипа перебил бы warning/critical.
+    const logo = document.querySelector<HTMLElement>(".relay-ring-logo")!;
+    expect(logo.style.color).toBe("");
+    const { readFile } = await import("node:fs/promises");
+    const css = await readFile(`${process.cwd()}/app.css`, "utf8");
+    const rule = css.slice(css.indexOf(".relay-ring-logo {"));
+    const body = rule.slice(0, rule.indexOf("}"));
+    // либо без color вовсе, либо inherit — но не собственная палитра
+    expect(body).not.toContain("--sidebar-foreground");
+    const color = /(^|[;{\s])color\s*:\s*([^;]+);/.exec(body)?.[2]?.trim();
+    expect(color === undefined || color === "inherit").toBe(true);
+  });
+
   it("explains an account without quotas in the popover", async () => {
     render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", provider: "gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     fireEvent.click(screen.getByRole("button", { name: /квота недоступна/ }));
@@ -321,11 +339,36 @@ describe("RelayRings", () => {
     expect(button.querySelector(".relay-ring-initial")).toBeNull();
   });
 
-  it("draws nothing while no account is selected", async () => {
+  it("draws nothing and asks the server nothing while no account is selected", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const stub = rpc([kimi]);
+      render(<RelayRings rpc={stub} state={state([])} target={document.body} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(document.querySelector(".relay-rings-list")).toBeNull();
+      // ни первичной загрузки, ни тика интервала: RPC не трогаем вовсе
+      expect(stub.call).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+      expect(stub.call).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling as soon as the last account is unticked", async () => {
     const stub = rpc([kimi]);
-    render(<RelayRings rpc={stub} state={state([])} target={document.body} />);
-    await waitFor(() => expect(stub.call).toHaveBeenCalled());
-    expect(document.querySelector(".relay-rings-list")).toBeNull();
+    const { rerender } = render(<RelayRings rpc={stub} state={state([KEY("kimi:1")])} target={document.body} />);
+    await waitFor(() => expect(accountsCalls(stub)).toHaveLength(1));
+    rerender(<RelayRings rpc={stub} state={state([])} target={document.body} />);
+    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(0));
+    const calls = stub.call.mock.calls.length;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(stub.call.mock.calls.length).toBe(calls);
   });
 
   it("drops a stale selection instead of drawing a placeholder", async () => {

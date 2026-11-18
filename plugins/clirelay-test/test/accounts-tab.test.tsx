@@ -117,6 +117,17 @@ describe("accounts tab rings controls", () => {
     ]));
   });
 
+  it("flushes a pending slider change when the panel closes early", async () => {
+    const { slot, calls } = mount();
+    const slider = await screen.findByRole("slider", { name: "Размер колец" });
+    fireEvent.change(slider, { target: { value: "58" } });
+    // панель закрыли раньше, чем истёк debounce
+    slot.unmount();
+    await waitFor(() => expect(calls("rings_size")).toEqual([
+      { method: "rings_size", input: { size: 58 } },
+    ]));
+  });
+
   it("writes the per-row input into rings_per_row", async () => {
     const { calls } = mount();
     const perRow = await screen.findByRole("spinbutton", { name: "Колец в строке" });

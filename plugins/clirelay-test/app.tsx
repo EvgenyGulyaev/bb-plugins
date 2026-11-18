@@ -57,14 +57,26 @@ function useRingsControl(rpc: Rpc): RingsControl {
   rpcRef.current = rpc;
 
   const apply = useCallback((next: RingsState) => setState(normalizeRingsState(next)), []);
+  // Отложенный размер: панель могли закрыть раньше debounce, поэтому
+  // размонтирование отправляет последнее значение, а не теряет его.
+  const flushSize = useCallback(() => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const value = pendingSize.current;
+    if (value === null) return;
+    pendingSize.current = null;
+    rpcRef.current.call("rings_size", { size: value }).then(apply, () => {});
+  }, [apply]);
   useEffect(() => {
     let alive = true;
     rpcRef.current.call("rings_state").then((next) => { if (alive) apply(next); }, () => {});
     return () => {
       alive = false;
-      if (timer.current !== null) window.clearTimeout(timer.current);
+      flushSize();
     };
-  }, [apply]);
+  }, [apply, flushSize]);
   useRealtime(RINGS_CHANGED, () => {
     rpcRef.current.call("rings_state").then(apply, () => {});
   });
@@ -85,12 +97,9 @@ function useRingsControl(rpc: Rpc): RingsControl {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       timer.current = null;
-      const value = pendingSize.current;
-      if (value === null) return;
-      pendingSize.current = null;
-      rpcRef.current.call("rings_size", { size: value }).then(apply, () => {});
+      flushSize();
     }, 150);
-  }, [apply]);
+  }, [flushSize]);
 
   const setPerRow = useCallback((perRow: number) => {
     const next = clampRingPerRow(perRow);

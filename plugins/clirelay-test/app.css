@@ -61,14 +61,15 @@
 .relay-ring-track { stroke: var(--sidebar-border); }
 .relay-ring-fill { stroke: currentColor; stroke-linecap: round; }
 
-/* Логотип масштабируется вместе с кольцом; SVG внутри задаёт 1em. */
+/* Логотип масштабируется вместе с кольцом; SVG внутри задаёт 1em.
+   Цвет не задаём: currentColor должен наследовать тон кнопки (warning/critical). */
 .relay-ring-logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: calc(var(--relay-ring-size) * 0.45);
   line-height: 1;
-  color: var(--sidebar-foreground);
+  color: inherit;
   pointer-events: none;
 }
 .relay-ring-logo svg { width: 1em; height: 1em; }

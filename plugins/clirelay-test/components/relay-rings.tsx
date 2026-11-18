@@ -106,8 +106,15 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   const selectedKey = state.selected.join("\n");
 
   useEffect(() => {
+    // Ничего не выбрано — нечего показывать: ни первичной загрузки, ни опроса.
+    if (state.selected.length === 0) {
+      setItems([]);
+      return;
+    }
     let alive = true;
     const load = async () => {
+      // Гейт и внутри: тик мог прийти после снятия последней галочки.
+      if (state.selected.length === 0) return;
       const { sources } = await loadRingsSources(rpcRef.current);
       if (!alive) return;
       setItems(ringItems(state.selected, sources));
