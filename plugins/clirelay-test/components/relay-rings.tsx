@@ -23,13 +23,13 @@ function quotaPercent(quota: RelayAccount["quotas"][number]): number | null {
     : null;
 }
 
-/** Одно кольцо: остаток первой квоты с процентом + попавер со всеми квотами. */
+/** Одно кольцо: больший активный остаток типа + попавер со всеми его аккаунтами. */
 export function RelayRing({ item, size = 40 }: { item: RingItem; size?: number }) {
-  const title = ringTitle(item.label, item.percent);
+  const title = ringTitle(item.label, item.percent, item.activeCount);
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button type="button" className="relay-ring-button" data-account-key={item.key} data-tone={item.tone}
+        <button type="button" className="relay-ring-button" data-ring-key={item.key} data-tone={item.tone}
           aria-label={title} title={title}>
           <span className="relay-ring-art">
             <svg className="relay-ring-progress" viewBox="0 0 32 32" aria-hidden="true">
@@ -56,22 +56,32 @@ export function RelayRing({ item, size = 40 }: { item: RingItem; size?: number }
             <RingLogo logo={item.logo} />
             <strong>{item.label}</strong>
           </div>
-          {item.provider && <p className="relay-rings-muted">{item.provider}</p>}
-          {item.quotas.length === 0
-            ? <p className="relay-rings-muted">relay не сообщил квоту для этого аккаунта.</p>
-            : item.quotas.map((quota) => {
-              const percent = quotaPercent(quota);
-              const reset = countdown(quota.reset_at);
-              return (
-                <div className="relay-rings-window" key={quota.quota_key}>
-                  <div><span>{quotaLabel(quota)}</span><strong>{ringPercentText(percent)}</strong></div>
-                  {percent !== null && (
-                    <meter min="0" max="100" value={percent} aria-label={`${quotaLabel(quota)}: осталось ${percent}%`} />
-                  )}
-                  {reset && <p className="relay-rings-muted">Сброс через {reset}</p>}
-                </div>
-              );
-            })}
+          {item.accounts.map((account) => (
+            <div className="relay-rings-account" key={account.key} data-disabled={account.disabled ? "" : undefined}>
+              <div className="relay-rings-account-label">
+                <span>{account.label}</span>
+                <span className="relay-rings-account-meta">
+                  {account.disabled && <span className="relay-rings-off">выключен</span>}
+                  <strong>{ringPercentText(account.percent)}</strong>
+                </span>
+              </div>
+              {account.quotas.length === 0
+                ? <p className="relay-rings-muted">relay не сообщил квоту для этого аккаунта.</p>
+                : account.quotas.map((quota) => {
+                  const percent = quotaPercent(quota);
+                  const reset = countdown(quota.reset_at);
+                  return (
+                    <div className="relay-rings-window" key={quota.quota_key}>
+                      <div><span>{quotaLabel(quota)}</span><strong>{ringPercentText(percent)}</strong></div>
+                      {percent !== null && (
+                        <meter min="0" max="100" value={percent} aria-label={`${account.label} · ${quotaLabel(quota)}: осталось ${percent}%`} />
+                      )}
+                      {reset && <p className="relay-rings-muted">Сброс через {reset}</p>}
+                    </div>
+                  );
+                })}
+            </div>
+          ))}
           <Popover.Close className="relay-rings-close" aria-label="Закрыть">Закрыть</Popover.Close>
         </Popover.Content>
       </Popover.Portal>

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RelayRing, RelayRings } from "../components/relay-rings";
-import type { RingsState } from "../lib/rings";
+import type { RingAccountEntry, RingItem, RingsState } from "../lib/rings";
 import type { RelayAccount } from "../lib/relay-accounts";
 
 const kimi: RelayAccount = {
@@ -31,16 +31,24 @@ const gemini: RelayAccount = {
 
 const KEY = (authIndex: string) => `http://relay:4010|${authIndex}`;
 
-const item = (partial: Partial<Parameters<typeof RelayRing>[0]["item"]> = {}) => ({
-  key: KEY("kimi:1"),
-  origin: "http://relay:4010",
-  authIndex: "kimi:1",
-  label: "k@example.com",
+const entry = (partial: Partial<RingAccountEntry> & { key: string }): RingAccountEntry => ({
+  label: partial.key,
+  disabled: false,
+  percent: null,
+  quotas: [],
+  ...partial,
+});
+
+const item = (partial: Partial<RingItem> = {}): RingItem => ({
+  key: "kimi",
+  type: "kimi",
+  label: "Kimi",
   provider: "kimi",
   logo: "kimi",
   percent: 63,
-  tone: "normal" as const,
-  quotas: kimi.quotas,
+  tone: "normal",
+  activeCount: 1,
+  accounts: [entry({ key: KEY("kimi:1"), label: "k@example.com", percent: 63, quotas: kimi.quotas })],
   ...partial,
 });
 /** Заглушка RPC панели: providers_list + relay_accounts (+ rings_state). */
@@ -67,18 +75,29 @@ afterEach(cleanup);
 describe("RelayRing", () => {
   it("draws the ring, the logo and the percent", () => {
     const { container } = render(<RelayRing item={item()} />);
-    const button = screen.getByRole("button", { name: "k@example.com: осталось 63%" });
+    const button = screen.getByRole("button", { name: "Kimi: осталось 63%" });
     expect(button.getAttribute("data-tone")).toBe("normal");
-    expect(button.getAttribute("data-account-key")).toBe(KEY("kimi:1"));
+    expect(button.getAttribute("data-ring-key")).toBe("kimi");
     expect(button.querySelector(".relay-ring-percent")?.textContent).toBe("63%");
     expect(container.querySelector("circle[stroke-dasharray='63 100']")).not.toBeNull();
     expect(button.querySelectorAll("svg")).toHaveLength(2);
     expect(button.querySelector(".relay-ring-logo")?.innerHTML).toContain("<path");
   });
 
+  it("names a multi-account ring as the biggest active one", () => {
+    render(<RelayRing item={item({
+      activeCount: 2,
+      accounts: [
+        entry({ key: KEY("kimi:1"), label: "k@example.com", percent: 63, quotas: kimi.quotas }),
+        entry({ key: KEY("kimi:2"), label: "kimi-2", percent: 31 }),
+      ],
+    })} />);
+    expect(screen.getByRole("button", { name: "Kimi: осталось 63% (больший активный из 2)" })).toBeTruthy();
+  });
+
   it("shows a dash and the unknown tone without a percent", () => {
-    render(<RelayRing item={item({ key: KEY("claude:1"), authIndex: "claude:1", label: "claude:1", provider: "claude", logo: "claude", percent: null, tone: "unknown", quotas: claude.quotas })} />);
-    const button = screen.getByRole("button", { name: "claude:1: квота недоступна" });
+    render(<RelayRing item={item({ key: "claude", type: "claude", label: "Claude", provider: "claude", logo: "claude", percent: null, tone: "unknown", accounts: [entry({ key: KEY("claude:1") })] })} />);
+    const button = screen.getByRole("button", { name: "Claude: квота недоступна" });
     expect(button.getAttribute("data-tone")).toBe("unknown");
     expect(button.querySelector(".relay-ring-percent")?.textContent).toBe("—");
     expect(button.querySelectorAll(".relay-ring-fill")).toHaveLength(0);
@@ -94,7 +113,7 @@ describe("RelayRing", () => {
   it("hides the printed percent below a 32px ring while keeping the full label", () => {
     const { rerender } = render(<RelayRing item={item()} size={24} />);
     expect(screen.queryByText("63%")).toBeNull();
-    expect(screen.getByRole("button", { name: "k@example.com: осталось 63%" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
 
     rerender(<RelayRing item={item()} size={32} />);
     expect(screen.getByText("63%")).toBeTruthy();
@@ -105,30 +124,53 @@ describe("RelayRing", () => {
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("41%");
     rerender(<RelayRing item={item({ percent: 100 })} size={40} />);
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("100%");
-    rerender(<RelayRing item={item({ percent: null, tone: "unknown", quotas: [] })} size={40} />);
+    rerender(<RelayRing item={item({ percent: null, tone: "unknown", accounts: [] })} size={40} />);
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("—");
   });
 
-  it("falls back to the account initial when no logo is vendored", () => {
-    const { container } = render(<RelayRing item={item({ key: KEY("gemini:1"), authIndex: "gemini:1", label: "gemini-work", provider: "gemini", logo: null, percent: null, tone: "unknown", quotas: [] })} />);
+  it("falls back to the type initial when no logo is vendored", () => {
+    const { container } = render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", provider: "gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     expect(container.querySelector(".relay-ring-initial")?.textContent).toBe("G");
     expect(container.querySelector(".relay-ring-logo")).toBeNull();
   });
 
-  it("lists every quota with localized labels and a reset countdown in the popover", async () => {
+  it("lists every quota of a single account with localized labels and a reset countdown", async () => {
     render(<RelayRing item={item()} />);
     fireEvent.click(screen.getByRole("button", { name: /осталось 63%/ }));
-    const dialog = await screen.findByLabelText("Квоты k@example.com");
+    const dialog = await screen.findByLabelText("Квоты Kimi");
+    expect(within(dialog).getByText("k@example.com")).toBeTruthy();
     expect(within(dialog).getByText("Лимит 5 ч")).toBeTruthy();
     expect(within(dialog).getByText("Claude · 7 дн")).toBeTruthy();
     expect(dialog.querySelectorAll("meter")).toHaveLength(2);
     expect(within(dialog).getByText(/Сброс через/)).toBeTruthy();
   });
 
+  it("lists every account of the type with its quotas and a disabled mark", async () => {
+    render(<RelayRing item={item({
+      activeCount: 2,
+      accounts: [
+        entry({ key: KEY("kimi:1"), label: "k@example.com", percent: 63, quotas: kimi.quotas }),
+        entry({ key: KEY("kimi:2"), label: "kimi-2", percent: 31, quotas: [{ quota_key: "m_quota.code_weekly", percent: 31 }] }),
+        entry({ key: KEY("kimi:3"), label: "kimi-off", disabled: true, percent: 12, quotas: [{ quota_key: "5h", percent: 12 }] }),
+      ],
+    })} />);
+    fireEvent.click(screen.getByRole("button", { name: /больший активный из 2/ }));
+    const dialog = await screen.findByLabelText("Квоты Kimi");
+    const accounts = Array.from(dialog.querySelectorAll(".relay-rings-account"));
+    expect(accounts).toHaveLength(3);
+    expect(accounts.map((node) => node.querySelector(".relay-rings-account-label")?.textContent)).toEqual([
+      "k@example.com63%",
+      "kimi-231%",
+      "kimi-offвыключен12%",
+    ]);
+    expect(accounts[2]?.getAttribute("data-disabled")).toBe("");
+  });
+
   it("explains an account without quotas in the popover", async () => {
-    render(<RelayRing item={item({ key: KEY("gemini:1"), authIndex: "gemini:1", label: "gemini-work", provider: "gemini", logo: null, percent: null, tone: "unknown", quotas: [] })} />);
+    render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", provider: "gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     fireEvent.click(screen.getByRole("button", { name: /квота недоступна/ }));
-    const dialog = await screen.findByLabelText("Квоты gemini-work");
+    const dialog = await screen.findByLabelText("Квоты Gemini");
+    expect(within(dialog).getByText("gemini-work")).toBeTruthy();
     expect(within(dialog).getByText("relay не сообщил квоту для этого аккаунта.")).toBeTruthy();
   });
 });
@@ -136,13 +178,13 @@ describe("RelayRing", () => {
 describe("RelayRings", () => {
   const state = (selected: string[], size = 40, perRow = 1): RingsState => ({ selected, size, perRow });
 
-  it("renders the selected accounts rings in selection order and carries the size", async () => {
+  it("renders one ring per provider type and carries the size", async () => {
     const stub = rpc([kimi, claude, gemini]);
     render(<RelayRings rpc={stub} state={state([KEY("claude:1"), KEY("kimi:1")], 48)} target={document.body} />);
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(2));
-    expect(Array.from(document.querySelectorAll(".relay-ring-button")).map((ring) => ring.getAttribute("data-account-key"))).toEqual([
-      KEY("claude:1"),
-      KEY("kimi:1"),
+    expect(Array.from(document.querySelectorAll(".relay-ring-button")).map((ring) => ring.getAttribute("data-ring-key"))).toEqual([
+      "claude",
+      "kimi",
     ]);
     expect(document.querySelector<HTMLElement>(".relay-rings-list")?.style.getPropertyValue("--relay-ring-size")).toBe("48px");
   });
@@ -166,7 +208,7 @@ describe("RelayRings", () => {
     render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 24)} target={document.body} />);
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
     expect(document.querySelector(".relay-ring-percent")).toBeNull();
-    expect(screen.getByRole("button", { name: "k@example.com: осталось 63%" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
   });
 
   it("ties each column to a fraction of the anchor instead of its own max-content", async () => {
@@ -219,7 +261,7 @@ describe("RelayRings", () => {
     await waitFor(() => expect(narrow.querySelectorAll(".relay-ring-button")).toHaveLength(1));
     expect(narrow.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("28px");
     expect(narrow.querySelector(".relay-ring-percent")).toBeNull();
-    expect(screen.getByRole("button", { name: "k@example.com: осталось 63%" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
   });
 
   it("falls back to the setting while the anchor is not measured", async () => {
@@ -227,6 +269,39 @@ describe("RelayRings", () => {
     render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 48, 3)} target={document.body} />);
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
     expect(document.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("48px");
+  });
+
+  it("draws one ring for two accounts of the same type", async () => {
+    const second: RelayAccount = {
+      auth_index: "kimi:2",
+      provider: "kimi",
+      label: "kimi-2",
+      disabled: false,
+      quotas: [{ quota_key: "m_quota.code_weekly", percent: 12 }],
+    };
+    const off: RelayAccount = {
+      auth_index: "kimi:3",
+      provider: "kimi",
+      label: "kimi-off",
+      disabled: true,
+      quotas: [{ quota_key: "m_quota.code_weekly", percent: 99 }],
+    };
+    const stub = rpc([kimi, second, off]);
+    render(
+      <RelayRings
+        rpc={stub}
+        state={state([KEY("kimi:1"), KEY("kimi:2"), KEY("kimi:3")])}
+        target={document.body}
+      />,
+    );
+    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
+    const button = document.querySelector(".relay-ring-button")!;
+    // максимум среди активных: 63, выключенное ведро с 99 не учитывается
+    expect(button.getAttribute("data-tone")).toBe("normal");
+    expect(screen.getByRole("button", { name: "Kimi: осталось 63% (больший активный из 2)" })).toBeTruthy();
+    fireEvent.click(button);
+    const dialog = await screen.findByLabelText("Квоты Kimi");
+    expect(Array.from(dialog.querySelectorAll(".relay-rings-account"))).toHaveLength(3);
   });
 
   it("draws the vendored gpt artwork for an OpenAI account", async () => {
@@ -257,7 +332,7 @@ describe("RelayRings", () => {
     const stub = rpc([kimi]);
     render(<RelayRings rpc={stub} state={state([KEY("gone:1"), KEY("kimi:1")])} target={document.body} />);
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
-    expect(document.querySelector(".relay-ring-button")?.getAttribute("data-account-key")).toBe(KEY("kimi:1"));
+    expect(document.querySelector(".relay-ring-button")?.getAttribute("data-ring-key")).toBe("kimi");
   });
 
   it("polls the accounts every minute", async () => {

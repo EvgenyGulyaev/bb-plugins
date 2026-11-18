@@ -29,16 +29,27 @@ export interface RingsSource {
   accounts: RelayAccount[];
 }
 
-export interface RingItem {
+export interface RingAccountEntry {
   key: string;
-  origin: string;
-  authIndex: string;
+  label: string;
+  disabled: boolean;
+  percent: number | null;
+  quotas: RelayAccount["quotas"];
+}
+
+export interface RingItem {
+  // Ключ кольца = ключ типа провайдера (стабильный), а не аккаунта.
+  key: string;
+  type: string;
   label: string;
   provider: string | null;
   logo: string | null;
   percent: number | null;
   tone: RingTone;
-  quotas: RelayAccount["quotas"];
+  // Сколько аккаунтов типа активно (не disabled) — для title и попавера.
+  activeCount: number;
+  // Выбранные аккаунты типа: активные первыми, затем по убыванию остатка.
+  accounts: RingAccountEntry[];
 }
 
 export type RingTone = "normal" | "warning" | "critical" | "unknown";
@@ -126,8 +137,11 @@ export function ringShowPercent(size: number): boolean {
   return size >= RING_PERCENT_MIN_SIZE;
 }
 
-export function ringTitle(label: string, percent: number | null): string {
-  return percent === null ? `${label}: квота недоступна` : `${label}: осталось ${percent}%`;
+export function ringTitle(label: string, percent: number | null, activeCount = 0): string {
+  if (percent === null) return `${label}: квота недоступна`;
+  return activeCount > 1
+    ? `${label}: осталось ${percent}% (больший активный из ${activeCount})`
+    : `${label}: осталось ${percent}%`;
 }
 
 const LOGO_MATCHERS: Array<{ logo: string; needles: string[] }> = [
@@ -151,33 +165,92 @@ export function providerLogoKey(...values: Array<string | null | undefined>): st
   return null;
 }
 
-// Выбранные аккаунты в порядке выбора; неразрешённые ключи (адрес удалён,
-// аккаунт пропал, нет кредов) просто выпадают.
+// Тип аккаунта: вендор из маппинга логотипов, иначе нормализованный id
+// провайдера — два аккаунта без логотипа одного провайдера тоже схлопываются.
+export function providerType(account: RelayAccount): string {
+  const logo = providerLogoKey(account.provider, account.label, account.email, account.auth_index);
+  if (logo !== null) return logo;
+  const id = account.provider?.trim().toLowerCase();
+  return id ? id : "other";
+}
+
+export function providerTypeLabel(type: string): string {
+  const known = TYPE_LABELS[type];
+  if (known) return known;
+  return type === "other" ? "Другие" : type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+// Отображаемое имя типа: без почты и хэшей аккаунта.
+const TYPE_LABELS: Record<string, string> = {
+  kimi: "Kimi",
+  claude: "Claude",
+  grok: "Grok",
+  gpt: "GPT",
+};
+
+// Одно кольцо на тип провайдера. Percent — максимум остатка среди АКТИВНЫХ
+// аккаунтов типа («больший активный»): одно выключенное ведро с 90% не должно
+// выглядеть как доступная квота. Неразрешённые ключи (адрес удалён, аккаунт
+// пропал, нет кредов) выпадают; порядок колец — по первому выбранному аккаунту.
 export function ringItems(selected: string[], sources: RingsSource[]): RingItem[] {
-  const byKey = new Map<string, RingItem>();
+  const byKey = new Map<string, { origin: string; account: RelayAccount }>();
   for (const source of sources) {
     for (const account of source.accounts) {
-      const key = ringAccountKey(source.origin, account);
-      const percent = ringPercent(account.quotas);
-      byKey.set(key, {
-        key,
-        origin: source.origin,
-        authIndex: account.auth_index,
-        label: ringAccountLabel(account),
-        provider: account.provider ?? null,
-        logo: providerLogoKey(account.provider, account.label, account.email, account.auth_index),
-        percent,
-        tone: ringTone(percent),
-        quotas: account.quotas,
-      });
+      byKey.set(ringAccountKey(source.origin, account), { origin: source.origin, account });
     }
   }
-  const items: RingItem[] = [];
+
+  const groups = new Map<string, { type: string; entries: RingAccountEntry[] }>();
   for (const key of selected) {
-    const item = byKey.get(key);
-    if (item) items.push(item);
+    const found = byKey.get(key);
+    if (!found) continue;
+    const { account } = found;
+    const type = providerType(account);
+    let group = groups.get(type);
+    if (!group) {
+      group = { type, entries: [] };
+      groups.set(type, group);
+    }
+    group.entries.push({
+      key,
+      label: ringAccountLabel(account),
+      disabled: account.disabled,
+      percent: ringPercent(account.quotas),
+      quotas: account.quotas,
+    });
+  }
+
+  const items: RingItem[] = [];
+  for (const group of groups.values()) {
+    const active = group.entries.filter((entry) => !entry.disabled);
+    const percents = active
+      .map((entry) => entry.percent)
+      .filter((percent): percent is number => percent !== null);
+    const percent = percents.length > 0 ? Math.max(...percents) : null;
+    const sample = byKey.get(group.entries[0]!.key)!.account;
+    items.push({
+      key: group.type,
+      type: group.type,
+      label: providerTypeLabel(group.type),
+      provider: sample.provider ?? null,
+      logo: providerLogoKey(sample.provider, sample.label, sample.email, sample.auth_index),
+      percent,
+      tone: ringTone(percent),
+      activeCount: active.length,
+      accounts: [...active, ...group.entries.filter((entry) => entry.disabled)]
+        .sort(byEntryOrder),
+    });
   }
   return items;
+}
+
+// Активные сначала, внутри — по убыванию остатка; без процента — в конце.
+function byEntryOrder(a: RingAccountEntry, b: RingAccountEntry): number {
+  if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
+  if (a.percent === b.percent) return 0;
+  if (a.percent === null) return 1;
+  if (b.percent === null) return -1;
+  return b.percent - a.percent;
 }
 
 export const ringsStateSchema = z

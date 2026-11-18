@@ -153,7 +153,7 @@ describe("rail overlay", () => {
     const dispose = mountRingsRail(document, "clirelay-test");
     try {
       await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(1));
-      expect(document.querySelector(".relay-ring-button")?.getAttribute("data-account-key")).toBe(KEY("kimi:1"));
+      expect(document.querySelector(".relay-ring-button")?.getAttribute("data-ring-key")).toBe("kimi");
 
       const before = slot.inspection.rpcCalls.filter((call) => call.method === "relay_accounts").length;
       await slot.behavior.emitRealtime("relay-rings-changed", {});

@@ -110,6 +110,12 @@
 .relay-rings-heading { display: flex; align-items: center; gap: 8px; }
 .relay-rings-heading strong { font-size: 14px; overflow-wrap: anywhere; }
 .relay-rings-heading .relay-ring-logo { font-size: 18px; }
+
+.relay-rings-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.relay-rings-account[data-disabled] { opacity: .7; }
+.relay-rings-account-label { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; overflow-wrap: anywhere; }
+.relay-rings-account-meta { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
+.relay-rings-off { border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; font-size: 10px; color: var(--muted-foreground); }
 .relay-rings-window { margin-top: 14px; }
 .relay-rings-window > div { display: flex; justify-content: space-between; gap: 10px; }
 .relay-rings-window meter {
