@@ -253,6 +253,7 @@ describe("RelayRings", () => {
     expect(button).toMatch(/flex:\s*0\s+0\s+auto;/);
     expect(button).toMatch(/width:\s*var\(--relay-ring-size\);/);
     expect(button).toMatch(/max-width:\s*none;/);
+    expect(button).toMatch(/box-sizing:\s*border-box;/);
     expect(button).not.toMatch(/basis/);
   });
 
