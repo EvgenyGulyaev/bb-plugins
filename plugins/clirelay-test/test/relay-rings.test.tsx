@@ -73,8 +73,10 @@ afterEach(cleanup);
 
 describe("RelayRing", () => {
   it("draws the ring, the logo and the percent", () => {
-    const { container } = render(<RelayRing item={item()} />);
-    const button = screen.getByRole("button", { name: "Kimi: осталось 63%" });
+    const { container } = render(<RelayRing item={item()} sizePx={40} />);
+    const button = screen.getByRole<HTMLButtonElement>("button", { name: "Kimi: осталось 63%" });
+    expect(button.style.width).toBe("40px");
+    expect(button.style.height).toBe("");
     expect(button.getAttribute("data-tone")).toBe("normal");
     expect(button.getAttribute("data-ring-key")).toBe("kimi");
     expect(button.querySelector(".relay-ring-percent")?.textContent).toBe("63%");
@@ -84,7 +86,7 @@ describe("RelayRing", () => {
   });
 
   it("names a multi-account ring as the biggest active one", () => {
-    render(<RelayRing item={item({
+    render(<RelayRing sizePx={40} item={item({
       activeCount: 2,
       accounts: [
         entry({ key: KEY("kimi:1"), label: "k@example.com", percent: 63, quotas: kimi.quotas }),
@@ -95,7 +97,7 @@ describe("RelayRing", () => {
   });
 
   it("shows a dash and the unknown tone without a percent", () => {
-    render(<RelayRing item={item({ key: "claude", type: "claude", label: "Claude", logo: "claude", percent: null, tone: "unknown", accounts: [entry({ key: KEY("claude:1") })] })} />);
+    render(<RelayRing sizePx={40} item={item({ key: "claude", type: "claude", label: "Claude", logo: "claude", percent: null, tone: "unknown", accounts: [entry({ key: KEY("claude:1") })] })} />);
     const button = screen.getByRole("button", { name: "Claude: квота недоступна" });
     expect(button.getAttribute("data-tone")).toBe("unknown");
     expect(button.querySelector(".relay-ring-percent")?.textContent).toBe("—");
@@ -103,14 +105,14 @@ describe("RelayRing", () => {
   });
 
   it("maps low remainders to the warning and critical tones", () => {
-    const { container, rerender } = render(<RelayRing item={item({ percent: 18, tone: "warning" })} />);
+    const { container, rerender } = render(<RelayRing sizePx={40} item={item({ percent: 18, tone: "warning" })} />);
     expect(container.querySelector(".relay-ring-button")?.getAttribute("data-tone")).toBe("warning");
-    rerender(<RelayRing item={item({ percent: 3, tone: "critical" })} />);
+    rerender(<RelayRing sizePx={40} item={item({ percent: 3, tone: "critical" })} />);
     expect(container.querySelector(".relay-ring-button")?.getAttribute("data-tone")).toBe("critical");
   });
 
   it("always prints the percent instead of hiding it on a small ring", () => {
-    render(<RelayRing item={item()} />);
+    render(<RelayRing sizePx={40} item={item()} />);
     expect(screen.getByText("63%")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
   });
@@ -129,22 +131,22 @@ describe("RelayRing", () => {
   });
 
   it("prints at most four characters under the ring", () => {
-    const { rerender } = render(<RelayRing item={item({ percent: 41 })} />);
+    const { rerender } = render(<RelayRing sizePx={40} item={item({ percent: 41 })} />);
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("41%");
-    rerender(<RelayRing item={item({ percent: 100 })} />);
+    rerender(<RelayRing sizePx={40} item={item({ percent: 100 })} />);
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("100%");
-    rerender(<RelayRing item={item({ percent: null, tone: "unknown", accounts: [] })} />);
+    rerender(<RelayRing sizePx={40} item={item({ percent: null, tone: "unknown", accounts: [] })} />);
     expect(document.querySelector(".relay-ring-percent")?.textContent).toBe("—");
   });
 
   it("falls back to the type initial when no logo is vendored", () => {
-    const { container } = render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
+    const { container } = render(<RelayRing sizePx={40} item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     expect(container.querySelector(".relay-ring-initial")?.textContent).toBe("G");
     expect(container.querySelector(".relay-ring-logo")).toBeNull();
   });
 
   it("lists every quota of a single account with localized labels and a reset countdown", async () => {
-    render(<RelayRing item={item()} />);
+    render(<RelayRing sizePx={40} item={item()} />);
     fireEvent.click(screen.getByRole("button", { name: /осталось 63%/ }));
     const dialog = await screen.findByLabelText("Квоты Kimi");
     expect(within(dialog).getByText("k@example.com")).toBeTruthy();
@@ -155,7 +157,7 @@ describe("RelayRing", () => {
   });
 
   it("lists every account of the type with its quotas and a disabled mark", async () => {
-    render(<RelayRing item={item({
+    render(<RelayRing sizePx={40} item={item({
       activeCount: 2,
       accounts: [
         entry({ key: KEY("kimi:1"), label: "k@example.com", percent: 63, quotas: kimi.quotas }),
@@ -176,7 +178,7 @@ describe("RelayRing", () => {
   });
 
   it("lets the logo inherit the ring tone instead of forcing its own color", async () => {
-    render(<RelayRing item={item({ percent: 3, tone: "critical" })} />);
+    render(<RelayRing sizePx={40} item={item({ percent: 3, tone: "critical" })} />);
     const button = document.querySelector<HTMLElement>(".relay-ring-button")!;
     expect(button.getAttribute("data-tone")).toBe("critical");
     // currentColor в вендоренном SVG должен идти от тона кнопки: собственный
@@ -194,7 +196,7 @@ describe("RelayRing", () => {
   });
 
   it("explains an account without quotas in the popover", async () => {
-    render(<RelayRing item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
+    render(<RelayRing sizePx={40} item={item({ key: "gemini", type: "gemini", label: "Gemini", logo: null, percent: null, tone: "unknown", accounts: [entry({ key: KEY("gemini:1"), label: "gemini-work" })] })} />);
     fireEvent.click(screen.getByRole("button", { name: /квота недоступна/ }));
     const dialog = await screen.findByLabelText("Квоты Gemini");
     expect(within(dialog).getByText("gemini-work")).toBeTruthy();
@@ -214,6 +216,7 @@ describe("RelayRings", () => {
       "kimi",
     ]);
     expect(document.querySelector<HTMLElement>(".relay-rings-list")?.style.getPropertyValue("--relay-ring-size")).toBe("48px");
+    expect(Array.from(document.querySelectorAll<HTMLElement>(".relay-ring-button")).every((button) => button.style.width === "48px")).toBe(true);
   });
 
   it("lays the rings out in the chosen number of columns", async () => {
@@ -223,11 +226,13 @@ describe("RelayRings", () => {
     );
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(3));
     const list = () => document.querySelector<HTMLElement>(".relay-rings-list")!;
-    expect(list().style.getPropertyValue("--relay-ring-basis")).toBe("calc((100% - 0px) / 1)");
+    const buttons = () => Array.from(document.querySelectorAll<HTMLElement>(".relay-ring-button"));
+    expect(buttons().every((button) => button.style.width === "40px")).toBe(true);
+    expect(buttons().every((button) => !/var\(|basis/.test(button.getAttribute("style") ?? ""))).toBe(true);
     expect(list().style.getPropertyValue("--relay-ring-size")).toBe("40px");
 
     rerender(<RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1"), KEY("gemini:1")], 40, 3)} target={document.body} />);
-    await waitFor(() => expect(list().style.getPropertyValue("--relay-ring-basis")).toBe("calc((100% - 8px) / 3)"));
+    await waitFor(() => expect(buttons().every((button) => button.style.width === "40px")).toBe(true));
   });
 
   it("pins the flex row that centres an incomplete last row", async () => {
@@ -243,11 +248,11 @@ describe("RelayRings", () => {
 
     const buttonRule = css.slice(css.indexOf(".relay-ring-button {"));
     const button = buttonRule.slice(0, buttonRule.indexOf("}"));
-    // basis приходит из JS с литеральным делителем: деление на var() в Chromium
-    // окна bb невалидно и схлопывало всё в одну колонку.
-    expect(button).toMatch(/flex:\s*0\s+0\s+var\(--relay-ring-basis,\s*100%\);/);
-    expect(button).not.toMatch(/\/\s*var\(/);
-    expect(button).toMatch(/max-width:\s*var\(--relay-ring-size\);/);
+    // Ширина колонки приходит инлайном в px; calc/var для flex-basis не нужны.
+    expect(button).toMatch(/flex:\s*0\s+0\s+auto;/);
+    expect(button).toMatch(/width:\s*var\(--relay-ring-size\);/);
+    expect(button).toMatch(/max-width:\s*none;/);
+    expect(button).not.toMatch(/basis/);
   });
 
   it("centres a lone ring of an incomplete last row (3 rings, 2 columns)", async () => {
@@ -256,12 +261,11 @@ describe("RelayRings", () => {
       <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1"), KEY("gemini:1")], 40, 2)} target={document.body} />,
     );
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(3));
-    const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
     // Строка неполная: центрирование даёт flex-контейнер с justify-content:center,
     // а третье кольцо занимает свою колонку, а не растягивается на всю ширину.
-    expect(list.style.getPropertyValue("--relay-ring-basis")).toBe("calc((100% - 4px) / 2)");
     const buttons = Array.from(document.querySelectorAll<HTMLElement>(".relay-ring-button"));
     expect(buttons).toHaveLength(3);
+    expect(buttons.every((button) => button.style.width === "40px")).toBe(true);
     expect(buttons.every((button) => button.style.flex === "")).toBe(true);
   });
 
@@ -270,13 +274,12 @@ describe("RelayRings", () => {
     render(<RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, 2)} target={document.body} />);
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(2));
     const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
-    // Валидная CSS-база: две кнопки по (100% - зазор)/2 плюс зазор = ровно 100%,
-    // поэтому обе влезают в первую строку (flex-wrap переносит только лишние).
-    const basis = list.style.getPropertyValue("--relay-ring-basis");
-    expect(basis).toBe("calc((100% - 4px) / 2)");
-    expect(basis.startsWith("calc((100% - 4px) / 2)")).toBe(true);
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>(".relay-ring-button"));
+    // Фиксированная px-ширина кнопок плюс gap даёт две колонки без calc().
+    expect(buttons.every((button) => button.style.width === "40px")).toBe(true);
+    expect(buttons.every((button) => !/var\(|basis/.test(button.getAttribute("style") ?? ""))).toBe(true);
     expect(list.style.getPropertyValue("--relay-ring-size")).toBe("40px");
-    expect(document.querySelector(".relay-ring-button")!.getAttribute("style") ?? "").not.toContain("flex:");
+    expect(buttons.every((button) => button.style.flex === "")).toBe(true);
   });
 
   it("keeps the printed percent on a small ring and only shrinks it", async () => {
@@ -288,19 +291,23 @@ describe("RelayRings", () => {
   });
 
   it.each([
-    [2, "(100% - 4px) / 2"],
-    [3, "(100% - 8px) / 3"],
-    [4, "(100% - 12px) / 4"],
-  ])("gives each ring a column-sized flex basis for %i columns", async (perRow, expected) => {
+    [1, 40],
+    [2, 18],
+    [3, 12],
+  ])("gives each ring an inline pixel width for %i columns", async (perRow, expected) => {
+    const anchor = document.createElement("div");
+    anchor.getBoundingClientRect = () => ({ width: 40, height: 200, top: 0, left: 0, right: 40, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    document.body.append(anchor);
     const stub = rpc([kimi, claude]);
     const { container } = render(
-      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, perRow)} target={document.body} />,
+      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, perRow)} target={anchor} />,
     );
-    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(2));
-    const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
-    // делитель литеральный: var() в знаменателе Chromium не принимает
-    expect(list.style.getPropertyValue("--relay-ring-basis")).toBe(`calc(${expected})`);
-    expect(list.style.getPropertyValue("--relay-ring-basis")).not.toContain("var(");
+    await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(2));
+    const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
+    const buttons = Array.from(anchor.querySelectorAll<HTMLElement>(".relay-ring-button"));
+    expect(buttons.every((button) => button.style.width === `${expected}px`)).toBe(true);
+    expect(buttons.every((button) => !/var\(|basis/.test(button.getAttribute("style") ?? ""))).toBe(true);
+    expect(buttons.every((button) => button.style.height === "")).toBe(true);
     expect(list.style.width).toBe("100%");
     expect(list.style.gridTemplateColumns).toBe("");
     expect(container).toBeTruthy();
@@ -322,7 +329,7 @@ describe("RelayRings", () => {
     const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
     // (40 - 4) / 2 = 18
     expect(list.style.getPropertyValue("--relay-ring-size")).toBe("18px");
-    expect(list.style.getPropertyValue("--relay-ring-basis")).toBe("calc((100% - 4px) / 2)");
+    expect(Array.from(anchor.querySelectorAll<HTMLElement>(".relay-ring-button")).every((button) => button.style.width === "18px")).toBe(true);
   });
 
   it("keeps the printed percent at an 18px effective ring and shrinks it with the size", async () => {

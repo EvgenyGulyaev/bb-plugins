@@ -16,7 +16,6 @@ import {
   providerLogoKey,
   ringAccountKey,
   ringAccountLabel,
-  ringBasis,
   ringDashArray,
   ringItems,
   ringPercent,
@@ -191,35 +190,6 @@ describe("effective ring size", () => {
   it("honours a custom gap", () => {
     expect(effectiveRingSize(40, 2, 40, 8)).toBe(16);
     expect(effectiveRingSize(40, 1, 40, 8)).toBe(40);
-  });
-});
-
-describe("ring basis", () => {
-  it("divides by a literal column count, never by var()", () => {
-    expect(ringBasis(1)).toBe("calc((100% - 0px) / 1)");
-    expect(ringBasis(2)).toBe("calc((100% - 4px) / 2)");
-    expect(ringBasis(3)).toBe("calc((100% - 8px) / 3)");
-    expect(ringBasis(4)).toBe("calc((100% - 12px) / 4)");
-  });
-
-  it("uses the same gap the flex row draws", () => {
-    expect(ringBasis(2, 4)).toBe("calc((100% - 4px) / 2)");
-    expect(ringBasis(2, 6)).toBe("calc((100% - 6px) / 2)");
-  });
-
-  it("clamps an out-of-range column count like the setting does", () => {
-    expect(ringBasis(0)).toBe("calc((100% - 0px) / 1)");
-    expect(ringBasis(9)).toBe("calc((100% - 12px) / 4)");
-    expect(ringBasis(Number.NaN)).toBe("calc((100% - 0px) / 1)");
-  });
-
-  it("keeps the basis valid CSS: no var() and no nesting", () => {
-    for (const perRow of [1, 2, 3, 4]) {
-      const basis = ringBasis(perRow);
-      expect(basis).not.toContain("var(");
-      expect(basis.startsWith("calc((100% - ")).toBe(true);
-      expect(basis.endsWith(`) / ${perRow})`)).toBe(true);
-    }
   });
 });
 

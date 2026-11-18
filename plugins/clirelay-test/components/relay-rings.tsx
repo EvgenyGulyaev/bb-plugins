@@ -5,7 +5,7 @@ import { countdown } from "@/lib/countdown";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
-import { ringBasis, ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
+import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
 import { loadRingsSources, type RingsRpc } from "@/lib/rings-source";
 
 // Логотипы вендорены в lib/provider-logos.ts (lobe-icons, MIT) и содержат
@@ -24,13 +24,13 @@ function quotaPercent(quota: RelayAccount["quotas"][number]): number | null {
 }
 
 /** Одно кольцо: больший активный остаток типа + попавер со всеми его аккаунтами. */
-export function RelayRing({ item }: { item: RingItem }) {
+export function RelayRing({ item, sizePx }: { item: RingItem; sizePx: number }) {
   const title = ringTitle(item.label, item.percent, item.activeCount);
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
         <button type="button" className="relay-ring-button" data-ring-key={item.key} data-tone={item.tone}
-          aria-label={title} title={title}>
+          style={{ width: `${sizePx}px` }} aria-label={title} title={title}>
           <span className="relay-ring-art">
             <svg className="relay-ring-progress" viewBox="0 0 32 32" aria-hidden="true">
               <circle className="relay-ring-track" cx="16" cy="16" r="13" />
@@ -153,15 +153,11 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   const size = effectiveRingSize(railWidth, state.perRow, state.size);
   const layout = {
     "--relay-ring-size": `${size}px`,
-    // База кнопки считается здесь с литеральным делителем (см. ringBasis):
-    // calc() с делением на var() Chromium окна bb не принимает, и кольца
-    // схлопывались в одну колонку.
-    "--relay-ring-basis": ringBasis(state.perRow),
     width: "100%",
   } as CSSProperties;
   return createPortal(
     <div className="relay-rings-list" aria-label="Кольца квот relay" style={layout}>
-      {items.map((item) => <RelayRing key={item.key} item={item} />)}
+      {items.map((item) => <RelayRing key={item.key} item={item} sizePx={size} />)}
     </div>,
     target,
   );
