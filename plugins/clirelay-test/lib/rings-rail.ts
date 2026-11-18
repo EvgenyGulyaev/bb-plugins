@@ -36,7 +36,12 @@ export function mountRingsRail(doc: Document, pluginId: string): () => void {
     // якорь встал бы в пустой скелет.
     const settings = rail?.parentElement?.querySelector('[data-icon="Settings"]')?.closest("button");
     const nextHost = settings ? (rail as HTMLElement) : null;
-    if (nextHost === host && node?.isConnected) return;
+    if (host && nextHost === host && node?.isConnected) {
+      const usage = host.querySelector("[data-usage-rings-owned]");
+      const desired = usage ? usage.nextSibling : null;
+      if (node.nextSibling !== desired) host.insertBefore(node, desired);
+      return;
+    }
     if (node) detach();
     if (!nextHost || !settings) return;
     host = nextHost;

@@ -31,6 +31,7 @@ describe("rail anchor", () => {
     expect(target!.dataset.relayRingsOwned).toBe("");
     expect(target!.dataset.bbPlugin).toBe("clirelay-test");
     expect(target!.classList.contains("relay-rings-anchor")).toBe(true);
+    expect(target!.nextSibling).toBeNull();
     // чужой футер не трогаем
     expect(doc.querySelector("#footer")!.children).toHaveLength(1);
   });
@@ -67,6 +68,31 @@ describe("rail anchor", () => {
     expect(calls).toBe(1);
     expect(doc.querySelectorAll("[data-relay-rings-owned]")).toHaveLength(1);
     unsubscribe();
+  });
+
+  it("mounts after an existing usage-rings anchor", () => {
+    const doc = dom();
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+    doc.querySelector("nav")!.append(usage);
+
+    mount(doc);
+
+    expect(usage.nextElementSibling).toBe(getRailTarget());
+  });
+
+  it("moves after usage-rings when its anchor is appended later", async () => {
+    const doc = dom();
+    mount(doc);
+    const target = getRailTarget();
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+
+    doc.querySelector("nav")!.append(usage);
+    await frame();
+
+    expect(getRailTarget()).toBe(target);
+    expect(usage.nextElementSibling).toBe(target);
   });
 
   it("re-attaches when bb replaces the rail", async () => {
