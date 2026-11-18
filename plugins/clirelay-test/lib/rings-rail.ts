@@ -39,7 +39,7 @@ export function mountRingsRail(doc: Document, pluginId: string): () => void {
     if (host && nextHost === host && node?.isConnected) {
       const usage = host.querySelector("[data-usage-rings-owned]");
       const desired = usage ? usage.nextSibling : null;
-      if (node.nextSibling !== desired) host.insertBefore(node, desired);
+      if (desired !== node && node.nextSibling !== desired) host.insertBefore(node, desired);
       return;
     }
     if (node) detach();
