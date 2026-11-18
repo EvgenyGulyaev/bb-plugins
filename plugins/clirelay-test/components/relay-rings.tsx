@@ -5,7 +5,7 @@ import { countdown } from "@/lib/countdown";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
-import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
+import { RING_LIST_PADDING, ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
 import { loadRingsSources, type RingsRpc } from "@/lib/rings-source";
 
 // Логотипы вендорены в lib/provider-logos.ts (lobe-icons, MIT) и содержат
@@ -150,7 +150,9 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
 
   if (items.length === 0 || target === null) return null;
   // До замера (ширина 0) размер берётся из настройки — кольца не исчезают.
-  const size = effectiveRingSize(railWidth, state.perRow, state.size);
+  // effectiveRingSize принимает content-ширину: padding списка в неё не входит.
+  const contentWidth = Math.max(0, railWidth - 2 * RING_LIST_PADDING);
+  const size = effectiveRingSize(contentWidth, state.perRow, state.size);
   const layout = {
     "--relay-ring-size": `${size}px`,
     width: "100%",

@@ -245,6 +245,7 @@ describe("RelayRings", () => {
     expect(list).toMatch(/justify-content:\s*center;/);
     expect(list).toMatch(/gap:\s*4px;/);
     expect(list).toMatch(/width:\s*100%;/);
+    expect(list).toMatch(/padding:\s*3px;/);
 
     const buttonRule = css.slice(css.indexOf(".relay-ring-button {"));
     const button = buttonRule.slice(0, buttonRule.indexOf("}"));
@@ -291,8 +292,8 @@ describe("RelayRings", () => {
   });
 
   it.each([
-    [1, 40],
-    [2, 18],
+    [1, 32],
+    [2, 15],
     [3, 12],
   ])("gives each ring an inline pixel width for %i columns", async (perRow, expected) => {
     const anchor = document.createElement("div");
@@ -300,7 +301,7 @@ describe("RelayRings", () => {
     document.body.append(anchor);
     const stub = rpc([kimi, claude]);
     const { container } = render(
-      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, perRow)} target={anchor} />,
+      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 32, perRow)} target={anchor} />,
     );
     await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(2));
     const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
@@ -327,23 +328,25 @@ describe("RelayRings", () => {
     );
     await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(3));
     const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
-    // (40 - 4) / 2 = 18
-    expect(list.style.getPropertyValue("--relay-ring-size")).toBe("18px");
-    expect(Array.from(anchor.querySelectorAll<HTMLElement>(".relay-ring-button")).every((button) => button.style.width === "18px")).toBe(true);
+    // content: 40 - 2 * 3 = 34; (34 - 4) / 2 = 15
+    expect(list.style.getPropertyValue("--relay-ring-size")).toBe("15px");
+    expect(Array.from(anchor.querySelectorAll<HTMLElement>(".relay-ring-button")).every((button) => button.style.width === "15px")).toBe(true);
   });
 
-  it("keeps the printed percent at an 18px effective ring and shrinks it with the size", async () => {
+  it("keeps the printed percent at a 15px effective ring and shrinks it with the size", async () => {
     const anchor = document.createElement("div");
     anchor.getBoundingClientRect = () => ({ width: 40, height: 200, top: 0, left: 0, right: 40, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
     document.body.append(anchor);
     const stub = rpc([kimi]);
-    render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 64, 1)} target={anchor} />);
+    render(<RelayRings rpc={stub} state={state([KEY("kimi:1")], 32, 1)} target={anchor} />);
     await waitFor(() => expect(anchor.querySelectorAll(".relay-ring-button")).toHaveLength(1));
-    // one column in a 40px rail keeps 40px, so the percent stays
-    expect(anchor.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("40px");
+    // одна колонка: min(32, 40 - 2 * 3) = 32px, подпись остаётся
+    expect(anchor.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("32px");
+    expect(anchor.querySelector<HTMLElement>(".relay-ring-button")!.style.width).toBe("32px");
     expect(anchor.querySelector(".relay-ring-percent")?.textContent).toBe("63%");
 
-    // две колонки в 40px рейле: effective 18px, подпись остаётся и ужимается
+    // две колонки в 40px рейле: content 34px, effective 15px
+    // подпись остаётся и ужимается
     const narrow = document.createElement("div");
     narrow.getBoundingClientRect = () => ({ width: 40, height: 200, top: 0, left: 0, right: 40, bottom: 200, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
     document.body.append(narrow);
@@ -351,7 +354,8 @@ describe("RelayRings", () => {
     const pair = rpc([kimi]);
     render(<RelayRings rpc={pair} state={state([KEY("kimi:1")], 64, 2)} target={narrow} />);
     await waitFor(() => expect(narrow.querySelectorAll(".relay-ring-button")).toHaveLength(1));
-    expect(narrow.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("18px");
+    expect(narrow.querySelector<HTMLElement>(".relay-rings-list")!.style.getPropertyValue("--relay-ring-size")).toBe("15px");
+    expect(narrow.querySelector<HTMLElement>(".relay-ring-button")!.style.width).toBe("15px");
     expect(narrow.querySelector(".relay-ring-percent")?.textContent).toBe("63%");
     expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
   });

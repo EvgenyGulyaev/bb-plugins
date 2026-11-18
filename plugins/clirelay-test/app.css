@@ -14,6 +14,7 @@
   max-height: 40dvh;
   overflow-y: auto;
   scrollbar-width: thin;
+  /* Синхронно с RING_LIST_PADDING в lib/rings.ts: вычитается из outer-ширины. */
   padding: 3px;
 }
 

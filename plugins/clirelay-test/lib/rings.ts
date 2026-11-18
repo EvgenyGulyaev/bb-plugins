@@ -13,6 +13,9 @@ export const RING_PER_ROW_MAX = 4;
 export const RING_PER_ROW_DEFAULT = 1;
 // Тот же зазор, что рисует сетка колец в app.css.
 export const RING_GAP = 4;
+// Синхронно с padding:3px у .relay-rings-list в app.css: замер outer-ширины
+// переводится в content-ширину вычитанием padding с двух сторон.
+export const RING_LIST_PADDING = 3;
 // Меньше этого кольцо уже не читается; лучше чуть выйти за рейл, чем исчезнуть.
 export const RING_DISPLAY_MIN_SIZE = 12;
 
