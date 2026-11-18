@@ -223,11 +223,45 @@ describe("RelayRings", () => {
     );
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(3));
     const list = () => document.querySelector<HTMLElement>(".relay-rings-list")!;
-    expect(list().style.getPropertyValue("--relay-ring-per-row")).toBe("1");
+    expect(list().style.getPropertyValue("--relay-ring-cols")).toBe("1");
     expect(list().style.getPropertyValue("--relay-ring-size")).toBe("40px");
 
     rerender(<RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1"), KEY("gemini:1")], 40, 3)} target={document.body} />);
-    await waitFor(() => expect(list().style.getPropertyValue("--relay-ring-per-row")).toBe("3"));
+    await waitFor(() => expect(list().style.getPropertyValue("--relay-ring-cols")).toBe("3"));
+  });
+
+  it("pins the flex row that centres an incomplete last row", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const css = await readFile(`${process.cwd()}/app.css`, "utf8");
+    const listRule = css.slice(css.indexOf(".relay-rings-list {"));
+    const list = listRule.slice(0, listRule.indexOf("}"));
+    expect(list).toMatch(/display:\s*flex;/);
+    expect(list).toMatch(/flex-wrap:\s*wrap;/);
+    expect(list).toMatch(/justify-content:\s*center;/);
+    expect(list).toMatch(/gap:\s*4px;/);
+    expect(list).toMatch(/width:\s*100%;/);
+
+    const buttonRule = css.slice(css.indexOf(".relay-ring-button {"));
+    const button = buttonRule.slice(0, buttonRule.indexOf("}"));
+    expect(button).toMatch(
+      /flex:\s*0\s+0\s+calc\(\(100%\s*-\s*\(var\(--relay-ring-cols\)\s*-\s*1\)\s*\*\s*4px\)\s*\/\s*var\(--relay-ring-cols\)\);/,
+    );
+    expect(button).toMatch(/max-width:\s*var\(--relay-ring-size\);/);
+  });
+
+  it("centres a lone ring of an incomplete last row (3 rings, 2 columns)", async () => {
+    const stub = rpc([kimi, claude, gemini]);
+    render(
+      <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1"), KEY("gemini:1")], 40, 2)} target={document.body} />,
+    );
+    await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(3));
+    const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
+    // Строка неполная: центрирование даёт flex-контейнер с justify-content:center,
+    // а третье кольцо занимает свою колонку, а не растягивается на всю ширину.
+    expect(list.style.getPropertyValue("--relay-ring-cols")).toBe("2");
+    const buttons = Array.from(document.querySelectorAll<HTMLElement>(".relay-ring-button"));
+    expect(buttons).toHaveLength(3);
+    expect(buttons.every((button) => button.style.flex === "")).toBe(true);
   });
 
   it("keeps the printed percent on a small ring and only shrinks it", async () => {
@@ -238,15 +272,17 @@ describe("RelayRings", () => {
     expect(screen.getByRole("button", { name: "Kimi: осталось 63%" })).toBeTruthy();
   });
 
-  it("ties each column to a fraction of the anchor instead of its own max-content", async () => {
+  it("gives each ring a column-sized flex basis instead of its own max-content", async () => {
     const stub = rpc([kimi, claude]);
     const { container } = render(
       <RelayRings rpc={stub} state={state([KEY("kimi:1"), KEY("claude:1")], 40, 2)} target={document.body} />,
     );
     await waitFor(() => expect(document.querySelectorAll(".relay-ring-button")).toHaveLength(2));
     const list = document.querySelector<HTMLElement>(".relay-rings-list")!;
-    expect(list.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    // --relay-ring-cols — сколько колонок просит настройка; ширину считает CSS
+    expect(list.style.getPropertyValue("--relay-ring-cols")).toBe("2");
     expect(list.style.width).toBe("100%");
+    expect(list.style.gridTemplateColumns).toBe("");
     expect(container).toBeTruthy();
   });
 
@@ -266,7 +302,7 @@ describe("RelayRings", () => {
     const list = anchor.querySelector<HTMLElement>(".relay-rings-list")!;
     // (40 - 4) / 2 = 18
     expect(list.style.getPropertyValue("--relay-ring-size")).toBe("18px");
-    expect(list.style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
+    expect(list.style.getPropertyValue("--relay-ring-cols")).toBe("2");
   });
 
   it("keeps the printed percent at an 18px effective ring and shrinks it with the size", async () => {

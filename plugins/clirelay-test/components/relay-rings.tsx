@@ -153,8 +153,9 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   const size = effectiveRingSize(railWidth, state.perRow, state.size);
   const layout = {
     "--relay-ring-size": `${size}px`,
-    "--relay-ring-per-row": String(state.perRow),
-    gridTemplateColumns: `repeat(${state.perRow}, minmax(0, 1fr))`,
+    // Flex-база кнопки считается в CSS из числа колонок; неполная последняя
+    // строка центрируется justify-content:center.
+    "--relay-ring-cols": String(state.perRow),
     width: "100%",
   } as CSSProperties;
   return createPortal(
