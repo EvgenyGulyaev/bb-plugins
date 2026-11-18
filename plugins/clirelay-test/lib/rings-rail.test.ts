@@ -4,6 +4,17 @@ import { getRailTarget, mountRingsRail, subscribeRail } from "./rings-rail";
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
+async function expectNoInsertions(rail: HTMLElement) {
+  let insertions = 0;
+  const observer = new MutationObserver((records) => {
+    for (const record of records) insertions += record.addedNodes.length;
+  });
+  observer.observe(rail, { childList: true });
+  for (let i = 0; i < 3; i += 1) await frame();
+  observer.disconnect();
+  expect(insertions).toBe(0);
+}
+
 function dom(markup = '<div id="grid"><nav data-sidebar-navigation-placement="rail"></nav><div id="footer"><button aria-label="Настройки"><svg data-icon="Settings"></svg></button></div></div>') {
   document.body.innerHTML = markup;
   return document;
@@ -31,6 +42,7 @@ describe("rail anchor", () => {
     expect(target!.dataset.relayRingsOwned).toBe("");
     expect(target!.dataset.bbPlugin).toBe("clirelay-test");
     expect(target!.classList.contains("relay-rings-anchor")).toBe(true);
+    expect(target!.nextSibling).toBeNull();
     // чужой футер не трогаем
     expect(doc.querySelector("#footer")!.children).toHaveLength(1);
   });
@@ -67,6 +79,61 @@ describe("rail anchor", () => {
     expect(calls).toBe(1);
     expect(doc.querySelectorAll("[data-relay-rings-owned]")).toHaveLength(1);
     unsubscribe();
+  });
+
+  it("mounts after an existing usage-rings anchor", async () => {
+    const doc = dom();
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+    doc.querySelector("nav")!.append(usage);
+
+    mount(doc);
+    const target = getRailTarget();
+    await frame();
+    await frame();
+
+    expect(getRailTarget()).toBe(target);
+    expect(usage.nextElementSibling).toBe(target);
+  });
+
+  it("moves after usage-rings when its anchor is appended later", async () => {
+    const doc = dom();
+    mount(doc);
+    const target = getRailTarget();
+    await frame();
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+
+    doc.querySelector("nav")!.append(usage);
+    await frame();
+
+    expect(getRailTarget()).toBe(target);
+    expect(usage.nextElementSibling).toBe(target);
+  });
+
+  it("does not reinsert when already after usage-rings", async () => {
+    const doc = dom();
+    const rail = doc.querySelector("nav")!;
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+    rail.append(usage);
+    mount(doc);
+    await frame();
+
+    await expectNoInsertions(rail);
+  });
+
+  it("settles after moving behind a late usage-rings anchor", async () => {
+    const doc = dom();
+    const rail = doc.querySelector("nav")!;
+    mount(doc);
+    await frame();
+    const usage = doc.createElement("div");
+    usage.dataset.usageRingsOwned = "";
+    rail.append(usage);
+    await frame();
+
+    await expectNoInsertions(rail);
   });
 
   it("re-attaches when bb replaces the rail", async () => {
