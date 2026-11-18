@@ -8,6 +8,7 @@ import {
   RING_SIZE_MIN,
   RINGS_KV_KEY,
   RING_GAP,
+  RING_LIST_PADDING,
   RING_DISPLAY_MIN_SIZE,
   clampRingPerRow,
   clampRingSize,
@@ -151,8 +152,9 @@ describe("percent and tone", () => {
 });
 
 describe("effective ring size", () => {
-  it("uses the very gap the grid draws", () => {
+  it("uses the gap and padding the flex list draws", () => {
     expect(RING_GAP).toBe(4);
+    expect(RING_LIST_PADDING).toBe(3);
     expect(RING_DISPLAY_MIN_SIZE).toBe(12);
   });
 
@@ -167,6 +169,8 @@ describe("effective ring size", () => {
     expect(effectiveRingSize(40, 2, 40)).toBe(18);
     expect(effectiveRingSize(40, 3, 40)).toBe(12);
     expect(effectiveRingSize(40, 4, 40)).toBe(12);
+    // outer 48px - 2 * 3px padding = 42px content; (42 - 4) / 2 = 19
+    expect(effectiveRingSize(48 - 2 * RING_LIST_PADDING, 2, 32)).toBe(19);
   });
 
   it("never grows past the setting, so a wide rail changes nothing", () => {
