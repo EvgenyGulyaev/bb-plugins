@@ -5,7 +5,7 @@ import { countdown } from "@/lib/countdown";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
-import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringShowPercent, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
+import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
 import { loadRingsSources, type RingsRpc } from "@/lib/rings-source";
 
 // Логотипы вендорены в lib/provider-logos.ts (lobe-icons, MIT) и содержат
@@ -24,7 +24,7 @@ function quotaPercent(quota: RelayAccount["quotas"][number]): number | null {
 }
 
 /** Одно кольцо: больший активный остаток типа + попавер со всеми его аккаунтами. */
-export function RelayRing({ item, size = 40 }: { item: RingItem; size?: number }) {
+export function RelayRing({ item }: { item: RingItem }) {
   const title = ringTitle(item.label, item.percent, item.activeCount);
   return (
     <Popover.Root>
@@ -43,9 +43,7 @@ export function RelayRing({ item, size = 40 }: { item: RingItem; size?: number }
               ? <span className="relay-ring-initial" aria-hidden="true">{item.label.charAt(0).toUpperCase()}</span>
               : <RingLogo logo={item.logo} />}
           </span>
-          {ringShowPercent(size) && (
-            <span className="relay-ring-percent" aria-hidden="true">{ringPercentText(item.percent)}</span>
-          )}
+          <span className="relay-ring-percent" aria-hidden="true">{ringPercentText(item.percent)}</span>
         </button>
       </Popover.Trigger>
       <Popover.Portal>
@@ -161,7 +159,7 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   } as CSSProperties;
   return createPortal(
     <div className="relay-rings-list" aria-label="Кольца квот relay" style={layout}>
-      {items.map((item) => <RelayRing key={item.key} item={item} size={size} />)}
+      {items.map((item) => <RelayRing key={item.key} item={item} />)}
     </div>,
     target,
   );

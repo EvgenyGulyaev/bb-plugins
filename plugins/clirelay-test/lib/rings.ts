@@ -11,8 +11,6 @@ export const RING_SIZE_DEFAULT = 40;
 export const RING_PER_ROW_MIN = 1;
 export const RING_PER_ROW_MAX = 4;
 export const RING_PER_ROW_DEFAULT = 1;
-// Ниже этого размера подпись процента не помещается под кольцом.
-export const RING_PERCENT_MIN_SIZE = 32;
 // Тот же зазор, что рисует сетка колец в app.css.
 export const RING_GAP = 4;
 // Меньше этого кольцо уже не читается; лучше чуть выйти за рейл, чем исчезнуть.
@@ -129,12 +127,9 @@ export function ringDashArray(percent: number): string {
 }
 
 // Подпись под кольцом не должна вылезать за ширину кольца: «41%», «100%», «—».
+// Видна всегда: при мелком кольце CSS уменьшает её, а не прячет.
 export function ringPercentText(percent: number | null): string {
   return percent === null ? "—" : `${percent}%`;
-}
-
-export function ringShowPercent(size: number): boolean {
-  return size >= RING_PERCENT_MIN_SIZE;
 }
 
 export function ringTitle(label: string, percent: number | null, activeCount = 0): string {

@@ -20,7 +20,6 @@ import {
   ringItems,
   ringPercent,
   ringPercentText,
-  ringShowPercent,
   ringTitle,
   ringTone,
   ringsPerRowInputSchema,
@@ -148,14 +147,6 @@ describe("percent and tone", () => {
     for (const percent of [null, 0, 7, 41, 100]) {
       expect(ringPercentText(percent).length).toBeLessThanOrEqual(4);
     }
-  });
-
-  it("hides the printed percent below a 32px ring but keeps the label", () => {
-    expect(ringShowPercent(RING_SIZE_MIN)).toBe(false);
-    expect(ringShowPercent(31)).toBe(false);
-    expect(ringShowPercent(32)).toBe(true);
-    expect(ringShowPercent(RING_SIZE_DEFAULT)).toBe(true);
-    expect(ringTitle("kimi", 41)).toContain("41%");
   });
 });
 
