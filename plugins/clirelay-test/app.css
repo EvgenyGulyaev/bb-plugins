@@ -4,7 +4,6 @@
 
 .relay-rings-list {
   --relay-ring-size: 40px;
-  --relay-ring-cols: 1;
   /* Flex-строка вместо grid: неполная последняя строка центрируется, поэтому
      одиночное кольцо (например 3 кольца при perRow=2) стоит по центру рейла. */
   display: flex;
@@ -23,8 +22,9 @@
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  /* База колонки: (100% - зазоры) / --relay-ring-cols, как было у grid-колонки. */
-  flex: 0 0 calc((100% - (var(--relay-ring-cols) - 1) * 4px) / var(--relay-ring-cols));
+  /* --relay-ring-basis считает компонент с литеральным делителем: деление на
+     var() в Chromium окна bb невалидно и схлопывало кольца в одну колонку. */
+  flex: 0 0 var(--relay-ring-basis, 100%);
   width: 100%;
   max-width: var(--relay-ring-size);
   padding: 2px;

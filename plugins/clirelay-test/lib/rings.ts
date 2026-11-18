@@ -125,6 +125,14 @@ export function ringDashArray(percent: number): string {
   return `${percent} 100`;
 }
 
+// Flex-база кнопки кольца. Делитель литеральный: Chromium окна bb не принимает
+// деление на var() в calc(), из-за чего flex-basis становился auto и все кольца
+// съезжали в одну колонку.
+export function ringBasis(perRow: number, gap: number = RING_GAP): string {
+  const columns = clampRingPerRow(perRow);
+  return `calc((100% - ${(columns - 1) * gap}px) / ${columns})`;
+}
+
 // Подпись под кольцом не должна вылезать за ширину кольца: «41%», «100%», «—».
 // Видна всегда: при мелком кольце CSS уменьшает её, а не прячет.
 export function ringPercentText(percent: number | null): string {

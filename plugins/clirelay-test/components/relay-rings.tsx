@@ -5,7 +5,7 @@ import { countdown } from "@/lib/countdown";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
-import { ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
+import { ringBasis, ringDashArray, effectiveRingSize, ringItems, ringPercentText, ringTitle, type RingItem, type RingsState } from "@/lib/rings";
 import { loadRingsSources, type RingsRpc } from "@/lib/rings-source";
 
 // Логотипы вендорены в lib/provider-logos.ts (lobe-icons, MIT) и содержат
@@ -153,9 +153,10 @@ export function RelayRings({ rpc, state, target, reloadSignal = 0 }: {
   const size = effectiveRingSize(railWidth, state.perRow, state.size);
   const layout = {
     "--relay-ring-size": `${size}px`,
-    // Flex-база кнопки считается в CSS из числа колонок; неполная последняя
-    // строка центрируется justify-content:center.
-    "--relay-ring-cols": String(state.perRow),
+    // База кнопки считается здесь с литеральным делителем (см. ringBasis):
+    // calc() с делением на var() Chromium окна bb не принимает, и кольца
+    // схлопывались в одну колонку.
+    "--relay-ring-basis": ringBasis(state.perRow),
     width: "100%",
   } as CSSProperties;
   return createPortal(
