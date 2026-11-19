@@ -29,6 +29,7 @@ function turn(patch: Partial<TurnUsage> = {}): TurnUsage {
     reasoning: 120,
     total: 2_060,
     durationMs: 12_500,
+    turnDurationMs: 20_000,
     tokPerSec: 59.2,
     at: 1_000,
     ...patch,
@@ -95,7 +96,8 @@ describe("messageMetadata", () => {
     expect(badge?.getAttribute("title")).toContain("Reasoning: 120");
     expect(badge?.getAttribute("title")).toContain("Кеш чтение: 260000");
     expect(badge?.getAttribute("title")).toContain("Кеш запись: 5000");
-    expect(badge?.getAttribute("title")).toContain("Длительность: 12.5 с");
+    expect(badge?.getAttribute("title")).toContain("Последний вызов модели: 12.5 с");
+    expect(badge?.getAttribute("title")).toContain("Весь ход: 20 с");
   });
 
   it("без записи → null", async () => {
@@ -128,7 +130,7 @@ describe("messageMetadata", () => {
     expect(second.container.querySelectorAll(".token-meter-badge")).toHaveLength(1);
   });
 
-  it("realtime token-meter-changed обновляет keyed query", async () => {
+  it("инвалидация тега thread:<id> обновляет keyed query, чужой тег — нет", async () => {
     let current = turn({ output: 10 });
     const slot = renderSlot({ component: metadata.component }, { message: message() }, {
       pluginId: "token-meter",
@@ -138,11 +140,26 @@ describe("messageMetadata", () => {
       } as never,
     });
     slots.push(slot);
-    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "turn_usage")).toHaveLength(1));
+    const calls = () => slot.inspection.rpcCalls.filter((call) => call.method === "turn_usage").length;
+    await waitFor(() => expect(calls()).toBe(1));
     await slot.findByText(/↓10/);
+    current = turn({ output: 15 });
+    await slot.behavior.experimental_invalidateRpc(["thread:thr_other"]);
+    await act(async () => {});
+    expect(calls()).toBe(1);
     current = turn({ output: 20 });
-    await slot.behavior.emitRealtime("token-meter-changed", { threadId: THREAD });
+    await slot.behavior.experimental_invalidateRpc([`thread:${THREAD}`]);
     await slot.findByText(/↓20/);
+    expect(calls()).toBe(2);
+  });
+
+  it("равные createdAt → бейдж у большего messageId", async () => {
+    const first = mountMessage(message({ id: "message-2", createdAt: 100 }), turn());
+    await first.findByText(/↑1.2k/);
+    const second = mountMessage(message({ id: "message-1", createdAt: 100 }), turn());
+    await act(async () => {});
+    expect(second.container.childNodes).toHaveLength(0);
+    expect(first.container.querySelectorAll(".token-meter-badge")).toHaveLength(1);
   });
 });
 
@@ -156,7 +173,7 @@ describe("threadContextSegment", () => {
     expect(withoutData.container.childNodes).toHaveLength(0);
   });
 
-  it("realtime token-meter-changed обновляет сводку", async () => {
+  it("инвалидация тега обновляет сводку, чужой тег — нет", async () => {
     let current = summary({ total: 100 });
     const slot = renderSlot({ component: context.summary }, contextProps(), {
       rpc: {
@@ -165,9 +182,14 @@ describe("threadContextSegment", () => {
       } as never,
     });
     slots.push(slot);
+    const calls = () => slot.inspection.rpcCalls.filter((call) => call.method === "thread_usage").length;
     await slot.findByText(/Σ 100 токенов/);
+    expect(calls()).toBe(1);
+    await slot.behavior.experimental_invalidateRpc(["thread:thr_other"]);
+    await act(async () => {});
+    expect(calls()).toBe(1);
     current = summary({ total: 200 });
-    await slot.behavior.emitRealtime("token-meter-changed", { threadId: THREAD });
+    await slot.behavior.experimental_invalidateRpc([`thread:${THREAD}`]);
     await slot.findByText(/Σ 200 токенов/);
   });
 });

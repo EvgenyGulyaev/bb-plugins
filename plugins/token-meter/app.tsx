@@ -3,13 +3,12 @@ import {
   definePluginApp,
   experimental_useRpcKeyedQuery,
   experimental_useRpcQuery,
-  useRealtime,
 } from "@get-bb/plugin-sdk/app";
 import type {
   ExperimentalMessageMetadataProps,
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
-import { realtimePayloadSchema, rpcContract, type TurnUsage } from "./lib/contract.js";
+import { rpcContract, type TurnUsage } from "./lib/contract.js";
 import { formatThreadText, formatTurnText } from "./lib/format.js";
 import { createLatestMessageStore } from "./lib/latest-message.js";
 import "./app.css";
@@ -24,8 +23,9 @@ function turnTitle(usage: TurnUsage): string {
     `Кеш запись: ${usage.cacheWrite ?? "не сообщено"}`,
     `Выход: ${usage.output}`,
     `Reasoning: ${usage.reasoning}`,
-    `Всего за ход: ${usage.total}`,
-    `Длительность: ${usage.durationMs === null ? "недоступна" : `${usage.durationMs / 1_000} с`}`,
+    `Всего за вызов: ${usage.total}`,
+    `Последний вызов модели: ${usage.durationMs === null ? "недоступна" : `${usage.durationMs / 1_000} с`}`,
+    ...(usage.turnDurationMs === undefined ? [] : [`Весь ход: ${usage.turnDurationMs / 1_000} с`]),
     `Скорость: ${usage.tokPerSec === undefined ? "недоступна" : `${usage.tokPerSec} ток/с`}`,
   ].join("\n");
 }
@@ -40,12 +40,12 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
     enabled,
     select: (rows) => enabled ? rows[key] ?? null : null,
   });
-  useRealtime("token-meter-changed", (payload) => {
-    const parsed = realtimePayloadSchema.safeParse(payload);
-    if (parsed.success && parsed.data.threadId === message.threadId) void query.refetch();
-  });
 
-  useSyncExternalStore(latestMessages.subscribe, latestMessages.getVersion, latestMessages.getVersion);
+  const isLatest = useSyncExternalStore(
+    latestMessages.subscribe,
+    () => latestMessages.isLatest(key, message.id),
+    () => false,
+  );
   useEffect(() => {
     if (!enabled || message.turnId === null) return;
     return latestMessages.register({
@@ -56,7 +56,7 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
     });
   }, [enabled, message.createdAt, message.id, message.threadId, message.turnId]);
 
-  if (!enabled || !latestMessages.isLatest(key, message.id) || !query.data) return null;
+  if (!enabled || !isLatest || !query.data) return null;
   return (
     <span className="token-meter-badge" title={turnTitle(query.data)}>
       {formatTurnText(query.data)}
@@ -69,10 +69,6 @@ function ContextSummary({ threadId }: ExperimentalThreadContextSegmentProps) {
     contract: rpcContract,
     method: "thread_usage",
     input: { threadId },
-  });
-  useRealtime("token-meter-changed", (payload) => {
-    const parsed = realtimePayloadSchema.safeParse(payload);
-    if (parsed.success && parsed.data.threadId === threadId) void query.refetch();
   });
   if (!query.data) return null;
   return <span className="token-meter-context">{formatThreadText(query.data)}</span>;
