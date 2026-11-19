@@ -2,15 +2,21 @@ import { z } from "zod";
 import { DiscoverError } from "./discover";
 
 // Management API clirelay (codeProxy): GET {origin}/v0/management/ai-accounts/status.
+const relayNumber = z.preprocess(
+  (value) => typeof value === "string" && value.trim() && Number.isFinite(+value) ? +value : value,
+  z.number().nullable().optional(),
+).catch(undefined);
+const relayString = z.string().nullable().optional().catch(undefined);
+
 const quotaSchema = z.object({
   quota_key: z.string(),
   quota_label: z.string().optional(),
   percent: z.number().nullable().optional(),
-  reset_at: z.string().optional(),
-  window_seconds: z.number().nullable().optional(),
-  used_cost_usd: z.number().nullable().optional(),
-  value: z.union([z.string(), z.number()]).nullable().optional(),
-  meta: z.string().nullable().optional(),
+  reset_at: relayString,
+  window_seconds: relayNumber,
+  used_cost_usd: relayNumber,
+  value: z.union([z.string(), z.number()]).nullable().optional().catch(undefined),
+  meta: relayString,
 });
 
 export const relayAccountSchema = z.object({
@@ -26,13 +32,13 @@ export const relayAccountSchema = z.object({
   quotas: z.array(quotaSchema).default([]),
   usage: z
     .object({
-      success_rate: z.number().optional(),
+      success_rate: z.number().nullable().optional().catch(undefined),
       request_total: z.number().optional(),
-      cost_total: z.number().nullable().optional(),
-      cost_total_7d: z.number().nullable().optional(),
-      cycle_cost_total: z.number().nullable().optional(),
-      cycle_known: z.boolean().nullable().optional(),
-      request_total_7d: z.number().nullable().optional(),
+      cost_total: relayNumber,
+      cost_total_7d: relayNumber,
+      cycle_cost_total: relayNumber,
+      cycle_known: z.boolean().nullable().optional().catch(undefined),
+      request_total_7d: relayNumber,
     })
     .nullable()
     .optional(),
@@ -179,7 +185,7 @@ export function accountDisplayName(account: {
 }
 
 // relay отдаёт success_rate долей 0..1; старые сборки могли слать проценты.
-export function successPercent(rate: number | undefined): number | undefined {
+export function successPercent(rate: number | null | undefined): number | undefined {
   if (typeof rate !== "number" || !Number.isFinite(rate)) return undefined;
   return rate <= 1 ? rate * 100 : rate;
 }

@@ -188,6 +188,19 @@ describe("account costs and reset fallback", () => {
     expect(chip.getAttribute("title")).toBe("Всего: $432.83 · цикл: $34.10 · запросов за 7 дн: 437");
   });
 
+  it("omits zero total and cycle costs from the chip title", async () => {
+    mount({ accountItems: [account({
+      auth_index: "zero-details",
+      email: "zero-details@example.com",
+      quotas: [{ quota_key: "five_hour", percent: 100 }],
+      usage: { cost_total: 0, cost_total_7d: 2, cycle_cost_total: 0, cycle_known: true, request_total_7d: 4 },
+    })] });
+    const chip = await screen.findByText("$2.00 за 7 дн");
+    expect(chip.getAttribute("title")).toBe("запросов за 7 дн: 4");
+    expect(chip.getAttribute("title")).not.toContain("Всего: $0.00");
+    expect(chip.getAttribute("title")).not.toContain("цикл: $0.00");
+  });
+
   it("marks an unknown cycle and hides the chip for missing or zero usage", async () => {
     mount({ accountItems: [
       account({ auth_index: "unknown", email: "unknown@example.com", quotas: [{ quota_key: "five_hour", percent: 100 }], usage: { cost_total: 10, cost_total_7d: 2, cycle_cost_total: 3, cycle_known: false, request_total_7d: 4 } }),

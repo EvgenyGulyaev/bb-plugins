@@ -194,6 +194,38 @@ describe("fetchRelayAccounts", () => {
     });
     expect(items[1]?.usage).toMatchObject({ cost_total: null, cost_total_7d: null, cycle_cost_total: null, cycle_known: null, request_total_7d: null });
   });
+  it("не роняет весь снимок на строковых числах и мусорных полях", async () => {
+    const items = await fetchRelayAccounts("https://relay.example.com/v1", "test-key", ok({
+      items: [{
+        auth_index: "claude:loose@example.com",
+        quotas: [
+          { quota_key: "numeric", percent: 100, used_cost_usd: "34.10", window_seconds: "18000" },
+          { quota_key: "garbage", reset_at: null, used_cost_usd: "junk", window_seconds: {}, value: {}, meta: {} },
+        ],
+        usage: {
+          success_rate: null,
+          cost_total: "432.83",
+          cost_total_7d: "58.28",
+          cycle_cost_total: "junk",
+          cycle_known: "false",
+          request_total_7d: "437",
+        },
+      }],
+    }));
+    expect(items).toHaveLength(1);
+    expect(items[0]?.quotas[0]).toMatchObject({ used_cost_usd: 34.1, window_seconds: 18000 });
+    expect(items[0]?.quotas[1]?.reset_at).toBeNull();
+    expect(items[0]?.quotas[1]?.used_cost_usd).toBeUndefined();
+    expect(items[0]?.quotas[1]?.window_seconds).toBeUndefined();
+    expect(items[0]?.quotas[1]?.value).toBeUndefined();
+    expect(items[0]?.quotas[1]?.meta).toBeUndefined();
+    expect(items[0]?.usage?.success_rate).toBeNull();
+    expect(items[0]?.usage?.cost_total).toBe(432.83);
+    expect(items[0]?.usage?.cost_total_7d).toBe(58.28);
+    expect(items[0]?.usage?.cycle_cost_total).toBeUndefined();
+    expect(items[0]?.usage?.cycle_known).toBeUndefined();
+    expect(items[0]?.usage?.request_total_7d).toBe(437);
+  });
   it("401/403 → понятная ошибка без URL", async () => {
     for (const status of [401, 403]) {
       const fail = async () => new Response(JSON.stringify({ error: "invalid management key" }), { status });

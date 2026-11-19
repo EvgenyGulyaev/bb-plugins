@@ -1,5 +1,5 @@
 // Countdown до сброса окна квоты: 3d2h / 5h12m / 40m.
-export function countdown(resetAt?: string): string | null {
+export function countdown(resetAt?: string | null): string | null {
   if (!resetAt) return null;
   const ms = new Date(resetAt).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return null;
@@ -19,7 +19,7 @@ export function formatWindowDuration(seconds?: number | null): string | null {
 
 export function quotaResetFallback(quota: {
   percent?: number | null;
-  reset_at?: string;
+  reset_at?: string | null;
   window_seconds?: number | null;
 }): { text: string; title: string } | null {
   if (quota.reset_at) return null;

@@ -7,6 +7,7 @@ describe("formatUsd", () => {
     expect(formatUsd(0.07)).toBe("$0.07");
     expect(formatUsd(34.1)).toBe("$34.10");
     expect(formatUsd(999.99)).toBe("$999.99");
+    expect(formatUsd(999.995)).toBe("$1.0k");
   });
 
   it("uses thousands with one digit from 1000", () => {
