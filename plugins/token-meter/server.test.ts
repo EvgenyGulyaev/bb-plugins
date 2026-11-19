@@ -64,10 +64,12 @@ async function load(
   beforeLoad?: (host: Host) => Promise<void>,
   delayMs = 0,
   defaultExecutionOptions?: ExecutionLookup,
+  settings: Record<string, string | boolean> = {},
 ) {
   const calls: ListArgs[] = [];
   const host = createFakePluginHost({
     pluginId: "token-meter",
+    settings,
     sdk: {
       threads: {
         defaultExecutionOptions: async (args: { threadId: string }) => defaultExecutionOptions?.(args) ?? null,
@@ -100,6 +102,8 @@ function turnKey(turnId = TURN): string {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   await Promise.all(hosts.splice(0).map((host) => host.harness.lifecycle.dispose()));
 });
 
@@ -454,5 +458,117 @@ describe("события → kv → RPC", () => {
     expect(host.harness.inspection.logEntries).toEqual([]);
     expect(await host.bb.storage.kv.get(turnKey("turn-3"))).toMatchObject({ model: "test-model" });
     expect(lookup).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("замер чистой генерации RPC", () => {
+  const endpoint = "http://localhost:8317/v1";
+  const enabled = { benchEnabled: true, benchEndpoint: endpoint, benchApiKey: "super-secret" };
+  const response = (outputTokens: number): Response => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ usage: { completion_tokens: outputTokens } }),
+  }) as Response;
+
+  function stubBenchFetch() {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps = [
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+    ];
+    const fetchMock = vi.fn(async () => {
+      const step = steps[fetchMock.mock.calls.length - 1];
+      if (!step) throw new Error("unexpected fetch");
+      now += step.durationMs;
+      return response(step.outputTokens);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it.each([
+    ["выключен", { benchEnabled: false, benchEndpoint: endpoint }],
+    ["без endpoint", { benchEnabled: true, benchEndpoint: "" }],
+  ])("%s → отказ без сети", async (_name, settings) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { host } = await load([], undefined, 0, undefined, settings);
+    await expect(host.harness.behavior.callRpc("bench_model", { model: "test-model" }))
+      .rejects.toThrow(/выключен|benchEndpoint/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("сохраняет результат, возвращает list без секрета и инвалидирует bench", async () => {
+    const fetchMock = stubBenchFetch();
+    const lookup = vi.fn<ExecutionLookup>(async () => ({ model: "test-model", providerId: "test-provider" }));
+    const { host } = await load([
+      row("turn/started", 1, 1_000),
+      row("turn/completed", 2, 2_000),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, lookup, enabled);
+    await emit(host, 3);
+    const result = await host.harness.behavior.callRpc("bench_model", { model: "test-model" });
+    expect(result).toMatchObject({ model: "test-model", genTokPerSec: 180, latencyMs: 444 });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(await host.bb.storage.kv.get("token-meter:bench:test-model")).toEqual(result);
+    const list = await host.harness.behavior.callRpc("bench_list", null);
+    expect(list).toMatchObject({
+      models: ["test-model"], results: [result], benchEnabled: true, hasEndpoint: true,
+    });
+    expect(host.harness.inspection.experimental_rpcInvalidations).toContainEqual(["bench"]);
+    expect(JSON.stringify({
+      result, list, logs: host.harness.inspection.logEntries,
+    })).not.toContain("super-secret");
+  });
+
+  it("bench_list возвращает уникальные модели записанных ходов и только валидные замеры", async () => {
+    const { host } = await load([], async (host) => {
+      for (const [turnId, model] of [["a", "model-b"], ["b", "model-a"], ["c", "model-a"]] as const) {
+        await host.bb.storage.kv.set(`token-meter:turn:${THREAD}:${turnId}`, {
+          threadId: THREAD, turnId, input: 1, cached: 0, output: 1, reasoning: 0,
+          total: 2, model, at: Date.now(),
+        });
+      }
+      await host.bb.storage.kv.set("token-meter:bench:model-a", { broken: true });
+    }, 0, undefined, { benchEnabled: false, benchEndpoint: "" });
+    expect(await host.harness.behavior.callRpc("bench_list", null)).toEqual({
+      models: ["model-a", "model-b"], results: [], benchEnabled: false, hasEndpoint: false,
+    });
+  });
+
+  it("одновременно разрешён только один замер, lock снимается после завершения", async () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    let releaseFirst = () => {};
+    const steps = [
+      { outputTokens: 1_000, durationMs: 6_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+    ];
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        releaseFirst = () => {
+          now += 1_000;
+          resolve(response(100));
+        };
+      }))
+      .mockImplementation(async () => {
+        const step = steps[fetchMock.mock.calls.length - 2];
+        if (!step) throw new Error("unexpected fetch");
+        now += step.durationMs;
+        return response(step.outputTokens);
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const { host } = await load([], undefined, 0, undefined, enabled);
+    const first = host.harness.behavior.callRpc("bench_model", { model: "test-model" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await expect(host.harness.behavior.callRpc("bench_model", { model: "other-model" }))
+      .rejects.toThrow("уже выполняется");
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({ genTokPerSec: 180 });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

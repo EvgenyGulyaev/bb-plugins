@@ -8,9 +8,10 @@ import type {
   ExperimentalMessageMetadataProps,
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
-import { rpcContract, type TurnUsage } from "./lib/contract.js";
+import { rpcContract } from "./lib/contract.js";
 import { formatThreadText, formatTurnText, formatTurnTitle } from "./lib/format.js";
 import { createLatestMessageStore } from "./lib/latest-message.js";
+import { TokenMeterSettings } from "./settings.js";
 import "./app.css";
 
 const latestMessages = createLatestMessageStore();
@@ -25,6 +26,17 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
     enabled,
     select: (rows) => enabled ? rows[key] ?? null : null,
   });
+
+  const model = query.data?.model;
+  const benchQuery = experimental_useRpcQuery({
+    contract: rpcContract,
+    method: "bench_list",
+    input: null,
+    enabled: model !== undefined,
+  });
+  const benchmark = model === undefined
+    ? undefined
+    : benchQuery.data?.results.find((row) => row.model === model);
 
   const isLatest = useSyncExternalStore(
     latestMessages.subscribe,
@@ -43,8 +55,8 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
 
   if (!enabled || !isLatest || !query.data) return null;
   return (
-    <span className="token-meter-badge" title={formatTurnTitle(query.data)}>
-      {formatTurnText(query.data)}
+    <span className="token-meter-badge" title={formatTurnTitle(query.data, benchmark)}>
+      {formatTurnText(query.data, benchmark)}
     </span>
   );
 }
@@ -70,5 +82,11 @@ export default definePluginApp((app) => {
     title: "Токены",
     group: "token-meter",
     summary: ContextSummary,
+  });
+  app.slots.settingsSection({
+    id: "benchmark",
+    title: "Замер скорости модели",
+    description: "Прямой non-stream замер чистой генерации по разнице длин ответов.",
+    component: TokenMeterSettings,
   });
 });

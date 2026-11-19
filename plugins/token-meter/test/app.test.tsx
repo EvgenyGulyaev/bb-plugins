@@ -7,7 +7,7 @@ import type {
   ExperimentalMessageMetadataProps,
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
-import type { ThreadUsage, TurnUsage } from "../lib/contract.js";
+import type { BenchResult, ThreadUsage, TurnUsage } from "../lib/contract.js";
 
 const app = await loadPluginApp(() => import("../app"));
 const metadata = app.messageMetadata.find((row) => row.id === "token-meter")!;
@@ -55,12 +55,13 @@ function contextProps(): ExperimentalThreadContextSegmentProps {
   };
 }
 
-function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage: TurnUsage | null) {
+function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage: TurnUsage | null, benchmarks: BenchResult[] = []) {
   const slot = renderSlot({ component: metadata.component }, { message: props }, {
     pluginId: "token-meter",
     rpc: {
       turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? usage : null])),
       thread_usage: () => null,
+      bench_list: () => ({ models: [], results: benchmarks, benchEnabled: false, hasEndpoint: false }),
     } as never,
   });
   slots.push(slot);
@@ -98,6 +99,23 @@ describe("messageMetadata", () => {
     expect(badge?.getAttribute("title")).toContain("Кеш запись: 5000");
     expect(badge?.getAttribute("title")).toContain("Последний вызов: 12.5 с · Весь ход: 20 с");
     expect(badge?.getAttribute("title")).toContain("Эффективная скорость последнего вызова: 59.2 ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена");
+  });
+
+  it("добавляет прямой замер модели хода в бейдж и title", async () => {
+    const benchmark: BenchResult = {
+      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
+      at: Date.UTC(2026, 0, 2),
+      samples: [
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+      ],
+    };
+    const slot = mountMessage(message(), turn({ model: "test-model" }), [benchmark]);
+    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.) · модель ~207")).toBeTruthy();
+    expect(slot.container.querySelector(".token-meter-badge")?.getAttribute("title"))
+      .toContain("Чистая генерация модели test-model: ~207 ток/с, задержка ~1.0 с (замер 2026-01-02)");
   });
 
   it("без записи → null", async () => {

@@ -1,5 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { benchmarkModel } from "./lib/bench.js";
 import {
+  benchResultSchema,
   itemEventRowSchema,
   rpcContract,
   threadTag,
@@ -7,6 +9,7 @@ import {
   turnEventRowSchema,
   turnUsageSchema,
   usageEventRowSchema,
+  type BenchResult,
   type ItemEventRow,
   type TurnUsage,
   type UsageEventRow,
@@ -23,6 +26,8 @@ const STARTED_LOOKBACK = 20;
 const TURN_PREFIX = "token-meter:turn:";
 const THREAD_PREFIX = "token-meter:thread:";
 const SEQ_PREFIX = "token-meter:seq:";
+const BENCH_PREFIX = "token-meter:bench:";
+const BENCH_TAG = "bench";
 /** Айтемы вывода: последний вызов модели начинается после последнего НЕ такого айтема. */
 const MODEL_ITEM_KINDS = new Set(["agentMessage", "reasoning"]);
 const EXECUTION_CACHE_MS = 60_000;
@@ -81,6 +86,26 @@ async function readTurns(kv: Kv, threadId: string): Promise<TurnUsage[]> {
     const parsed = turnUsageSchema.safeParse(row);
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+async function listRecordedModels(kv: Kv): Promise<string[]> {
+  const models = new Set<string>();
+  const keys = await kv.list(TURN_PREFIX);
+  const rows = await Promise.all(keys.map((key) => kv.get<unknown>(key)));
+  for (const row of rows) {
+    const parsed = turnUsageSchema.safeParse(row);
+    if (parsed.success && parsed.data.model) models.add(parsed.data.model);
+  }
+  return [...models].sort();
+}
+
+async function listBenchmarks(kv: Kv): Promise<BenchResult[]> {
+  const keys = await kv.list(BENCH_PREFIX);
+  const rows = await Promise.all(keys.map((key) => kv.get<unknown>(key)));
+  return rows.flatMap((row) => {
+    const parsed = benchResultSchema.safeParse(row);
+    return parsed.success ? [parsed.data] : [];
+  }).sort((a, b) => a.model.localeCompare(b.model));
 }
 
 async function writeSummary(
@@ -282,6 +307,29 @@ async function dropThread(bb: BbPluginApi, threadId: string): Promise<void> {
 }
 
 export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define({
+    benchEndpoint: {
+      type: "string",
+      label: "OpenAI-совместимый endpoint для замера",
+      description: "Base URL, например http://localhost:8317/v1. Запросы уходят только по кнопке.",
+      default: "",
+    },
+    benchApiKey: {
+      type: "string",
+      label: "API key для замера",
+      description: "Необязательный ключ; хранится как secret и не попадает в UI/RPC.",
+      secret: true,
+      default: "",
+    },
+    benchEnabled: {
+      type: "boolean",
+      label: "Разрешить прямой замер модели",
+      description: "По умолчанию выключено: плагин ничего не отправляет.",
+      default: false,
+    },
+  });
+  let activeBench: Promise<BenchResult> | null = null;
+
   bb.rpc.register(rpcContract, {
     turn_usage: async ({ keys }) => Object.fromEntries(await Promise.all(keys.map(async (key) => {
       const separator = key.indexOf(":");
@@ -295,7 +343,44 @@ export default async function plugin(bb: BbPluginApi) {
       const parsed = threadUsageSchema.safeParse(await bb.storage.kv.get<unknown>(summaryKey(threadId)));
       return parsed.success ? parsed.data : null;
     },
+    bench_model: async ({ model }) => {
+      if (activeBench) throw new Error("Другой замер уже выполняется");
+      const run = (async () => {
+        const config = await settings.get();
+        if (!config.benchEnabled) throw new Error("Прямой замер выключен: включите benchEnabled");
+        const endpoint = config.benchEndpoint.trim();
+        if (!endpoint) throw new Error("Укажите benchEndpoint в настройках token-meter");
+        const result = await benchmarkModel({
+          model,
+          endpoint,
+          ...(config.benchApiKey ? { apiKey: config.benchApiKey } : {}),
+        });
+        await bb.storage.kv.set(`${BENCH_PREFIX}${model}`, result);
+        bb.rpc.experimental_invalidate([BENCH_TAG]);
+        return result;
+      })();
+      activeBench = run;
+      try {
+        return await run;
+      } finally {
+        if (activeBench === run) activeBench = null;
+      }
+    },
+    bench_list: async () => {
+      const [models, results, config] = await Promise.all([
+        listRecordedModels(bb.storage.kv),
+        listBenchmarks(bb.storage.kv),
+        settings.get(),
+      ]);
+      return {
+        models,
+        results,
+        benchEnabled: config.benchEnabled,
+        hasEndpoint: config.benchEndpoint.trim().length > 0,
+      };
+    },
   });
+  settings.onChange(() => bb.rpc.experimental_invalidate([BENCH_TAG]));
 
   try {
     await pruneAll(bb);
