@@ -1,0 +1,68 @@
+import type { ThreadUsage, TokenUsage, TurnUsage } from "./contract.js";
+
+export const MAX_TURNS_PER_THREAD = 500;
+export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function makeTurnUsage(input: {
+  threadId: string;
+  turnId: string;
+  tokenUsage: TokenUsage;
+  startedAt: number | null;
+  completedAt: number;
+  at: number;
+}): TurnUsage {
+  const { last } = input.tokenUsage;
+  const elapsed = input.startedAt === null ? null : input.completedAt - input.startedAt;
+  const durationMs = elapsed !== null && elapsed > 0 ? elapsed : null;
+  const tokPerSec = durationMs !== null && durationMs >= 1_000 && last.outputTokens > 0
+    ? Math.round((last.outputTokens / (durationMs / 1_000)) * 10) / 10
+    : undefined;
+  return {
+    threadId: input.threadId,
+    turnId: input.turnId,
+    input: last.inputTokens,
+    cached: last.cachedInputTokens,
+    ...(last.cacheReadInputTokens === undefined ? {} : { cacheRead: last.cacheReadInputTokens }),
+    ...(last.cacheWriteInputTokens === undefined ? {} : { cacheWrite: last.cacheWriteInputTokens }),
+    output: last.outputTokens,
+    reasoning: last.reasoningOutputTokens,
+    total: last.totalTokens,
+    durationMs,
+    ...(tokPerSec === undefined ? {} : { tokPerSec }),
+    at: input.at,
+  };
+}
+
+export function summarizeTurns(
+  threadId: string,
+  turns: readonly TurnUsage[],
+  total: number,
+  modelContextWindow: number | null,
+): ThreadUsage {
+  const rates = turns.flatMap((row) => row.tokPerSec === undefined ? [] : [row.tokPerSec]);
+  const averageTokPerSec = rates.length === 0
+    ? undefined
+    : Math.round((rates.reduce((sum, rate) => sum + rate, 0) / rates.length) * 10) / 10;
+  return {
+    threadId,
+    total,
+    turns: turns.length,
+    ...(averageTokPerSec === undefined ? {} : { averageTokPerSec }),
+    modelContextWindow,
+  };
+}
+
+export function retainTurns(
+  turns: readonly TurnUsage[],
+  now: number,
+  maxTurns = MAX_TURNS_PER_THREAD,
+): { kept: TurnUsage[]; removed: TurnUsage[] } {
+  const sorted = [...turns].sort((a, b) => b.at - a.at);
+  const kept: TurnUsage[] = [];
+  const removed: TurnUsage[] = [];
+  for (const row of sorted) {
+    if (kept.length < maxTurns && row.at >= now - RETENTION_MS) kept.push(row);
+    else removed.push(row);
+  }
+  return { kept, removed };
+}
