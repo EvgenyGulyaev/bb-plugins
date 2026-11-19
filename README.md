@@ -52,6 +52,12 @@
 
 [Подробная документация usage-rings](plugins/usage-rings/README.md)
 
+### `rail-folders`
+
+Объединяет иконки левого рейла BB в папки. Позволяет создавать и переименовывать папки, выбирать их иконки, менять порядок папок и участников, а также перетаскивать иконки между папками и рейлом.
+
+[Подробная документация rail-folders](plugins/rail-folders/README.md)
+
 ### `token-meter`
 
 Фактические входные/выходные токены, cache и wall-clock ток/с у ответов pi/codex, накопленная сводка по треду; без usage бейдж не рисуется.
@@ -78,6 +84,7 @@ bb plugin install git:https://github.com/deicer/bb-plugins.git@main --plugin ses
 clirelay-test
 file-manager-multi-host
 kanban-board
+rail-folders
 token-meter
 ru
 ```
@@ -107,3 +114,4 @@ bb plugin update session-history
 ## Репозиторий
 
 [github.com/deicer/bb-plugins](https://github.com/deicer/bb-plugins)
+
