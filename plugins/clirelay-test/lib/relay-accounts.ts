@@ -7,8 +7,10 @@ const quotaSchema = z.object({
   quota_label: z.string().optional(),
   percent: z.number().nullable().optional(),
   reset_at: z.string().optional(),
-  window_seconds: z.number().optional(),
-  used_cost_usd: z.number().optional(),
+  window_seconds: z.number().nullable().optional(),
+  used_cost_usd: z.number().nullable().optional(),
+  value: z.union([z.string(), z.number()]).nullable().optional(),
+  meta: z.string().nullable().optional(),
 });
 
 export const relayAccountSchema = z.object({
@@ -26,7 +28,11 @@ export const relayAccountSchema = z.object({
     .object({
       success_rate: z.number().optional(),
       request_total: z.number().optional(),
-      cost_total: z.number().optional(),
+      cost_total: z.number().nullable().optional(),
+      cost_total_7d: z.number().nullable().optional(),
+      cycle_cost_total: z.number().nullable().optional(),
+      cycle_known: z.boolean().nullable().optional(),
+      request_total_7d: z.number().nullable().optional(),
     })
     .nullable()
     .optional(),

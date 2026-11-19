@@ -8,3 +8,25 @@ export function countdown(resetAt?: string): string | null {
   const days = Math.floor(hours / 24);
   return days > 0 ? `${days}d${hours % 24}h` : hours > 0 ? `${hours}h${minutes % 60}m` : `${minutes}m`;
 }
+
+export function formatWindowDuration(seconds?: number | null): string | null {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return null;
+  if (seconds % 86400 === 0) return `${seconds / 86400} дн`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} ч`;
+  if (seconds % 60 === 0) return `${seconds / 60} мин`;
+  return `${seconds} сек`;
+}
+
+export function quotaResetFallback(quota: {
+  percent?: number | null;
+  reset_at?: string;
+  window_seconds?: number | null;
+}): { text: string; title: string } | null {
+  if (quota.reset_at) return null;
+  const duration = formatWindowDuration(quota.window_seconds);
+  if (duration === null) return null;
+  return {
+    text: quota.percent === 100 ? "окно не начато" : "сброс неизвестен",
+    title: `relay не сообщает сброс, пока окно не начато; длина окна ${duration}`,
+  };
+}

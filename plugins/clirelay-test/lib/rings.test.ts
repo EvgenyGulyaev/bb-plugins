@@ -225,6 +225,7 @@ describe("ring items", () => {
     provider: "kimi",
     email: "k@example.com",
     quotas: [{ quota_key: "m_quota.code_5h", percent: 63 }],
+    usage: { cost_total_7d: 58.28 },
   });
   const claude = account({
     auth_index: "claude:1",
@@ -245,7 +246,7 @@ describe("ring items", () => {
     const [item] = ringItems(["http://a:1|kimi:1"], [{ origin: "http://a:1", accounts: [kimi] }]);
     expect(item).toMatchObject({ key: "kimi", label: "Kimi", logo: "kimi", percent: 63, tone: "normal" });
     expect(item!.accounts).toHaveLength(1);
-    expect(item!.accounts[0]).toMatchObject({ key: "http://a:1|kimi:1", label: "k@example.com", percent: 63, disabled: false });
+    expect(item!.accounts[0]).toMatchObject({ key: "http://a:1|kimi:1", label: "k@example.com", percent: 63, disabled: false, usage: { cost_total_7d: 58.28 } });
     expect(ringTitle(item!.label, item!.percent, item!.activeCount)).toBe("Kimi: осталось 63%");
   });
 
