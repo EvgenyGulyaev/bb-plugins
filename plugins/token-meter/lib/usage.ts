@@ -7,16 +7,22 @@ export function makeTurnUsage(input: {
   threadId: string;
   turnId: string;
   tokenUsage: TokenUsage;
-  startedAt: number | null;
-  completedAt: number;
+  /** Начало окна последнего вызова модели: конец последнего инструмента или turn/started. */
+  windowStartedAt: number | null;
+  /** Конец окна и хода: turn/completed (или время usage-события). */
+  endedAt: number;
+  /** Начало всего хода из turn/started; null, если его не нашли. */
+  turnStartedAt: number | null;
   at: number;
 }): TurnUsage {
   const { last } = input.tokenUsage;
-  const elapsed = input.startedAt === null ? null : input.completedAt - input.startedAt;
+  const elapsed = input.windowStartedAt === null ? null : input.endedAt - input.windowStartedAt;
   const durationMs = elapsed !== null && elapsed > 0 ? elapsed : null;
   const tokPerSec = durationMs !== null && durationMs >= 1_000 && last.outputTokens > 0
     ? Math.round((last.outputTokens / (durationMs / 1_000)) * 10) / 10
     : undefined;
+  const turnElapsed = input.turnStartedAt === null ? null : input.endedAt - input.turnStartedAt;
+  const turnDurationMs = turnElapsed !== null && turnElapsed > 0 ? turnElapsed : undefined;
   return {
     threadId: input.threadId,
     turnId: input.turnId,
@@ -28,6 +34,7 @@ export function makeTurnUsage(input: {
     reasoning: last.reasoningOutputTokens,
     total: last.totalTokens,
     durationMs,
+    ...(turnDurationMs === undefined ? {} : { turnDurationMs }),
     ...(tokPerSec === undefined ? {} : { tokPerSec }),
     at: input.at,
   };
@@ -36,7 +43,6 @@ export function makeTurnUsage(input: {
 export function summarizeTurns(
   threadId: string,
   turns: readonly TurnUsage[],
-  total: number,
   modelContextWindow: number | null,
 ): ThreadUsage {
   const rates = turns.flatMap((row) => row.tokPerSec === undefined ? [] : [row.tokPerSec]);
@@ -45,7 +51,7 @@ export function summarizeTurns(
     : Math.round((rates.reduce((sum, rate) => sum + rate, 0) / rates.length) * 10) / 10;
   return {
     threadId,
-    total,
+    total: turns.reduce((sum, row) => sum + row.total, 0),
     turns: turns.length,
     ...(averageTokPerSec === undefined ? {} : { averageTokPerSec }),
     modelContextWindow,

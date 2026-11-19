@@ -59,6 +59,23 @@ export const turnEventRowSchema = z.object({
   .refine((row) => scopeTurnId(row) !== undefined, requireTurnScope)
   .transform((row) => ({ ...row, turnId: scopeTurnId(row) as string }));
 
+/**
+ * `item/started` and `item/completed`. `itemKind` comes from `data.item.type`
+ * (bb's own DB also keeps it in an `item_kind` column).
+ */
+export const itemEventRowSchema = z.object({
+  type: z.enum(["item/started", "item/completed"]),
+  ...eventBaseShape,
+  itemKind: z.string().min(1).optional(),
+  data: z.object({ item: z.object({ type: z.string().min(1) }).loose().optional() }).optional(),
+})
+  .refine((row) => scopeTurnId(row) !== undefined, requireTurnScope)
+  .transform((row) => ({
+    ...row,
+    turnId: scopeTurnId(row) as string,
+    itemKind: row.data?.item?.type ?? row.itemKind,
+  }));
+
 export const turnUsageSchema = z.object({
   threadId: z.string().min(1),
   turnId: z.string().min(1),
@@ -69,7 +86,10 @@ export const turnUsageSchema = z.object({
   output: tokenCount,
   reasoning: tokenCount,
   total: tokenCount,
+  /** Окно последнего вызова модели (или всего хода, если инструментов не было). */
   durationMs: z.number().positive().nullable(),
+  /** Весь ход: turn/completed − turn/started. */
+  turnDurationMs: z.number().positive().optional(),
   tokPerSec: tokenCount.optional(),
   at: tokenCount,
 });
@@ -85,18 +105,29 @@ export const threadUsageSchema = z.object({
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 export type UsageEventRow = z.infer<typeof usageEventRowSchema>;
 export type TurnEventRow = z.infer<typeof turnEventRowSchema>;
+export type ItemEventRow = z.infer<typeof itemEventRowSchema>;
 export type TurnUsage = z.infer<typeof turnUsageSchema>;
 export type ThreadUsage = z.infer<typeof threadUsageSchema>;
 
-export const realtimePayloadSchema = z.object({ threadId: z.string().min(1) });
+/** RPC cache tag shared by both methods and by the server's invalidation. */
+export function threadTag(threadId: string): string {
+  return `thread:${threadId}`;
+}
+
+function keyThreadTag(key: string): readonly string[] {
+  const separator = key.indexOf(":");
+  return separator > 0 ? [threadTag(key.slice(0, separator))] : [];
+}
 
 export const rpcContract = defineRpcContract({
   turn_usage: {
     input: z.object({ keys: z.array(z.string().min(3)).max(500) }).strict(),
     output: z.record(z.string(), turnUsageSchema.nullable()),
+    keyTags: (key: string) => keyThreadTag(key),
   },
   thread_usage: {
     input: z.object({ threadId: z.string().min(1) }).strict(),
     output: threadUsageSchema.nullable(),
+    tags: (input: { threadId: string }) => [threadTag(input.threadId)],
   },
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TurnUsage } from "./contract.js";
-import { usageEventRowSchema, turnEventRowSchema } from "./contract.js";
+import { usageEventRowSchema, turnEventRowSchema, itemEventRowSchema } from "./contract.js";
 import { makeTurnUsage, retainTurns, summarizeTurns } from "./usage.js";
 
 const tokenUsage = {
@@ -43,6 +43,18 @@ function turn(turnId: string, at: number, tokPerSec?: number): TurnUsage {
   };
 }
 
+function windowOf(patch: { windowStartedAt: number | null; endedAt: number; turnStartedAt?: number | null }) {
+  return makeTurnUsage({
+    threadId: "thr_1",
+    turnId: "turn-1",
+    tokenUsage,
+    windowStartedAt: patch.windowStartedAt,
+    endedAt: patch.endedAt,
+    turnStartedAt: patch.turnStartedAt ?? null,
+    at: patch.endedAt,
+  });
+}
+
 describe("usageEventRowSchema", () => {
   it("берёт turnId из turn-скоупа события", () => {
     const parsed = usageEventRowSchema.safeParse(usageRow());
@@ -74,6 +86,24 @@ describe("usageEventRowSchema", () => {
     }
   });
 
+  it("item/started и item/completed читают turnId из скоупа и вид айтема", () => {
+    const tool = itemEventRowSchema.safeParse({
+      id: "event-3", type: "item/completed", threadId: "thr_1", scope: { kind: "turn", turnId: "turn-1" },
+      seq: 14, createdAt: 11_000, data: { providerThreadId: "provider-thread", item: { type: "commandExecution", id: "i1" } },
+    });
+    expect(tool.success && [tool.data.turnId, tool.data.itemKind]).toEqual(["turn-1", "commandExecution"]);
+    const legacy = itemEventRowSchema.safeParse({
+      id: "event-4", type: "item/completed", threadId: "thr_1", scope: { kind: "turn", turnId: "turn-1" },
+      seq: 15, createdAt: 11_000, itemKind: "fileChange", data: {},
+    });
+    expect(legacy.success && legacy.data.itemKind).toBe("fileChange");
+    const threadScoped = itemEventRowSchema.safeParse({
+      id: "event-5", type: "item/completed", threadId: "thr_1", scope: { kind: "thread" },
+      seq: 16, createdAt: 11_000, itemKind: "toolCall", data: {},
+    });
+    expect(threadScoped.success).toBe(false);
+  });
+
   it("принимает фактический usage и optional cache read/write", () => {
     const parsed = usageEventRowSchema.safeParse(usageRow());
     expect(parsed.success).toBe(true);
@@ -89,26 +119,50 @@ describe("usageEventRowSchema", () => {
 });
 
 describe("makeTurnUsage", () => {
-  it("durationMs = completed − started; tokPerSec округляется до 0.1", () => {
-    expect(makeTurnUsage({ threadId: "thr_1", turnId: "turn-1", tokenUsage, startedAt: 7_000, completedAt: 10_000, at: 10_000 })).toMatchObject({
+  it("durationMs — окно последнего вызова модели; tokPerSec от него; длительность хода отдельно", () => {
+    expect(windowOf({ windowStartedAt: 7_000, endedAt: 10_000, turnStartedAt: 1_000 })).toMatchObject({
       input: 1_200, cached: 265_000, cacheRead: 260_000, cacheWrite: 5_000,
-      output: 42, reasoning: 7, total: 1_249, durationMs: 3_000, tokPerSec: 14,
+      output: 42, reasoning: 7, total: 1_249, durationMs: 3_000, tokPerSec: 14, turnDurationMs: 9_000,
     });
   });
 
-  it("не выдумывает скорость при duration < 1s, нулевом output или некорректном started", () => {
-    expect(makeTurnUsage({ threadId: "thr_1", turnId: "turn-1", tokenUsage, startedAt: 9_001, completedAt: 10_000, at: 10_000 })).not.toHaveProperty("tokPerSec");
-    expect(makeTurnUsage({ threadId: "thr_1", turnId: "turn-1", tokenUsage, startedAt: 11_000, completedAt: 10_000, at: 10_000 }).durationMs).toBeNull();
+  it("ровно 1000 мс окна → tokPerSec есть", () => {
+    expect(windowOf({ windowStartedAt: 9_000, endedAt: 10_000 })).toMatchObject({ durationMs: 1_000, tokPerSec: 42 });
+  });
+
+  it("не выдумывает скорость на коротком окне, нулевом output или некорректном старте", () => {
+    const short = windowOf({ windowStartedAt: 9_001, endedAt: 10_000 });
+    expect(Object.hasOwn(short, "tokPerSec")).toBe(false);
+    expect(windowOf({ windowStartedAt: 11_000, endedAt: 10_000 }).durationMs).toBeNull();
+    expect(windowOf({ windowStartedAt: 10_000, endedAt: 10_000 }).durationMs).toBeNull();
     const zero = structuredClone(tokenUsage);
     zero.last.outputTokens = 0;
-    expect(makeTurnUsage({ threadId: "thr_1", turnId: "turn-1", tokenUsage: zero, startedAt: 0, completedAt: 2_000, at: 2_000 })).not.toHaveProperty("tokPerSec");
+    const zeroRow = makeTurnUsage({
+      threadId: "thr_1", turnId: "turn-1", tokenUsage: zero,
+      windowStartedAt: 0, endedAt: 2_000, turnStartedAt: null, at: 2_000,
+    });
+    expect(Object.hasOwn(zeroRow, "tokPerSec")).toBe(false);
+  });
+
+  it("опускает необязательные поля вместо undefined на границе JSON", () => {
+    const bare = structuredClone(tokenUsage);
+    delete (bare.last as Record<string, unknown>).cacheReadInputTokens;
+    delete (bare.last as Record<string, unknown>).cacheWriteInputTokens;
+    const record = makeTurnUsage({
+      threadId: "thr_1", turnId: "turn-1", tokenUsage: bare,
+      windowStartedAt: 9_000, endedAt: 9_500, turnStartedAt: null, at: 9_500,
+    });
+    for (const field of ["cacheRead", "cacheWrite", "tokPerSec", "turnDurationMs"]) {
+      expect(Object.hasOwn(record, field)).toBe(false);
+    }
+    expect(JSON.stringify(record)).not.toContain("undefined");
   });
 });
 
 describe("сводка и retention", () => {
-  it("использует provider total и среднее только по ходам со скоростью", () => {
-    expect(summarizeTurns("thr_1", [turn("a", 1, 30), turn("b", 2), turn("c", 3, 50)], 531_000, 1_000_000)).toEqual({
-      threadId: "thr_1", total: 531_000, turns: 3, averageTokPerSec: 40, modelContextWindow: 1_000_000,
+  it("суммирует total по сохранённым ходам и усредняет только ходы со скоростью", () => {
+    expect(summarizeTurns("thr_1", [turn("a", 1, 30), turn("b", 2), turn("c", 3, 50)], 1_000_000)).toEqual({
+      threadId: "thr_1", total: 45, turns: 3, averageTokPerSec: 40, modelContextWindow: 1_000_000,
     });
   });
 
