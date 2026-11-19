@@ -12,9 +12,14 @@ import {
 import { makeTurnUsage, retainTurns, summarizeTurns } from "./lib/usage.js";
 
 const EVENT_TYPES = ["thread/tokenUsage/updated", "turn/started", "turn/completed"] as const;
-const PAGE_SIZE = "500";
-const STARTED_LOOKBACK = "20";
+/** Лимит API bb: threads.events.list отвечает HTTP 400 на limit > 100. */
+const EVENTS_PAGE_LIMIT = 100;
+const STARTED_LOOKBACK = 20;
 const TURN_PREFIX = "token-meter:turn:";
+
+function pageLimit(size: number): string {
+  return String(Math.min(size, EVENTS_PAGE_LIMIT));
+}
 
 type Kv = BbPluginApi["storage"]["kv"];
 
@@ -117,7 +122,7 @@ async function findStartedAt(
     types: ["turn/started"],
     beforeSeq: String(usageSeq),
     order: "desc",
-    limit: STARTED_LOOKBACK,
+    limit: pageLimit(STARTED_LOOKBACK),
   });
   for (const row of rows) {
     const parsed = turnEventRowSchema.safeParse(row);
@@ -135,7 +140,7 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
     const rows = await bb.sdk.threads.events.list({
       threadId,
       afterSeq: String(afterSeq),
-      limit: PAGE_SIZE,
+      limit: pageLimit(EVENTS_PAGE_LIMIT),
       order: "asc",
       types: EVENT_TYPES,
     });
@@ -167,10 +172,10 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
       await saveUsage(bb, usage, startedAt, completed.get(usage.turnId) ?? usage.createdAt);
       changed = true;
     }
-    const nextSeq = rows.length < Number(PAGE_SIZE) ? signalSequence : maxSeq;
+    const nextSeq = rows.length < EVENTS_PAGE_LIMIT ? signalSequence : maxSeq;
     await bb.storage.kv.set(sequenceKey(threadId), nextSeq);
     afterSeq = nextSeq;
-    if (rows.length < Number(PAGE_SIZE)) break;
+    if (rows.length < EVENTS_PAGE_LIMIT) break;
   }
 
   if (changed) bb.realtime.publish("token-meter-changed", { threadId });

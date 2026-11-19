@@ -47,7 +47,9 @@ function row(type: string, seq: number, createdAt: number, data: Record<string, 
 function listEvents(rows: EventRow[], args: ListArgs): EventRow[] {
   const after = Number(args.afterSeq ?? 0);
   const before = Number(args.beforeSeq ?? Number.POSITIVE_INFINITY);
-  const limit = Number(args.limit ?? 500);
+  const limit = Number(args.limit ?? 100);
+  // Настоящий bb отвечает 400 на limit > 100; фейк ведёт себя так же.
+  if (limit > 100) throw new Error("HTTP 400: Thread event limit cannot exceed 100");
   return rows
     .filter((event) => event.threadId === THREAD)
     .filter((event) => !args.types || args.types.includes(String(event.type)))
@@ -152,6 +154,29 @@ describe("события → kv → RPC", () => {
     const { host } = await load([row("turn/started", 1, 1_000), row("turn/completed", 2, 2_000), threadScoped]);
     await emit(host, 3);
     expect(await host.bb.storage.kv.list("token-meter:turn:")).toEqual([]);
+  });
+
+  it("пагинация по 100: 250 событий → 3 страницы, все ходы записаны", async () => {
+    const rows: EventRow[] = [];
+    let seq = 0;
+    for (let turn = 1; turn <= 83; turn += 1) {
+      const turnId = `turn-${turn}`;
+      rows.push(row("turn/started", ++seq, 1_000, {}, turnId));
+      rows.push(row("turn/completed", ++seq, 3_000, {}, turnId));
+      rows.push(row("thread/tokenUsage/updated", ++seq, 3_000, { tokenUsage: tokenUsage() }, turnId));
+    }
+    expect(rows).toHaveLength(249);
+    const { host, calls } = await load(rows);
+    await emit(host, 249);
+    const pageCalls = calls.filter((call) => call.types?.length === 3);
+    expect(pageCalls.map((call) => [call.afterSeq, call.limit])).toEqual([
+      ["0", "100"],
+      ["100", "100"],
+      ["200", "100"],
+    ]);
+    const keys = await host.bb.storage.kv.list("token-meter:turn:");
+    expect(keys).toHaveLength(83);
+    expect(await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD })).toMatchObject({ turns: 83 });
   });
 
   it("провайдер без usage и битое usage → нет записей/realtime, но seq продвигается", async () => {
