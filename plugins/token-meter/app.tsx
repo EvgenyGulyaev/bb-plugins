@@ -24,7 +24,7 @@ function turnTitle(usage: TurnUsage): string {
     `Выход: ${usage.output}`,
     `Reasoning: ${usage.reasoning}`,
     `Всего за вызов: ${usage.total}`,
-    `Последний вызов модели: ${usage.durationMs === null ? "недоступна" : `${usage.durationMs / 1_000} с`}`,
+    `Последний вызов модели: ${usage.durationMs == null ? "недоступна" : `${usage.durationMs / 1_000} с`}`,
     ...(usage.turnDurationMs === undefined ? [] : [`Весь ход: ${usage.turnDurationMs / 1_000} с`]),
     `Скорость: ${usage.tokPerSec === undefined ? "недоступна" : `${usage.tokPerSec} ток/с`}`,
   ].join("\n");

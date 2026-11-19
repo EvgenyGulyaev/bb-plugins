@@ -7,8 +7,11 @@ export function makeTurnUsage(input: {
   threadId: string;
   turnId: string;
   tokenUsage: TokenUsage;
-  /** Начало окна последнего вызова модели: конец последнего инструмента или turn/started. */
-  windowStartedAt: number | null;
+  /**
+   * Начало окна последнего вызова модели (конец последнего инструмента или
+   * turn/started). `undefined` — окно неизвестно: длительность не выдумываем.
+   */
+  windowStartedAt?: number | null;
   /** Конец окна и хода: turn/completed (или время usage-события). */
   endedAt: number;
   /** Начало всего хода из turn/started; null, если его не нашли. */
@@ -16,9 +19,12 @@ export function makeTurnUsage(input: {
   at: number;
 }): TurnUsage {
   const { last } = input.tokenUsage;
-  const elapsed = input.windowStartedAt === null ? null : input.endedAt - input.windowStartedAt;
-  const durationMs = elapsed !== null && elapsed > 0 ? elapsed : null;
-  const tokPerSec = durationMs !== null && durationMs >= 1_000 && last.outputTokens > 0
+  const windowStartedAt = input.windowStartedAt;
+  const elapsed = windowStartedAt === undefined || windowStartedAt === null
+    ? null
+    : input.endedAt - windowStartedAt;
+  const durationMs = elapsed !== null && elapsed > 0 ? elapsed : undefined;
+  const tokPerSec = durationMs !== undefined && durationMs >= 1_000 && last.outputTokens > 0
     ? Math.round((last.outputTokens / (durationMs / 1_000)) * 10) / 10
     : undefined;
   const turnElapsed = input.turnStartedAt === null ? null : input.endedAt - input.turnStartedAt;
@@ -33,7 +39,7 @@ export function makeTurnUsage(input: {
     output: last.outputTokens,
     reasoning: last.reasoningOutputTokens,
     total: last.totalTokens,
-    durationMs,
+    ...(durationMs === undefined ? {} : { durationMs }),
     ...(turnDurationMs === undefined ? {} : { turnDurationMs }),
     ...(tokPerSec === undefined ? {} : { tokPerSec }),
     at: input.at,

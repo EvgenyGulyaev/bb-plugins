@@ -86,8 +86,8 @@ export const turnUsageSchema = z.object({
   output: tokenCount,
   reasoning: tokenCount,
   total: tokenCount,
-  /** Окно последнего вызова модели (или всего хода, если инструментов не было). */
-  durationMs: z.number().positive().nullable(),
+  /** Окно последнего вызова модели; отсутствует, когда окно неизвестно (старые записи хранят null). */
+  durationMs: z.union([z.number().positive(), z.null()]).optional(),
   /** Весь ход: turn/completed − turn/started. */
   turnDurationMs: z.number().positive().optional(),
   tokPerSec: tokenCount.optional(),

@@ -293,6 +293,24 @@ describe("события → kv → RPC", () => {
     expect(host.harness.inspection.experimental_rpcInvalidations).toHaveLength(1);
   });
 
+  it("исчерпанный lookback без инструмента → нет durationMs и ток/с", async () => {
+    const rows: EventRow[] = [row("turn/started", 1, 0)];
+    let seq = 1;
+    rows.push(row("item/completed", ++seq, 1_000, { item: { type: "commandExecution", id: "tool" } }));
+    for (let pair = 0; pair < 6; pair += 1) {
+      rows.push(row("item/started", ++seq, 2_000 + pair * 100, { item: { type: "reasoning", id: `r${pair}` } }));
+      rows.push(row("item/completed", ++seq, 2_050 + pair * 100, { item: { type: "reasoning", id: `r${pair}` } }));
+    }
+    rows.push(row("turn/completed", ++seq, 9_000));
+    rows.push(row("thread/tokenUsage/updated", ++seq, 9_000, { tokenUsage: tokenUsage() }));
+    const { host } = await load(rows);
+    await emit(host, seq);
+    const record = await host.bb.storage.kv.get<Record<string, unknown>>(turnKey());
+    expect(Object.hasOwn(record ?? {}, "durationMs")).toBe(false);
+    expect(Object.hasOwn(record ?? {}, "tokPerSec")).toBe(false);
+    expect(record?.turnDurationMs).toBe(9_000);
+  });
+
   it("thread.deleted удаляет все ключи треда", async () => {
     const { host } = await load([
       row("turn/started", 1, 1_000),
@@ -301,6 +319,7 @@ describe("события → kv → RPC", () => {
     ]);
     await emit(host, 3);
     await host.harness.behavior.emitThreadEvent("thread.deleted", { thread: makeThreadResponse({ id: THREAD }) });
+    expect(host.harness.inspection.experimental_rpcInvalidations).toContainEqual(["thread:thr_1"]);
     expect(await host.bb.storage.kv.list("token-meter:")).toEqual([]);
     expect(await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD })).toBeNull();
   });
@@ -327,6 +346,31 @@ describe("события → kv → RPC", () => {
     const record = await host.bb.storage.kv.get<Record<string, unknown>>(turnKey());
     expect(record === undefined ? [] : Object.keys(record)).not.toContain("cacheRead");
     expect(Object.hasOwn(record ?? {}, "cacheWrite")).toBe(false);
+  });
+
+  it("usage старше 30 дней на первом проходе → ход вытеснен, сводки нет", async () => {
+    const offset = -RETENTION_MS - 1_000;
+    const { host } = await load([
+      row("turn/started", 1, offset),
+      row("turn/completed", 2, offset + 1_000),
+      row("thread/tokenUsage/updated", 3, offset + 1_000, { tokenUsage: tokenUsage() }),
+    ]);
+    await emit(host, 3);
+    expect(await host.bb.storage.kv.list(`token-meter:turn:${THREAD}:`)).toEqual([]);
+    expect(await host.bb.storage.kv.get(`token-meter:thread:${THREAD}`)).toBeUndefined();
+    expect(await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD })).toBeNull();
+    expect(host.harness.inspection.experimental_rpcInvalidations).toHaveLength(1);
+  });
+
+  it("сводка хранится только по свежим ходам, без скоростей — без averageTokPerSec", async () => {
+    const { host } = await load([
+      row("turn/started", 1, 1_000),
+      row("turn/completed", 2, 1_500),
+      row("thread/tokenUsage/updated", 3, 1_500, { tokenUsage: tokenUsage() }),
+    ]);
+    await emit(host, 3);
+    const summary = await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD });
+    expect(Object.hasOwn(summary as Record<string, unknown>, "averageTokPerSec")).toBe(false);
   });
 
   it("startup prune удаляет usage старше 30 дней и устаревшую сводку", async () => {

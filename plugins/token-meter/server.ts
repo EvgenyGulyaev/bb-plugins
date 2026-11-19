@@ -57,13 +57,21 @@ async function readTurns(kv: Kv, threadId: string): Promise<TurnUsage[]> {
   });
 }
 
-async function writeSummary(bb: BbPluginApi, threadId: string, turns: readonly TurnUsage[]): Promise<void> {
+async function writeSummary(
+  bb: BbPluginApi,
+  threadId: string,
+  turns: readonly TurnUsage[],
+  freshContextWindow?: number | null,
+): Promise<void> {
   if (turns.length === 0) {
     await bb.storage.kv.delete(summaryKey(threadId));
     return;
   }
-  const previous = threadUsageSchema.safeParse(await bb.storage.kv.get<unknown>(summaryKey(threadId)));
-  const modelContextWindow = previous.success ? previous.data.modelContextWindow : null;
+  let modelContextWindow = freshContextWindow ?? null;
+  if (freshContextWindow === undefined) {
+    const previous = threadUsageSchema.safeParse(await bb.storage.kv.get<unknown>(summaryKey(threadId)));
+    modelContextWindow = previous.success ? previous.data.modelContextWindow : null;
+  }
   await bb.storage.kv.set(summaryKey(threadId), summarizeTurns(threadId, turns, modelContextWindow));
 }
 
@@ -78,7 +86,7 @@ async function pruneThread(kv: Kv, threadId: string, now: number): Promise<TurnU
 async function saveUsage(
   bb: BbPluginApi,
   event: UsageEventRow,
-  windowStartedAt: number | null,
+  windowStartedAt: number | null | undefined,
   turnStartedAt: number | null,
   endedAt: number,
 ): Promise<void> {
@@ -94,11 +102,7 @@ async function saveUsage(
   });
   await bb.storage.kv.set(turnKey(threadId, turnId), record);
   const kept = await pruneThread(bb.storage.kv, threadId, Date.now());
-  await bb.storage.kv.set(summaryKey(threadId), summarizeTurns(
-    threadId,
-    kept,
-    event.data.tokenUsage.modelContextWindow,
-  ));
+  await writeSummary(bb, threadId, kept, event.data.tokenUsage.modelContextWindow);
 }
 
 async function pruneAll(bb: BbPluginApi): Promise<void> {
@@ -148,17 +152,23 @@ async function findStartedAt(
   return null;
 }
 
+type ToolWindow =
+  /** Окно известно: начало — конец последнего инструмента или null (инструментов в ходе нет). */
+  | { known: true; startedAt: number | null }
+  /** Lookback исчерпан на айтемах того же хода: неизвестно, где начался вызов. */
+  | { known: false };
+
 /**
  * Конец последнего инструмента этого хода. `tokenUsage.last` — usage последнего
  * вызова модели, поэтому окно вызова начинается там, а не в `turn/started`
  * (иначе в знаменатель попадают все инструменты хода).
  */
-async function findToolCompletedAt(
+async function findToolWindow(
   bb: BbPluginApi,
   threadId: string,
   usageSeq: number,
   turnId: string,
-): Promise<number | null> {
+): Promise<ToolWindow> {
   const rows = await bb.sdk.threads.events.list({
     threadId,
     types: ITEM_EVENT_TYPES,
@@ -169,11 +179,13 @@ async function findToolCompletedAt(
   for (const row of rows) {
     const parsed = itemEventRowSchema.safeParse(row);
     if (!parsed.success) continue;
-    if (parsed.data.turnId !== turnId) break;
+    // Инструменты других ходов не считаются: ход кончился раньше.
+    if (parsed.data.turnId !== turnId) return { known: true, startedAt: null };
     if (parsed.data.type !== "item/completed" || !isToolItem(parsed.data)) continue;
-    return parsed.data.createdAt;
+    return { known: true, startedAt: parsed.data.createdAt };
   }
-  return null;
+  // Страница короче lookback — перед нами все айтемы хода, инструмента в нём нет.
+  return rows.length < TOOL_LOOKBACK ? { known: true, startedAt: null } : { known: false };
 }
 
 function isToolItem(row: ItemEventRow): boolean {
@@ -219,8 +231,9 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
     for (const usage of usages) {
       const turnStartedAt = started.get(usage.turnId) ?? await findStartedAt(bb, threadId, usage.seq, usage.turnId);
       const endedAt = completed.get(usage.turnId) ?? usage.createdAt;
-      const toolCompletedAt = await findToolCompletedAt(bb, threadId, usage.seq, usage.turnId);
-      await saveUsage(bb, usage, toolCompletedAt ?? turnStartedAt, turnStartedAt, endedAt);
+      const toolWindow = await findToolWindow(bb, threadId, usage.seq, usage.turnId);
+      const windowStartedAt = toolWindow.known ? toolWindow.startedAt ?? turnStartedAt : undefined;
+      await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt);
       changed = true;
     }
     const nextSeq = rows.length < EVENTS_PAGE_LIMIT ? Math.max(signalSequence, maxSeq) : maxSeq;

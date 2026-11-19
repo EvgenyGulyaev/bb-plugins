@@ -10,10 +10,8 @@ type Entry = MessageRegistration & { refs: number };
 export function createLatestMessageStore() {
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
-  let version = 0;
 
   function changed() {
-    version += 1;
     for (const listener of listeners) listener();
   }
 
@@ -45,9 +43,6 @@ export function createLatestMessageStore() {
     subscribe(listener: () => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
-    },
-    getVersion(): number {
-      return version;
     },
   };
 }

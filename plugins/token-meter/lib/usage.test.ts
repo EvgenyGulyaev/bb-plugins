@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TurnUsage } from "./contract.js";
-import { usageEventRowSchema, turnEventRowSchema, itemEventRowSchema } from "./contract.js";
+import { itemEventRowSchema, turnEventRowSchema, turnUsageSchema, usageEventRowSchema } from "./contract.js";
 import { makeTurnUsage, retainTurns, summarizeTurns } from "./usage.js";
 
 const tokenUsage = {
@@ -43,7 +43,7 @@ function turn(turnId: string, at: number, tokPerSec?: number): TurnUsage {
   };
 }
 
-function windowOf(patch: { windowStartedAt: number | null; endedAt: number; turnStartedAt?: number | null }) {
+function windowOf(patch: { windowStartedAt?: number | null; endedAt: number; turnStartedAt?: number | null }) {
   return makeTurnUsage({
     threadId: "thr_1",
     turnId: "turn-1",
@@ -133,8 +133,14 @@ describe("makeTurnUsage", () => {
   it("не выдумывает скорость на коротком окне, нулевом output или некорректном старте", () => {
     const short = windowOf({ windowStartedAt: 9_001, endedAt: 10_000 });
     expect(Object.hasOwn(short, "tokPerSec")).toBe(false);
-    expect(windowOf({ windowStartedAt: 11_000, endedAt: 10_000 }).durationMs).toBeNull();
-    expect(windowOf({ windowStartedAt: 10_000, endedAt: 10_000 }).durationMs).toBeNull();
+    for (const patch of [
+      { windowStartedAt: 11_000, endedAt: 10_000 },
+      { windowStartedAt: 10_000, endedAt: 10_000 },
+    ]) {
+      const row = windowOf(patch);
+      expect(Object.hasOwn(row, "durationMs")).toBe(false);
+      expect(Object.hasOwn(row, "tokPerSec")).toBe(false);
+    }
     const zero = structuredClone(tokenUsage);
     zero.last.outputTokens = 0;
     const zeroRow = makeTurnUsage({
@@ -142,6 +148,18 @@ describe("makeTurnUsage", () => {
       windowStartedAt: 0, endedAt: 2_000, turnStartedAt: null, at: 2_000,
     });
     expect(Object.hasOwn(zeroRow, "tokPerSec")).toBe(false);
+  });
+
+  it("неизвестное окно (исчерпан lookback) → durationMs нет, а не окно=весь ход", () => {
+    const row = windowOf({ endedAt: 10_000, turnStartedAt: 1_000 });
+    expect(Object.hasOwn(row, "durationMs")).toBe(false);
+    expect(Object.hasOwn(row, "tokPerSec")).toBe(false);
+    expect(row.turnDurationMs).toBe(9_000);
+  });
+
+  it("старая запись с durationMs: null остаётся валидной", () => {
+    const legacy = { ...turn("legacy", 1), durationMs: null };
+    expect(turnUsageSchema.safeParse(legacy).success).toBe(true);
   });
 
   it("опускает необязательные поля вместо undefined на границе JSON", () => {
@@ -164,6 +182,12 @@ describe("сводка и retention", () => {
     expect(summarizeTurns("thr_1", [turn("a", 1, 30), turn("b", 2), turn("c", 3, 50)], 1_000_000)).toEqual({
       threadId: "thr_1", total: 45, turns: 3, averageTokPerSec: 40, modelContextWindow: 1_000_000,
     });
+  });
+
+  it("сводка без скоростей не содержит averageTokPerSec", () => {
+    const summary = summarizeTurns("thr_1", [turn("a", 1), turn("b", 2)], null);
+    expect(Object.hasOwn(summary, "averageTokPerSec")).toBe(false);
+    expect(summary).toMatchObject({ total: 30, turns: 2, modelContextWindow: null });
   });
 
   it("оставляет не больше 500 новых ходов и вытесняет старые", () => {
