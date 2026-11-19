@@ -1,0 +1,17 @@
+.token-meter-badge,
+.token-meter-context {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.token-meter-badge {
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.8;
+}
+
+.token-meter-context {
+  font-size: 11px;
+  line-height: 1.3;
+}

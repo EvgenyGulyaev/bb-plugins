@@ -52,6 +52,12 @@
 
 [Подробная документация usage-rings](plugins/usage-rings/README.md)
 
+### `token-meter`
+
+Фактические входные/выходные токены, cache и wall-clock ток/с у ответов pi/codex, накопленная сводка по треду; без usage бейдж не рисуется.
+
+[Подробная документация token-meter](plugins/token-meter/README.md)
+
 ### `ru`
 
 Русская локализация интерфейса BB и связанные с ней переводы. Плагин нужен, если вы хотите пользоваться основными экранами BB на русском языке.
@@ -72,6 +78,7 @@ bb plugin install git:https://github.com/deicer/bb-plugins.git@main --plugin ses
 clirelay-test
 file-manager-multi-host
 kanban-board
+token-meter
 ru
 ```
 
