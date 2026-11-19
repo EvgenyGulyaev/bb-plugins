@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import * as Popover from "@radix-ui/react-popover";
-import { countdown } from "@/lib/countdown";
+import { countdown, quotaResetFallback } from "@/lib/countdown";
+import { formatUsd } from "@/lib/money";
 import { quotaLabel } from "@/lib/quota-labels";
 import type { RelayAccount } from "@/lib/relay-accounts";
 import { providerLogo } from "@/lib/provider-logos";
@@ -63,18 +64,25 @@ export function RelayRing({ item, sizePx }: { item: RingItem; sizePx: number }) 
                   <strong>{ringPercentText(account.percent)}</strong>
                 </span>
               </div>
+              {typeof account.usage?.cost_total_7d === "number" && account.usage.cost_total_7d > 0 && (
+                <p className="relay-rings-muted">{formatUsd(account.usage.cost_total_7d)} за 7 дн</p>
+              )}
               {account.quotas.length === 0
                 ? <p className="relay-rings-muted">relay не сообщил квоту для этого аккаунта.</p>
                 : account.quotas.map((quota) => {
                   const percent = quotaPercent(quota);
                   const reset = countdown(quota.reset_at);
+                  const resetFallback = quotaResetFallback(quota);
+                  const usedCost = typeof quota.used_cost_usd === "number" && quota.used_cost_usd > 0 ? formatUsd(quota.used_cost_usd) : null;
                   return (
                     <div className="relay-rings-window" key={quota.quota_key}>
-                      <div><span>{quotaLabel(quota)}</span><strong>{ringPercentText(percent)}</strong></div>
+                      <div><span>{quotaLabel(quota)}</span><span>{usedCost && <span className="relay-rings-muted">{usedCost} </span>}<strong>{ringPercentText(percent)}</strong></span></div>
                       {percent !== null && (
                         <meter min="0" max="100" value={percent} aria-label={`${account.label} · ${quotaLabel(quota)}: осталось ${percent}%`} />
                       )}
-                      {reset && <p className="relay-rings-muted">Сброс через {reset}</p>}
+                      {reset
+                        ? <p className="relay-rings-muted">Сброс через {reset}</p>
+                        : resetFallback && <p className="relay-rings-muted" title={resetFallback.title}>{resetFallback.text}</p>}
                     </div>
                   );
                 })}

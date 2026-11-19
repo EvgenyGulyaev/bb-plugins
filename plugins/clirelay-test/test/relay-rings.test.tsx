@@ -156,6 +156,38 @@ describe("RelayRing", () => {
     expect(within(dialog).getByText(/Сброс через/)).toBeTruthy();
   });
 
+  it("shows quota costs, reset fallbacks and the seven-day account cost in the popover", async () => {
+    render(<RelayRing sizePx={40} item={item({ accounts: [entry({
+      key: KEY("claude:costs"),
+      label: "costs@example.com",
+      percent: 100,
+      quotas: [
+        { quota_key: "five_hour", percent: 100, window_seconds: 18000, used_cost_usd: 34.1 },
+        { quota_key: "m_quota.code_5h", percent: 63, window_seconds: 18000 },
+      ],
+      usage: { cost_total_7d: 58.28 },
+    })] })} />);
+    fireEvent.click(screen.getByRole("button", { name: /осталось 63%/ }));
+    const dialog = await screen.findByLabelText("Квоты Kimi");
+    expect(within(dialog).getByText("$34.10")).toBeTruthy();
+    expect(within(dialog).getByText("окно не начато").getAttribute("title")).toBe("relay не сообщает сброс, пока окно не начато; длина окна 5 ч");
+    expect(within(dialog).getByText("сброс неизвестен").getAttribute("title")).toBe("relay не сообщает сброс, пока окно не начато; длина окна 5 ч");
+    expect(within(dialog).getByText("$58.28 за 7 дн")).toBeTruthy();
+  });
+
+  it("hides zero quota and seven-day costs in the popover", async () => {
+    render(<RelayRing sizePx={40} item={item({ accounts: [entry({
+      key: KEY("claude:zero-costs"),
+      label: "zero-costs@example.com",
+      percent: 100,
+      quotas: [{ quota_key: "five_hour", percent: 100, used_cost_usd: 0 }],
+      usage: { cost_total_7d: 0 },
+    })] })} />);
+    fireEvent.click(screen.getByRole("button", { name: /осталось 63%/ }));
+    const dialog = await screen.findByLabelText("Квоты Kimi");
+    expect(within(dialog).queryByText(/\$/)).toBeNull();
+  });
+
   it("lists every account of the type with its quotas and a disabled mark", async () => {
     render(<RelayRing sizePx={40} item={item({
       activeCount: 2,

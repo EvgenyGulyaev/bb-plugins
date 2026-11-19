@@ -3,6 +3,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/re
 import { afterEach, describe, expect, it } from "vitest";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { RenderedSlot, RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
+import type { RelayAccount } from "../lib/relay-accounts";
 
 // Модули, трогающие @get-bb/plugin-sdk/app, биндят рантайм при импорте —
 // app.tsx импортируем только после установки рантайма loadPluginApp.
@@ -32,13 +33,14 @@ const KEY = (authIndex: string) => `http://relay:4010|${authIndex}`;
 
 function mount(options: {
   rings?: { selected: string[]; size: number; perRow: number };
+  accountItems?: RelayAccount[];
   rpc?: Record<string, (input: unknown) => unknown>;
 } = {}): { slot: RenderedSlot; calls: (method: string) => Array<{ method: string; input: unknown }> } {
   const rings = options.rings ?? { selected: [], size: 40, perRow: 1 };
   const slot = renderSlot({ component: panel.component }, { subPath: "" }, {
     rpc: {
       providers_list: () => ({ providers: [provider] }),
-      relay_accounts: () => ({ configured: true, items: accounts }),
+      relay_accounts: () => ({ configured: true, items: options.accountItems ?? accounts }),
       rings_state: () => rings,
       rings_toggle: (input) => {
         const { key, on } = input as { key: string; on: boolean };
@@ -135,6 +137,80 @@ describe("accounts tab rings controls", () => {
     await waitFor(() => expect(calls("rings_per_row")).toEqual([
       { method: "rings_per_row", input: { perRow: 3 } },
     ]));
+  });
+});
+
+describe("account costs and reset fallback", () => {
+  const account = (partial: Partial<RelayAccount> & { auth_index: string }): RelayAccount => ({
+    provider: "claude",
+    disabled: false,
+    quotas: [],
+    ...partial,
+  });
+
+  it("shows a positive quota cost and hides zero or missing costs", async () => {
+    mount({ accountItems: [
+      account({ auth_index: "positive", email: "positive@example.com", quotas: [{ quota_key: "five_hour", percent: 50, used_cost_usd: 34.1 }] }),
+      account({ auth_index: "zero", email: "zero@example.com", quotas: [{ quota_key: "five_hour", percent: 100, used_cost_usd: 0 }] }),
+      account({ auth_index: "missing", email: "missing@example.com", quotas: [{ quota_key: "five_hour", percent: 100 }] }),
+    ] });
+    const positive = (await screen.findByText("positive@example.com")).closest("article")!;
+    const zero = screen.getByText("zero@example.com").closest("article")!;
+    const missing = screen.getByText("missing@example.com").closest("article")!;
+    expect(within(positive).getByText("$34.10")).toBeTruthy();
+    expect(within(zero).queryByText(/^\$/)).toBeNull();
+    expect(within(missing).queryByText(/^\$/)).toBeNull();
+  });
+
+  it("distinguishes an unstarted window, an unknown reset and a countdown", async () => {
+    mount({ accountItems: [
+      account({ auth_index: "full", email: "full@example.com", quotas: [{ quota_key: "five_hour", percent: 100, window_seconds: 18000 }] }),
+      account({ auth_index: "started", email: "started@example.com", quotas: [{ quota_key: "five_hour", percent: 63, window_seconds: 18000 }] }),
+      account({ auth_index: "reset", email: "reset@example.com", quotas: [{ quota_key: "five_hour", percent: 63, window_seconds: 18000, reset_at: new Date(Date.now() + 2 * 3600_000).toISOString() }] }),
+    ] });
+    const unstarted = await screen.findByText("окно не начато");
+    const unknown = screen.getByText("сброс неизвестен");
+    const expectedTitle = "relay не сообщает сброс, пока окно не начато; длина окна 5 ч";
+    expect(unstarted.getAttribute("title")).toBe(expectedTitle);
+    expect(unknown.getAttribute("title")).toBe(expectedTitle);
+    expect(screen.getByText(/↺/)).toBeTruthy();
+    expect(screen.getByText("reset@example.com").closest("article")!.textContent).not.toContain("сброс неизвестен");
+  });
+
+  it("shows the seven-day cost chip and its detailed title", async () => {
+    mount({ accountItems: [account({
+      auth_index: "costs",
+      email: "costs@example.com",
+      quotas: [{ quota_key: "five_hour", percent: 100 }],
+      usage: { cost_total: 432.83, cost_total_7d: 58.28, cycle_cost_total: 34.1, cycle_known: true, request_total_7d: 437 },
+    })] });
+    const chip = await screen.findByText("$58.28 за 7 дн");
+    expect(chip.getAttribute("title")).toBe("Всего: $432.83 · цикл: $34.10 · запросов за 7 дн: 437");
+  });
+
+  it("omits zero total and cycle costs from the chip title", async () => {
+    mount({ accountItems: [account({
+      auth_index: "zero-details",
+      email: "zero-details@example.com",
+      quotas: [{ quota_key: "five_hour", percent: 100 }],
+      usage: { cost_total: 0, cost_total_7d: 2, cycle_cost_total: 0, cycle_known: true, request_total_7d: 4 },
+    })] });
+    const chip = await screen.findByText("$2.00 за 7 дн");
+    expect(chip.getAttribute("title")).toBe("запросов за 7 дн: 4");
+    expect(chip.getAttribute("title")).not.toContain("Всего: $0.00");
+    expect(chip.getAttribute("title")).not.toContain("цикл: $0.00");
+  });
+
+  it("marks an unknown cycle and hides the chip for missing or zero usage", async () => {
+    mount({ accountItems: [
+      account({ auth_index: "unknown", email: "unknown@example.com", quotas: [{ quota_key: "five_hour", percent: 100 }], usage: { cost_total: 10, cost_total_7d: 2, cycle_cost_total: 3, cycle_known: false, request_total_7d: 4 } }),
+      account({ auth_index: "none", email: "none@example.com", quotas: [{ quota_key: "five_hour", percent: 100 }] }),
+      account({ auth_index: "zeros", email: "zeros@example.com", quotas: [{ quota_key: "five_hour", percent: 100 }], usage: { cost_total: 0, cost_total_7d: 0, cycle_cost_total: 0, request_total_7d: 0 } }),
+    ] });
+    const chip = await screen.findByText("$2.00 за 7 дн");
+    expect(chip.getAttribute("title")).toBe("Всего: $10.00 · цикл: неизвестен · запросов за 7 дн: 4");
+    expect(screen.getByText("none@example.com").closest("article")!.textContent).not.toContain("за 7 дн");
+    expect(screen.getByText("zeros@example.com").closest("article")!.textContent).not.toContain("за 7 дн");
   });
 });
 

@@ -8,7 +8,8 @@ import type { rpcContract } from "./server";
 import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
 import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
-import { countdown } from "./lib/countdown";
+import { countdown, quotaResetFallback } from "./lib/countdown";
+import { formatUsd } from "./lib/money";
 import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { accountDisplayName, groupAccountsByProvider, partitionByQuota, relayOrigin, shouldGroupByProvider, successPercent } from "./lib/relay-accounts";
@@ -466,6 +467,17 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
 /** Карточка аккаунта relay: бейджи + квоты барами с % и сбросом. */
 function AccountCard({ account, onToggle, compact = false }: { account: RelayAccount; onToggle?: (enabled: boolean) => void; compact?: boolean }) {
   const success = successPercent(account.usage?.success_rate);
+  const usage = account.usage;
+  const cost7d = typeof usage?.cost_total_7d === "number" && usage.cost_total_7d > 0 ? formatUsd(usage.cost_total_7d) : null;
+  const totalCost = typeof usage?.cost_total === "number" && usage.cost_total > 0 ? formatUsd(usage.cost_total) : null;
+  const cycleCost = usage?.cycle_known === false
+    ? "неизвестен"
+    : typeof usage?.cycle_cost_total === "number" && usage.cycle_cost_total > 0 ? formatUsd(usage.cycle_cost_total) : null;
+  const usageTitle = [
+    totalCost ? `Всего: ${totalCost}` : null,
+    cycleCost ? `цикл: ${cycleCost}` : null,
+    typeof usage?.request_total_7d === "number" ? `запросов за 7 дн: ${usage.request_total_7d}` : null,
+  ].filter(Boolean).join(" · ");
   const displayName = accountDisplayName(account);
   const origin = useContext(OriginContext);
   const controls = (
@@ -489,6 +501,7 @@ function AccountCard({ account, onToggle, compact = false }: { account: RelayAcc
           Success Rate <span className={success >= 95 ? "text-emerald-400" : success >= 80 ? "text-amber-400" : "text-red-400"}>{success.toFixed(1)}%</span>
         </span>
       ) : null}
+      {cost7d ? <span className="rounded bg-muted/60 px-1.5 py-0 text-[10px] text-muted-foreground" title={usageTitle}>{cost7d} за 7 дн</span> : null}
       {account.restriction_summary ? <span className="flex items-center gap-1 rounded bg-red-500/10 px-1.5 py-0 text-[10px] text-red-400"><Icon name="AlertTriangle" className="size-2.5" />{account.restriction_summary}</span> : null}
     </>
   );
@@ -515,13 +528,16 @@ function AccountCard({ account, onToggle, compact = false }: { account: RelayAcc
         {account.quotas.map((quota) => {
           const percent = typeof quota.percent === "number" ? Math.max(0, Math.min(100, quota.percent)) : null;
           const reset = countdown(quota.reset_at);
+          const resetFallback = quotaResetFallback(quota);
+          const usedCost = typeof quota.used_cost_usd === "number" && quota.used_cost_usd > 0 ? formatUsd(quota.used_cost_usd) : null;
           const tone = percent === null ? "bg-muted" : percent > 20 ? "bg-emerald-400" : "bg-red-400";
           return (
             <div key={quota.quota_key}>
               <div className="mb-0.5 flex items-baseline justify-between gap-2">
                 <span className="truncate text-xs text-muted-foreground" title={quota.quota_key}>{quotaLabel(quota)}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
-                  {reset ? <span className="text-[10px] text-muted-foreground">↺ {reset}</span> : null}
+                  {reset ? <span className="text-[10px] text-muted-foreground">↺ {reset}</span> : resetFallback ? <span className="text-[10px] text-muted-foreground" title={resetFallback.title}>{resetFallback.text}</span> : null}
+                  {usedCost ? <span className="text-[10px] text-muted-foreground">{usedCost}</span> : null}
                   <span className={`text-sm font-semibold ${percent === null ? "text-muted-foreground" : percent > 20 ? "text-foreground" : "text-red-400"}`}>
                     {percent === null ? "—" : `${Math.round(percent)}%`}
                   </span>

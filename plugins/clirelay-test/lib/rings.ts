@@ -36,6 +36,7 @@ export interface RingAccountEntry {
   disabled: boolean;
   percent: number | null;
   quotas: RelayAccount["quotas"];
+  usage?: RelayAccount["usage"];
 }
 
 export interface RingItem {
@@ -214,6 +215,7 @@ export function ringItems(selected: string[], sources: RingsSource[]): RingItem[
       disabled: account.disabled,
       percent: ringPercent(account.quotas),
       quotas: account.quotas,
+      usage: account.usage,
     });
   }
 
