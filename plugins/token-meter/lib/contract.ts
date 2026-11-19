@@ -76,6 +76,20 @@ export const itemEventRowSchema = z.object({
     itemKind: row.data?.item?.type ?? row.itemKind,
   }));
 
+/**
+ * `client/turn/requested`: модель, с которой клиент запустил ход, лежит в
+ * `data.execution.model`. Событие висит на треде, а не на ходе, поэтому
+ * привязка к ходу идёт по sequence/времени, а не по scope.
+ */
+export const modelRequestRowSchema = z.object({
+  type: z.literal("client/turn/requested"),
+  ...eventBaseShape,
+  data: z
+    .object({ execution: z.object({ model: z.string().min(1) }).loose().optional() })
+    .loose()
+    .optional(),
+}).transform((row) => ({ seq: row.seq, createdAt: row.createdAt, model: row.data?.execution?.model }));
+
 export const turnUsageSchema = z.object({
   threadId: z.string().min(1),
   turnId: z.string().min(1),
@@ -91,7 +105,23 @@ export const turnUsageSchema = z.object({
   /** Весь ход: turn/completed − turn/started. */
   turnDurationMs: z.number().positive().optional(),
   tokPerSec: tokenCount.optional(),
+  model: z.string().min(1).optional(),
+  providerId: z.string().min(1).optional(),
   at: tokenCount,
+});
+
+export const benchSampleSchema = z.object({
+  maxTokens: z.number().int().positive(),
+  outputTokens: tokenCount,
+  durationMs: tokenCount,
+});
+
+export const benchResultSchema = z.object({
+  model: z.string().min(1),
+  genTokPerSec: z.number().finite().positive(),
+  latencyMs: z.number().finite(),
+  at: tokenCount,
+  samples: z.array(benchSampleSchema).length(4),
 });
 
 export const threadUsageSchema = z.object({
@@ -106,8 +136,10 @@ export type TokenUsage = z.infer<typeof tokenUsageSchema>;
 export type UsageEventRow = z.infer<typeof usageEventRowSchema>;
 export type TurnEventRow = z.infer<typeof turnEventRowSchema>;
 export type ItemEventRow = z.infer<typeof itemEventRowSchema>;
+export type ModelRequestRow = z.infer<typeof modelRequestRowSchema>;
 export type TurnUsage = z.infer<typeof turnUsageSchema>;
 export type ThreadUsage = z.infer<typeof threadUsageSchema>;
+export type BenchResult = z.infer<typeof benchResultSchema>;
 
 /** RPC cache tag shared by both methods and by the server's invalidation. */
 export function threadTag(threadId: string): string {
@@ -129,5 +161,25 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: z.string().min(1) }).strict(),
     output: threadUsageSchema.nullable(),
     tags: (input: { threadId: string }) => [threadTag(input.threadId)],
+  },
+  bench_model: {
+    input: z.object({ model: z.string().min(1) }).strict(),
+    output: benchResultSchema,
+  },
+  bench_list: {
+    input: z.null(),
+    output: z.object({
+      models: z.array(z.string().min(1)),
+      results: z.array(benchResultSchema),
+      benchEnabled: z.boolean(),
+      hasEndpoint: z.boolean(),
+    }),
+    tags: () => ["bench"],
+  },
+  /** Лёгкий вариант для бейджа: только замеры, без перечисления моделей и настроек. */
+  bench_results: {
+    input: z.null(),
+    output: z.object({ results: z.array(benchResultSchema) }),
+    tags: () => ["bench"],
   },
 });

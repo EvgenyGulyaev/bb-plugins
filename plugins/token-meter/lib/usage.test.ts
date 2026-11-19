@@ -162,6 +162,19 @@ describe("makeTurnUsage", () => {
     expect(turnUsageSchema.safeParse(legacy).success).toBe(true);
   });
 
+  it("сохраняет resolved model/providerId и опускает их без значений", () => {
+    const base = {
+      threadId: "thr_1", turnId: "turn-1", tokenUsage,
+      windowStartedAt: 9_000, endedAt: 10_000, turnStartedAt: null, at: 10_000,
+    };
+    expect(makeTurnUsage({ ...base, model: "test-model", providerId: "test-provider" })).toMatchObject({
+      model: "test-model", providerId: "test-provider",
+    });
+    const bare = makeTurnUsage(base);
+    expect(Object.hasOwn(bare, "model")).toBe(false);
+    expect(Object.hasOwn(bare, "providerId")).toBe(false);
+  });
+
   it("опускает необязательные поля вместо undefined на границе JSON", () => {
     const bare = structuredClone(tokenUsage);
     delete (bare.last as Record<string, unknown>).cacheReadInputTokens;
@@ -170,7 +183,7 @@ describe("makeTurnUsage", () => {
       threadId: "thr_1", turnId: "turn-1", tokenUsage: bare,
       windowStartedAt: 9_000, endedAt: 9_500, turnStartedAt: null, at: 9_500,
     });
-    for (const field of ["cacheRead", "cacheWrite", "tokPerSec", "turnDurationMs"]) {
+    for (const field of ["cacheRead", "cacheWrite", "tokPerSec", "turnDurationMs", "model", "providerId"]) {
       expect(Object.hasOwn(record, field)).toBe(false);
     }
     expect(JSON.stringify(record)).not.toContain("undefined");

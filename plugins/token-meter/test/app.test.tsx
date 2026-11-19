@@ -7,7 +7,7 @@ import type {
   ExperimentalMessageMetadataProps,
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
-import type { ThreadUsage, TurnUsage } from "../lib/contract.js";
+import type { BenchResult, ThreadUsage, TurnUsage } from "../lib/contract.js";
 
 const app = await loadPluginApp(() => import("../app"));
 const metadata = app.messageMetadata.find((row) => row.id === "token-meter")!;
@@ -55,12 +55,14 @@ function contextProps(): ExperimentalThreadContextSegmentProps {
   };
 }
 
-function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage: TurnUsage | null) {
+function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage: TurnUsage | null, benchmarks: BenchResult[] = []) {
   const slot = renderSlot({ component: metadata.component }, { message: props }, {
     pluginId: "token-meter",
     rpc: {
       turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? usage : null])),
       thread_usage: () => null,
+      // Бейдж не должен звать тяжёлый bench_list: только лёгкие замеры.
+      bench_results: () => ({ results: benchmarks }),
     } as never,
   });
   slots.push(slot);
@@ -91,13 +93,59 @@ describe("messageMetadata", () => {
 
   it("при записи рисует бейдж и полный title", async () => {
     const slot = mountMessage(message(), turn());
-    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с")).toBeTruthy();
+    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.)")).toBeTruthy();
     const badge = slot.container.querySelector(".token-meter-badge");
     expect(badge?.getAttribute("title")).toContain("Reasoning: 120");
     expect(badge?.getAttribute("title")).toContain("Кеш чтение: 260000");
     expect(badge?.getAttribute("title")).toContain("Кеш запись: 5000");
-    expect(badge?.getAttribute("title")).toContain("Последний вызов модели: 12.5 с");
-    expect(badge?.getAttribute("title")).toContain("Весь ход: 20 с");
+    expect(badge?.getAttribute("title")).toContain("Последний вызов: 12.5 с · Весь ход: 20 с");
+    expect(badge?.getAttribute("title")).toContain("Эффективная скорость последнего вызова: 59.2 ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена");
+  });
+
+  it("добавляет прямой замер модели хода в бейдж и title", async () => {
+    const benchmark: BenchResult = {
+      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
+      at: Date.UTC(2026, 0, 2, 12),
+      samples: [
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+      ],
+    };
+    const slot = mountMessage(message(), turn({ model: "test-model" }), [benchmark]);
+    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.) · модель ~207")).toBeTruthy();
+    expect(slot.container.querySelector(".token-meter-badge")?.getAttribute("title"))
+      .toContain("Чистая генерация модели test-model: ~207 ток/с, задержка ~1.0 с (замер 2026-01-02)");
+  });
+
+  it("бейдж берёт замеры лёгким bench_results, а не bench_list", async () => {
+    const benchmark: BenchResult = {
+      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
+      at: Date.UTC(2026, 0, 2, 12),
+      samples: [
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+      ],
+    };
+    const benchList = vi.fn(() => {
+      throw new Error("bench_list не должен вызываться из бейджа");
+    });
+    const slot = renderSlot({ component: metadata.component }, { message: message() }, {
+      pluginId: "token-meter",
+      rpc: {
+        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? turn({ model: "test-model" }) : null])),
+        thread_usage: () => null,
+        bench_list: benchList,
+        bench_results: () => ({ results: [benchmark] }),
+      } as never,
+    });
+    slots.push(slot);
+    expect(await slot.findByText(/модель ~207/)).toBeTruthy();
+    expect(benchList).not.toHaveBeenCalled();
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "bench_results")).toHaveLength(1);
   });
 
   it("без записи → null", async () => {
@@ -166,7 +214,7 @@ describe("messageMetadata", () => {
 describe("threadContextSegment", () => {
   it("рисует сводку, без данных → null", async () => {
     const withData = mountContext(summary());
-    expect(await withData.findByText("Σ 531k токенов · ~40 ток/с")).toBeTruthy();
+    expect(await withData.findByText("Σ 531k токенов · ~40 ток/с (эфф.)")).toBeTruthy();
     const withoutData = mountContext(null);
     await waitFor(() => expect(withoutData.inspection.rpcCalls.filter((call) => call.method === "thread_usage")).toHaveLength(1));
     await act(async () => {});
