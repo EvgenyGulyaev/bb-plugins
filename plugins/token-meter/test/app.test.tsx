@@ -91,13 +91,13 @@ describe("messageMetadata", () => {
 
   it("при записи рисует бейдж и полный title", async () => {
     const slot = mountMessage(message(), turn());
-    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с")).toBeTruthy();
+    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.)")).toBeTruthy();
     const badge = slot.container.querySelector(".token-meter-badge");
     expect(badge?.getAttribute("title")).toContain("Reasoning: 120");
     expect(badge?.getAttribute("title")).toContain("Кеш чтение: 260000");
     expect(badge?.getAttribute("title")).toContain("Кеш запись: 5000");
-    expect(badge?.getAttribute("title")).toContain("Последний вызов модели: 12.5 с");
-    expect(badge?.getAttribute("title")).toContain("Весь ход: 20 с");
+    expect(badge?.getAttribute("title")).toContain("Последний вызов: 12.5 с · Весь ход: 20 с");
+    expect(badge?.getAttribute("title")).toContain("Эффективная скорость последнего вызова: 59.2 ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена");
   });
 
   it("без записи → null", async () => {
@@ -166,7 +166,7 @@ describe("messageMetadata", () => {
 describe("threadContextSegment", () => {
   it("рисует сводку, без данных → null", async () => {
     const withData = mountContext(summary());
-    expect(await withData.findByText("Σ 531k токенов · ~40 ток/с")).toBeTruthy();
+    expect(await withData.findByText("Σ 531k токенов · ~40 ток/с (эфф.)")).toBeTruthy();
     const withoutData = mountContext(null);
     await waitFor(() => expect(withoutData.inspection.rpcCalls.filter((call) => call.method === "thread_usage")).toHaveLength(1));
     await act(async () => {});

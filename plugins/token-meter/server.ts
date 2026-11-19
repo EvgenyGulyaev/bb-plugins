@@ -25,6 +25,32 @@ const THREAD_PREFIX = "token-meter:thread:";
 const SEQ_PREFIX = "token-meter:seq:";
 /** Айтемы вывода: последний вызов модели начинается после последнего НЕ такого айтема. */
 const MODEL_ITEM_KINDS = new Set(["agentMessage", "reasoning"]);
+const EXECUTION_CACHE_MS = 60_000;
+
+type ExecutionInfo = { model?: string; providerId?: string };
+type ExecutionLookup = (threadId: string) => Promise<ExecutionInfo>;
+
+function createExecutionLookup(bb: BbPluginApi): ExecutionLookup {
+  const cache = new Map<string, { at: number; value: ExecutionInfo }>();
+  return async (threadId) => {
+    const cached = cache.get(threadId);
+    if (cached && Date.now() - cached.at < EXECUTION_CACHE_MS) return cached.value;
+    let value: ExecutionInfo = {};
+    try {
+      const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
+      // SDK 0.6.157 типизирует model, но ещё не объявляет runtime-поле providerId.
+      const providerId = (options as ({ providerId?: unknown } | null))?.providerId;
+      value = {
+        ...(options?.model ? { model: options.model } : {}),
+        ...(typeof providerId === "string" && providerId ? { providerId } : {}),
+      };
+    } catch {
+      // Модель — необязательные метаданные: ошибка SDK не должна терять usage.
+    }
+    cache.set(threadId, { at: Date.now(), value });
+    return value;
+  };
+}
 
 type Kv = BbPluginApi["storage"]["kv"];
 
@@ -89,6 +115,7 @@ async function saveUsage(
   windowStartedAt: number | null | undefined,
   turnStartedAt: number | null,
   endedAt: number,
+  execution: ExecutionInfo,
 ): Promise<void> {
   const { threadId, turnId } = event;
   const record = makeTurnUsage({
@@ -98,6 +125,7 @@ async function saveUsage(
     windowStartedAt,
     endedAt,
     turnStartedAt,
+    ...execution,
     at: event.createdAt,
   });
   await bb.storage.kv.set(turnKey(threadId, turnId), record);
@@ -192,7 +220,7 @@ function isToolItem(row: ItemEventRow): boolean {
   return row.itemKind !== undefined && !MODEL_ITEM_KINDS.has(row.itemKind);
 }
 
-async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: number): Promise<void> {
+async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: number, executionLookup: ExecutionLookup): Promise<void> {
   let afterSeq = await bb.storage.kv.get<number>(sequenceKey(threadId)) ?? 0;
   if (afterSeq >= signalSequence) return;
   let changed = false;
@@ -233,7 +261,8 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
       const endedAt = completed.get(usage.turnId) ?? usage.createdAt;
       const toolWindow = await findToolWindow(bb, threadId, usage.seq, usage.turnId);
       const windowStartedAt = toolWindow.known ? toolWindow.startedAt ?? turnStartedAt : undefined;
-      await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt);
+      const execution = await executionLookup(threadId);
+      await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt, execution);
       changed = true;
     }
     const nextSeq = rows.length < EVENTS_PAGE_LIMIT ? Math.max(signalSequence, maxSeq) : maxSeq;
@@ -275,11 +304,12 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   const pending = new Map<string, Promise<void>>();
+  const executionLookup = createExecutionLookup(bb);
   bb.events.on("experimental_thread.events", async ({ thread, sequence }) => {
     const previous = pending.get(thread.id) ?? Promise.resolve();
     const current = previous
       .catch(() => {})
-      .then(() => syncThread(bb, thread.id, sequence))
+      .then(() => syncThread(bb, thread.id, sequence, executionLookup))
       .catch((cause: unknown) => {
         bb.log.warn(`token-meter sync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
       });

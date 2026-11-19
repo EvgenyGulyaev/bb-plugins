@@ -9,26 +9,11 @@ import type {
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type TurnUsage } from "./lib/contract.js";
-import { formatThreadText, formatTurnText } from "./lib/format.js";
+import { formatThreadText, formatTurnText, formatTurnTitle } from "./lib/format.js";
 import { createLatestMessageStore } from "./lib/latest-message.js";
 import "./app.css";
 
 const latestMessages = createLatestMessageStore();
-
-function turnTitle(usage: TurnUsage): string {
-  return [
-    `Вход: ${usage.input}`,
-    `Кеш: ${usage.cached}`,
-    `Кеш чтение: ${usage.cacheRead ?? "не сообщено"}`,
-    `Кеш запись: ${usage.cacheWrite ?? "не сообщено"}`,
-    `Выход: ${usage.output}`,
-    `Reasoning: ${usage.reasoning}`,
-    `Всего за вызов: ${usage.total}`,
-    `Последний вызов модели: ${usage.durationMs == null ? "недоступна" : `${usage.durationMs / 1_000} с`}`,
-    ...(usage.turnDurationMs === undefined ? [] : [`Весь ход: ${usage.turnDurationMs / 1_000} с`]),
-    `Скорость: ${usage.tokPerSec === undefined ? "недоступна" : `${usage.tokPerSec} ток/с`}`,
-  ].join("\n");
-}
 
 function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
   const enabled = message.role === "assistant" && message.turnId !== null;
@@ -58,7 +43,7 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
 
   if (!enabled || !isLatest || !query.data) return null;
   return (
-    <span className="token-meter-badge" title={turnTitle(query.data)}>
+    <span className="token-meter-badge" title={formatTurnTitle(query.data)}>
       {formatTurnText(query.data)}
     </span>
   );

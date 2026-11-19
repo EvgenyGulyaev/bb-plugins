@@ -16,6 +16,8 @@ export function makeTurnUsage(input: {
   endedAt: number;
   /** Начало всего хода из turn/started; null, если его не нашли. */
   turnStartedAt: number | null;
+  model?: string;
+  providerId?: string;
   at: number;
 }): TurnUsage {
   const { last } = input.tokenUsage;
@@ -42,6 +44,8 @@ export function makeTurnUsage(input: {
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(turnDurationMs === undefined ? {} : { turnDurationMs }),
     ...(tokPerSec === undefined ? {} : { tokPerSec }),
+    ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.providerId === undefined ? {} : { providerId: input.providerId }),
     at: input.at,
   };
 }

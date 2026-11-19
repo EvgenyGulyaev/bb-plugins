@@ -1,5 +1,5 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RETENTION_MS } from "./lib/usage.js";
 import plugin from "./server.js";
 
@@ -9,6 +9,7 @@ const BASE = Date.now();
 const eventAt = (offset: number) => BASE + offset;
 type Host = ReturnType<typeof createFakePluginHost>;
 type EventRow = Record<string, unknown>;
+type ExecutionLookup = (args: { threadId: string }) => Promise<{ model: string; providerId?: string } | null>;
 type ListArgs = {
   threadId: string;
   afterSeq?: string;
@@ -62,12 +63,14 @@ async function load(
   rows: EventRow[],
   beforeLoad?: (host: Host) => Promise<void>,
   delayMs = 0,
+  defaultExecutionOptions?: ExecutionLookup,
 ) {
   const calls: ListArgs[] = [];
   const host = createFakePluginHost({
     pluginId: "token-meter",
     sdk: {
       threads: {
+        defaultExecutionOptions: async (args: { threadId: string }) => defaultExecutionOptions?.(args) ?? null,
         events: {
           list: async (args: ListArgs) => {
             calls.push(args);
@@ -96,6 +99,7 @@ function turnKey(turnId = TURN): string {
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(hosts.splice(0).map((host) => host.harness.lifecycle.dispose()));
 });
 
@@ -387,5 +391,68 @@ describe("события → kv → RPC", () => {
     });
     expect(await host.bb.storage.kv.get(turnKey())).toBeUndefined();
     expect(await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD })).toBeNull();
+  });
+
+  it("сохраняет model/providerId из defaultExecutionOptions", async () => {
+    const lookup = vi.fn<ExecutionLookup>(async () => ({ model: "test-model", providerId: "test-provider" }));
+    const { host } = await load([
+      row("turn/started", 1, 1_000),
+      row("turn/completed", 2, 2_000),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, lookup);
+    await emit(host, 3);
+    expect(lookup).toHaveBeenCalledWith({ threadId: THREAD });
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({
+      model: "test-model", providerId: "test-provider",
+    });
+  });
+
+  it.each(["null", "error"])("defaultExecutionOptions=%s → вызывается, но model/providerId отсутствуют", async (mode) => {
+    const lookup = vi.fn<ExecutionLookup>(async () => {
+      if (mode === "error") throw new Error("SDK unavailable");
+      return null;
+    });
+    const { host } = await load([
+      row("turn/started", 1, 1_000),
+      row("turn/completed", 2, 2_000),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, lookup);
+    await emit(host, 3);
+    expect(lookup).toHaveBeenCalledOnce();
+    const record = await host.bb.storage.kv.get<Record<string, unknown>>(turnKey());
+    expect(record).toMatchObject({ input: 40, output: 60 });
+    expect(Object.hasOwn(record ?? {}, "model")).toBe(false);
+    expect(Object.hasOwn(record ?? {}, "providerId")).toBe(false);
+    expect(JSON.stringify(record)).not.toContain("undefined");
+  });
+
+  it("кэширует execution options на тред 60 секунд", async () => {
+    vi.useFakeTimers({ now: BASE });
+    const lookup = vi.fn<ExecutionLookup>(async () => ({ model: "test-model", providerId: "test-provider" }));
+    const rows = [
+      row("turn/started", 1, 1_000, {}, "turn-1"),
+      row("turn/completed", 2, 2_000, {}, "turn-1"),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
+    ];
+    const { host } = await load(rows, undefined, 0, lookup);
+    await emit(host, 3);
+    rows.push(
+      row("turn/started", 4, 3_000, {}, "turn-2"),
+      row("turn/completed", 5, 4_000, {}, "turn-2"),
+      row("thread/tokenUsage/updated", 6, 4_000, { tokenUsage: tokenUsage() }, "turn-2"),
+    );
+    await emit(host, 6);
+    expect(lookup).toHaveBeenCalledOnce();
+    vi.setSystemTime(BASE + 60_001);
+    rows.push(
+      row("turn/started", 7, 5_000, {}, "turn-3"),
+      row("turn/completed", 8, 6_000, {}, "turn-3"),
+      row("thread/tokenUsage/updated", 9, 6_000, { tokenUsage: tokenUsage() }, "turn-3"),
+    );
+    await emit(host, 9);
+    expect(await host.bb.storage.kv.get(`token-meter:seq:${THREAD}`)).toBe(9);
+    expect(host.harness.inspection.logEntries).toEqual([]);
+    expect(await host.bb.storage.kv.get(turnKey("turn-3"))).toMatchObject({ model: "test-model" });
+    expect(lookup).toHaveBeenCalledTimes(2);
   });
 });

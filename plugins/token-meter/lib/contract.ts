@@ -91,6 +91,8 @@ export const turnUsageSchema = z.object({
   /** Весь ход: turn/completed − turn/started. */
   turnDurationMs: z.number().positive().optional(),
   tokPerSec: tokenCount.optional(),
+  model: z.string().min(1).optional(),
+  providerId: z.string().min(1).optional(),
   at: tokenCount,
 });
 
