@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { formatCompact, formatThreadText, formatTurnText, formatTurnTitle } from "./format.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { formatBenchDate, formatCompact, formatThreadText, formatTurnText, formatTurnTitle } from "./format.js";
+
+const originalTz = process.env.TZ;
+
+afterEach(() => {
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 
 describe("formatCompact", () => {
   it.each([
@@ -39,10 +46,20 @@ describe("текст бейджей", () => {
       model: "test-model", providerId: "test-provider", at: 1_000,
     }, {
       model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
-      at: Date.UTC(2026, 0, 2), samples: [],
+      at: Date.UTC(2026, 0, 2, 12), samples: [],
     });
     expect(title).toContain("Эффективная скорость последнего вызова: 59.2 ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена (обработка контекста, очередь, скрытое рассуждение)");
     expect(title).toContain("Последний вызов: 12.5 с · Весь ход: 20 с");
     expect(title).toContain("Чистая генерация модели test-model: ~207 ток/с, задержка ~1.0 с (замер 2026-01-02)");
+  });
+});
+
+describe("дата замера", () => {
+  it.each([
+    ["Asia/Tokyo", Date.UTC(2025, 11, 31, 20), "2026-01-01"],
+    ["America/Los_Angeles", Date.UTC(2026, 0, 3, 2), "2026-01-02"],
+  ])("%s → локальная дата %s", (timeZone, at, expected) => {
+    process.env.TZ = timeZone;
+    expect(formatBenchDate(at)).toBe(expected);
   });
 });

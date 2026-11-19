@@ -9,7 +9,7 @@ const app = await loadPluginApp(() => import("../app"));
 const settings = app.settingsSections.find((row) => row.id === "benchmark")!;
 const slots: RenderedSlot[] = [];
 const benchmark: BenchResult = {
-  model: "model-a", genTokPerSec: 207.2, latencyMs: 1_040, at: Date.UTC(2026, 0, 2),
+  model: "model-a", genTokPerSec: 207.2, latencyMs: 1_040, at: Date.UTC(2026, 0, 2, 12),
   samples: [
     { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
     { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
@@ -50,6 +50,14 @@ afterEach(() => {
 describe("settingsSection benchmark", () => {
   it("регистрирует поддерживаемый settingsSection", () => {
     expect(settings.title).toBe("Замер скорости модели");
+  });
+
+  it("предупреждает о четырёх платных запросах и предельном времени", async () => {
+    const { slot } = mount();
+    expect(await slot.findByText(/4 платных запроса/)).toBeTruthy();
+    const hint = slot.getByText(/4 платных запроса/).textContent ?? "";
+    expect(hint).toContain("~3300 выходных токенов");
+    expect(hint).toContain("~8 мин");
   });
 
   it("показывает модели из ходов, последний замер и вызывает bench_model по кнопке", async () => {

@@ -20,6 +20,14 @@ function formatDuration(durationMs: number): string {
   return `${trimDecimal(durationMs / 1_000)} с`;
 }
 
+/** Дата замера — в локальном времени пользователя, а не в UTC. */
+export function formatBenchDate(at: number): string {
+  const date = new Date(at);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 export function formatCompact(value: number): string {
   if (value < 1_000) return String(Math.round(value));
   const units = ["k", "M", "B"] as const;
@@ -58,7 +66,7 @@ export function formatTurnTitle(usage: TurnUsage, benchmark?: Benchmark | null):
     `Всего за вызов: ${usage.total}`,
     durations,
     `Эффективная скорость последнего вызова: ${usage.tokPerSec === undefined ? "недоступна" : `${formatRate(usage.tokPerSec)} ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена (обработка контекста, очередь, скрытое рассуждение)`}`,
-    ...(benchmark ? [`Чистая генерация модели ${benchmark.model}: ~${Math.round(benchmark.genTokPerSec)} ток/с, задержка ~${(benchmark.latencyMs / 1_000).toFixed(1)} с (замер ${new Date(benchmark.at).toISOString().slice(0, 10)})`] : []),
+    ...(benchmark ? [`Чистая генерация модели ${benchmark.model}: ~${Math.round(benchmark.genTokPerSec)} ток/с, задержка ~${(benchmark.latencyMs / 1_000).toFixed(1)} с (замер ${formatBenchDate(benchmark.at)})`] : []),
   ].join("\n");
 }
 

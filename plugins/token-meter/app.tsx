@@ -28,9 +28,10 @@ function MessageBadge({ message }: ExperimentalMessageMetadataProps) {
   });
 
   const model = query.data?.model;
+  // Лёгкий метод: только готовые замеры, без списка моделей и настроек.
   const benchQuery = experimental_useRpcQuery({
     contract: rpcContract,
-    method: "bench_list",
+    method: "bench_results",
     input: null,
     enabled: model !== undefined,
   });

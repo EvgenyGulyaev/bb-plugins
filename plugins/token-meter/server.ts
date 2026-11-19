@@ -3,6 +3,7 @@ import { benchmarkModel } from "./lib/bench.js";
 import {
   benchResultSchema,
   itemEventRowSchema,
+  modelRequestRowSchema,
   rpcContract,
   threadTag,
   threadUsageSchema,
@@ -16,13 +17,17 @@ import {
 } from "./lib/contract.js";
 import { makeTurnUsage, retainTurns, summarizeTurns } from "./lib/usage.js";
 
-const EVENT_TYPES = ["thread/tokenUsage/updated", "turn/started", "turn/completed"] as const;
+const EVENT_TYPES = ["thread/tokenUsage/updated", "turn/started", "turn/completed", "client/turn/requested"] as const;
+/** Запрос модели хода: всегда отдельным list, чтобы не зависеть от границ страницы. */
+const MODEL_REQUEST_TYPES = ["client/turn/requested"] as const;
 const ITEM_EVENT_TYPES = ["item/started", "item/completed"] as const;
 /** Лимит API bb: threads.events.list отвечает HTTP 400 на limit > 100. */
 const EVENTS_PAGE_LIMIT = 100;
 /** Сколько item-событий перед usage-событием просматриваем в поисках последнего инструмента. */
 const TOOL_LOOKBACK = 10;
 const STARTED_LOOKBACK = 20;
+/** Сколько `client/turn/requested` перед ходом просматриваем в поисках модели. */
+const REQUESTED_LOOKBACK = 20;
 const TURN_PREFIX = "token-meter:turn:";
 const THREAD_PREFIX = "token-meter:thread:";
 const SEQ_PREFIX = "token-meter:seq:";
@@ -30,30 +35,88 @@ const BENCH_PREFIX = "token-meter:bench:";
 const BENCH_TAG = "bench";
 /** Айтемы вывода: последний вызов модели начинается после последнего НЕ такого айтема. */
 const MODEL_ITEM_KINDS = new Set(["agentMessage", "reasoning"]);
-const EXECUTION_CACHE_MS = 60_000;
+/**
+ * providerId — свойство треда, а не хода: кэшируем один запрос на тред на 60 с.
+ * Модель хода НЕ кэшируется: она берётся из события конкретного хода.
+ */
+const PROVIDER_CACHE_MS = 60_000;
 
 type ExecutionInfo = { model?: string; providerId?: string };
-type ExecutionLookup = (threadId: string) => Promise<ExecutionInfo>;
+type ExecutionBoundary = {
+  /** Sequence usage-события: за ней `client/turn/requested` уже не относится к вызову. */
+  seq: number;
+  /** `turn/started` этого хода: запросы модели после него к ходу не относятся. */
+  startedAt: number | null;
+};
+type ExecutionLookup = (threadId: string, boundary: ExecutionBoundary) => Promise<ExecutionInfo>;
 
-function createExecutionLookup(bb: BbPluginApi): ExecutionLookup {
-  const cache = new Map<string, { at: number; value: ExecutionInfo }>();
+/**
+ * Модель хода = `execution.model` последнего `client/turn/requested` перед
+ * `turn/started` этого хода. `defaultExecutionOptions` — только fallback:
+ * это дефолт треда на момент синка, он врёт при catch-up бэклога и смене модели.
+ */
+async function findTurnModel(
+  bb: BbPluginApi,
+  threadId: string,
+  boundary: ExecutionBoundary,
+): Promise<string | undefined> {
+  try {
+    const rows = await bb.sdk.threads.events.list({
+      threadId,
+      types: MODEL_REQUEST_TYPES,
+      beforeSeq: String(boundary.seq),
+      order: "desc",
+      limit: pageLimit(REQUESTED_LOOKBACK),
+    });
+    for (const row of rows) {
+      const parsed = modelRequestRowSchema.safeParse(row);
+      if (!parsed.success || !parsed.data.model) continue;
+      // Запросы модели, отправленные уже внутри хода, — не модель этого хода.
+      if (boundary.startedAt !== null && parsed.data.createdAt > boundary.startedAt) continue;
+      return parsed.data.model;
+    }
+  } catch {
+    // Модель — необязательные метаданные: ошибка SDK не должна терять usage.
+  }
+  return undefined;
+}
+
+async function defaultTurnModel(bb: BbPluginApi, threadId: string): Promise<string | undefined> {
+  try {
+    const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
+    return options?.model || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function createProviderLookup(bb: BbPluginApi): (threadId: string) => Promise<string | undefined> {
+  const cache = new Map<string, { at: number; value?: string }>();
   return async (threadId) => {
     const cached = cache.get(threadId);
-    if (cached && Date.now() - cached.at < EXECUTION_CACHE_MS) return cached.value;
-    let value: ExecutionInfo = {};
+    if (cached && Date.now() - cached.at < PROVIDER_CACHE_MS) return cached.value;
+    let value: string | undefined;
     try {
-      const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
-      // SDK 0.6.157 типизирует model, но ещё не объявляет runtime-поле providerId.
-      const providerId = (options as ({ providerId?: unknown } | null))?.providerId;
-      value = {
-        ...(options?.model ? { model: options.model } : {}),
-        ...(typeof providerId === "string" && providerId ? { providerId } : {}),
-      };
+      // providerId есть только в ThreadResponse; defaultExecutionOptions его не отдаёт.
+      const thread = await bb.sdk.threads.get({ threadId });
+      value = thread.providerId || undefined;
     } catch {
-      // Модель — необязательные метаданные: ошибка SDK не должна терять usage.
+      // Метаданные необязательны.
     }
     cache.set(threadId, { at: Date.now(), value });
     return value;
+  };
+}
+
+function createExecutionLookup(bb: BbPluginApi): ExecutionLookup {
+  const providerIdFor = createProviderLookup(bb);
+  return async (threadId, boundary) => {
+    const model = await findTurnModel(bb, threadId, boundary) ?? await defaultTurnModel(bb, threadId);
+    const providerId = await providerIdFor(threadId);
+    return {
+      ...(model ? { model } : {}),
+      ...(providerId ? { providerId } : {}),
+    };
   };
 }
 
@@ -286,7 +349,7 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
       const endedAt = completed.get(usage.turnId) ?? usage.createdAt;
       const toolWindow = await findToolWindow(bb, threadId, usage.seq, usage.turnId);
       const windowStartedAt = toolWindow.known ? toolWindow.startedAt ?? turnStartedAt : undefined;
-      const execution = await executionLookup(threadId);
+      const execution = await executionLookup(threadId, { seq: usage.seq, startedAt: turnStartedAt });
       await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt, execution);
       changed = true;
     }
@@ -343,7 +406,7 @@ export default async function plugin(bb: BbPluginApi) {
       const parsed = threadUsageSchema.safeParse(await bb.storage.kv.get<unknown>(summaryKey(threadId)));
       return parsed.success ? parsed.data : null;
     },
-    bench_model: async ({ model }) => {
+    bench_model: async ({ model }, context) => {
       if (activeBench) throw new Error("Другой замер уже выполняется");
       const run = (async () => {
         const config = await settings.get();
@@ -354,6 +417,8 @@ export default async function plugin(bb: BbPluginApi) {
           model,
           endpoint,
           ...(config.benchApiKey ? { apiKey: config.benchApiKey } : {}),
+          // Отмена вызывающим прерывает HTTP и освобождает single-flight ниже.
+          signal: context.experimental_signal,
         });
         await bb.storage.kv.set(`${BENCH_PREFIX}${model}`, result);
         bb.rpc.experimental_invalidate([BENCH_TAG]);
@@ -379,6 +444,8 @@ export default async function plugin(bb: BbPluginApi) {
         hasEndpoint: config.benchEndpoint.trim().length > 0,
       };
     },
+    // Бейдж хода зовёт только этот метод: замеры без списка моделей и настроек.
+    bench_results: async () => ({ results: await listBenchmarks(bb.storage.kv) }),
   });
   settings.onChange(() => bb.rpc.experimental_invalidate([BENCH_TAG]));
 

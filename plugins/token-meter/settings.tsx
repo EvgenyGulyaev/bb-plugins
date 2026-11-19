@@ -4,9 +4,10 @@ import {
   experimental_useRpcQuery,
 } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type BenchResult } from "./lib/contract.js";
+import { formatBenchDate } from "./lib/format.js";
 
 function benchText(result: BenchResult): string {
-  return `~${Math.round(result.genTokPerSec)} ток/с · задержка ~${(result.latencyMs / 1_000).toFixed(1)} с · ${new Date(result.at).toISOString().slice(0, 10)}`;
+  return `~${Math.round(result.genTokPerSec)} ток/с · задержка ~${(result.latencyMs / 1_000).toFixed(1)} с · ${formatBenchDate(result.at)}`;
 }
 
 export function TokenMeterSettings() {
@@ -39,6 +40,10 @@ export function TokenMeterSettings() {
 
   return (
     <div className="token-meter-settings">
+      <p className="token-meter-settings-hint">
+        Один замер — это 4 платных запроса к вашей модели (до ~3300 выходных токенов) и до ~8 мин в худшем случае
+        (таймаут 120 с на запрос). Кнопка отправляет их только по вашему нажатию.
+      </p>
       {!benchEnabled && (
         <p className="token-meter-settings-hint">
           Включите benchEnabled и укажите benchEndpoint в настройках плагина. API key задаётся в benchApiKey (secret).

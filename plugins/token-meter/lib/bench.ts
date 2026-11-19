@@ -9,12 +9,44 @@ function failureMessage(cause: unknown, apiKey?: string): string {
   return apiKey ? raw.replaceAll(apiKey, "[secret]") : raw;
 }
 
+/**
+ * Endpoint — пользовательская настройка, поэтому логин/пароль в URL отвергаем:
+ * такой адрес утёк бы в тексты ошибок и в логи.
+ */
+function parseEndpoint(raw: string): string {
+  const endpoint = raw.trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("замер не выполнен: benchEndpoint не является URL");
+  }
+  if (url.username || url.password) {
+    throw new Error("замер не выполнен: endpoint не должен содержать логин/пароль");
+  }
+  return endpoint;
+}
+
+/** Отмена вызывающим и таймаут запроса неразличимы по типу причины — различаем по внешнему сигналу. */
+function abortMessage(cause: unknown, outer?: AbortSignal): string | null {
+  const name = cause instanceof Error ? cause.name : "";
+  if (name !== "TimeoutError" && name !== "AbortError") return null;
+  return outer?.aborted ? "замер отменён" : "замер не выполнен: таймаут 120 с";
+}
+
+function requestSignal(outer?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(TIMEOUT_MS);
+  return outer ? AbortSignal.any([outer, timeout]) : timeout;
+}
+
 export async function benchmarkModel(input: {
   model: string;
   endpoint: string;
   apiKey?: string;
+  /** Сигнал RPC-вызова: отмена освобождает single-flight на сервере. */
+  signal?: AbortSignal;
 }): Promise<BenchResult> {
-  const endpoint = input.endpoint.replace(/\/+$/, "");
+  const endpoint = parseEndpoint(input.endpoint);
   const samples: BenchResult["samples"] = [];
   for (const maxTokens of MAX_TOKEN_SEQUENCE) {
     const startedAt = Date.now();
@@ -32,22 +64,19 @@ export async function benchmarkModel(input: {
           max_tokens: maxTokens,
           stream: false,
         }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: requestSignal(input.signal),
       });
     } catch (cause) {
-      const name = cause instanceof Error ? cause.name : "";
-      if (name === "TimeoutError" || name === "AbortError") {
-        throw new Error("замер не выполнен: таймаут 120 с");
-      }
-      throw new Error(`замер не выполнен: ${failureMessage(cause, input.apiKey)}`);
+      throw new Error(abortMessage(cause, input.signal) ?? `замер не выполнен: ${failureMessage(cause, input.apiKey)}`);
     }
     const durationMs = Date.now() - startedAt;
     if (!response.ok) throw new Error(`замер не выполнен: HTTP ${response.status}`);
     let payload: unknown;
     try {
       payload = await response.json();
-    } catch {
-      throw new Error("замер не выполнен: ответ не JSON");
+    } catch (cause) {
+      // Таймаут срабатывает и на чтении тела: это не «ответ не JSON».
+      throw new Error(abortMessage(cause, input.signal) ?? "замер не выполнен: ответ не JSON");
     }
     const outputTokens = (payload as { usage?: { completion_tokens?: unknown } })?.usage?.completion_tokens;
     if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {

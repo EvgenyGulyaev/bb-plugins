@@ -61,7 +61,8 @@ function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage:
     rpc: {
       turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? usage : null])),
       thread_usage: () => null,
-      bench_list: () => ({ models: [], results: benchmarks, benchEnabled: false, hasEndpoint: false }),
+      // Бейдж не должен звать тяжёлый bench_list: только лёгкие замеры.
+      bench_results: () => ({ results: benchmarks }),
     } as never,
   });
   slots.push(slot);
@@ -104,7 +105,7 @@ describe("messageMetadata", () => {
   it("добавляет прямой замер модели хода в бейдж и title", async () => {
     const benchmark: BenchResult = {
       model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
-      at: Date.UTC(2026, 0, 2),
+      at: Date.UTC(2026, 0, 2, 12),
       samples: [
         { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
         { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
@@ -116,6 +117,35 @@ describe("messageMetadata", () => {
     expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.) · модель ~207")).toBeTruthy();
     expect(slot.container.querySelector(".token-meter-badge")?.getAttribute("title"))
       .toContain("Чистая генерация модели test-model: ~207 ток/с, задержка ~1.0 с (замер 2026-01-02)");
+  });
+
+  it("бейдж берёт замеры лёгким bench_results, а не bench_list", async () => {
+    const benchmark: BenchResult = {
+      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
+      at: Date.UTC(2026, 0, 2, 12),
+      samples: [
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
+        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
+      ],
+    };
+    const benchList = vi.fn(() => {
+      throw new Error("bench_list не должен вызываться из бейджа");
+    });
+    const slot = renderSlot({ component: metadata.component }, { message: message() }, {
+      pluginId: "token-meter",
+      rpc: {
+        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? turn({ model: "test-model" }) : null])),
+        thread_usage: () => null,
+        bench_list: benchList,
+        bench_results: () => ({ results: [benchmark] }),
+      } as never,
+    });
+    slots.push(slot);
+    expect(await slot.findByText(/модель ~207/)).toBeTruthy();
+    expect(benchList).not.toHaveBeenCalled();
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "bench_results")).toHaveLength(1);
   });
 
   it("без записи → null", async () => {

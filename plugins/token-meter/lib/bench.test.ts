@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { benchmarkModel } from "./bench.js";
 
+async function errorOf(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (cause) {
+    return cause as Error;
+  }
+  throw new Error("ожидалась ошибка замера");
+}
+
 function completionResponse(outputTokens: number, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -90,5 +99,114 @@ describe("benchmarkModel", () => {
     }));
     await expect(benchmarkModel({ model: "test-model", endpoint: "http://localhost:8317/v1" }))
       .rejects.toThrow("таймаут 120 с");
+  });
+
+  it("каждый запрос ограничен AbortSignal.timeout(120_000)", async () => {
+    const fetchMock = mockDeterministicFetch([
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+    ]);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    await benchmarkModel({ model: "test-model", endpoint: "http://localhost:8317/v1" });
+    expect(timeoutSpy).toHaveBeenCalledTimes(4);
+    for (const call of timeoutSpy.mock.calls) expect(call[0]).toBe(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("сигнал вызывающего попадает в скомбинированный AbortSignal", async () => {
+    const fetchMock = mockDeterministicFetch([
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 6_000 },
+    ]);
+    const anySpy = vi.spyOn(AbortSignal, "any");
+    const controller = new AbortController();
+    await benchmarkModel({
+      model: "test-model",
+      endpoint: "http://localhost:8317/v1",
+      signal: controller.signal,
+    });
+    expect(anySpy).toHaveBeenCalledTimes(4);
+    for (const [signals] of anySpy.mock.calls) expect(signals).toContain(controller.signal);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it("отмена вызывающим → сообщение об отмене, а не о таймауте", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    }));
+    await expect(benchmarkModel({
+      model: "test-model",
+      endpoint: "http://localhost:8317/v1",
+      signal: controller.signal,
+    })).rejects.toThrow("замер отменён");
+  });
+
+  it("таймаут при чтении тела, а не HTTP, → сообщение про таймаут", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new DOMException("timed out", "TimeoutError");
+      },
+    }) as unknown as Response));
+    const error = await errorOf(benchmarkModel({ model: "test-model", endpoint: "http://localhost:8317/v1" }));
+    expect(error.message).toBe("замер не выполнен: таймаут 120 с");
+    expect(error.message).not.toContain("не JSON");
+  });
+
+  it("Δms=0 → замер неустойчив, а не бесконечная скорость", async () => {
+    mockDeterministicFetch([
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 1_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_000, durationMs: 1_000 },
+    ]);
+    await expect(benchmarkModel({ model: "test-model", endpoint: "http://localhost:8317/v1" }))
+      .rejects.toThrow("замер неустойчив");
+  });
+
+  it("дробная скорость 142.9 и latency 300 при Δout=1000 и Δms=7000", async () => {
+    mockDeterministicFetch([
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_100, durationMs: 8_000 },
+      { outputTokens: 100, durationMs: 1_000 },
+      { outputTokens: 1_100, durationMs: 8_000 },
+    ]);
+    const result = await benchmarkModel({ model: "test-model", endpoint: "http://localhost:8317/v1" });
+    expect(result.genTokPerSec).toBe(142.9);
+    expect(result.latencyMs).toBe(300);
+  });
+
+  it("ошибка с ключом маскируется, ключ не утекает", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("bad Bearer super-secret");
+    }));
+    const error = await errorOf(benchmarkModel({
+      model: "test-model",
+      endpoint: "http://localhost:8317/v1",
+      apiKey: "super-secret",
+    }));
+    expect(error.message).toContain("[secret]");
+    expect(error.message).not.toContain("super-secret");
+  });
+
+  it.each([
+    ["http://user:super-secret@localhost:8317/v1", "логин/пароль"],
+    ["не-url", "не является URL"],
+  ])("endpoint %s → отказ без сети и без утечки", async (endpoint, message) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await errorOf(benchmarkModel({ model: "test-model", endpoint }));
+    expect(error.message).toContain(message);
+    expect(error.message).not.toContain("super-secret");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
