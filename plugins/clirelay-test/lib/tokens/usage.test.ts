@@ -203,6 +203,22 @@ describe("сводка и retention", () => {
     expect(summary).toMatchObject({ total: 30, turns: 2, modelContextWindow: null });
   });
 
+  it("сводка берёт модель самого свежего хода, у которого она есть", () => {
+    const summary = summarizeTurns("thr_1", [
+      { ...turn("a", 1), model: "model-old" },
+      turn("b", 2),
+      { ...turn("c", 3), model: "model-new" },
+    ], null);
+    expect(summary.model).toBe("model-new");
+    const withoutModel = summarizeTurns("thr_1", [turn("a", 1), { ...turn("b", 2), model: "model-b" }], null);
+    expect(withoutModel.model).toBe("model-b");
+  });
+
+  it("ни у одного хода нет модели → поля model в сводке нет", () => {
+    const summary = summarizeTurns("thr_1", [turn("a", 1), turn("b", 2)], null);
+    expect("model" in summary).toBe(false);
+  });
+
   it("оставляет не больше 500 новых ходов и вытесняет старые", () => {
     const result = retainTurns(Array.from({ length: 501 }, (_, i) => turn(String(i), i)), 1_000);
     expect(result.kept).toHaveLength(500);

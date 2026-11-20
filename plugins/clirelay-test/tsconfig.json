@@ -23,10 +23,13 @@
   "include": [
     "server.ts",
     "server.test.ts",
+    "server-sync.test.ts",
     "vitest.config.ts",
     "app.tsx",
     "components",
     "lib",
-    "hooks"
+    "hooks",
+    "test",
+    "vitest.setup.ts"
   ]
 }

@@ -1,7 +1,8 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RETENTION_MS } from "./lib/usage.js";
-import plugin from "./server.js";
+import { DEFAULT_TOKENS_DISPLAY } from "../lib/tokens/display";
+import { registerTokens } from "../lib/tokens/server";
+import { RETENTION_MS } from "../lib/tokens/usage";
 
 const THREAD = "thr_1";
 const TURN = "turn-1";
@@ -80,13 +81,12 @@ async function load(
   beforeLoad?: (host: Host) => Promise<void>,
   delayMs = 0,
   defaultExecutionOptions?: OptionsLookup,
-  settings: Record<string, string | boolean> = {},
   threadLookup?: ThreadLookup,
+  onList?: (args: ListArgs) => void,
 ) {
   const calls: ListArgs[] = [];
   const host = createFakePluginHost({
-    pluginId: "token-meter",
-    settings,
+    pluginId: "clirelay-test",
     sdk: {
       threads: {
         defaultExecutionOptions: async (args: { threadId: string }) => defaultExecutionOptions?.(args) ?? null,
@@ -94,6 +94,7 @@ async function load(
         events: {
           list: async (args: ListArgs) => {
             calls.push(args);
+            onList?.(args);
             if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
             return listEvents(rows, args);
           },
@@ -102,7 +103,7 @@ async function load(
     },
   });
   await beforeLoad?.(host);
-  await plugin(host.bb);
+  await registerTokens(host.bb);
   hosts.push(host);
   return { host, calls };
 }
@@ -423,7 +424,7 @@ it("модель хода — из client/turn/requested, providerId — из th
       row("turn/started", 2, 1_000),
       row("turn/completed", 3, 2_000),
       row("thread/tokenUsage/updated", 4, 2_000, { tokenUsage: tokenUsage() }),
-    ], undefined, 0, options, {}, thread);
+    ], undefined, 0, options, thread);
     await emit(host, 4);
     expect(thread).toHaveBeenCalledWith({ threadId: THREAD });
     // Событие есть → дефолт треда не нужен.
@@ -487,6 +488,28 @@ it("модель хода — из client/turn/requested, providerId — из th
     expect(await host.bb.storage.kv.get(turnKey("turn-1"))).toMatchObject({ model: "default-model" });
   });
 
+  it("без turn/started запрос после usage не подменяет модель хода", async () => {
+    const { host } = await load([
+      requestRow("model-before-usage", 1, 500),
+      row("turn/completed", 2, 2_000),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
+      requestRow("model-after-usage", 4, 2_500),
+    ]);
+    await emit(host, 4);
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({ model: "model-before-usage" });
+  });
+
+  it("запрос с createdAt == turn/started относится к этому ходу", async () => {
+    const { host } = await load([
+      requestRow("model-at-turn-start", 1, 1_000),
+      row("turn/started", 2, 1_000),
+      row("turn/completed", 3, 2_000),
+      row("thread/tokenUsage/updated", 4, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, async () => ({ model: "default-model" }));
+    await emit(host, 4);
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({ model: "model-at-turn-start" });
+  });
+
   it("без client/turn/requested → fallback на каждый ход, кэша модели нет", async () => {
     const options = vi.fn<OptionsLookup>(async () => ({ model: "default-model" }));
     const rows = [
@@ -515,7 +538,7 @@ it("модель хода — из client/turn/requested, providerId — из th
       row("turn/completed", 2, 2_000, {}, "turn-1"),
       row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
     ];
-    const { host } = await load(rows, undefined, 0, undefined, {}, thread);
+    const { host } = await load(rows, undefined, 0, undefined, thread);
     await emit(host, 3);
     rows.push(
       row("turn/started", 4, 3_000, {}, "turn-2"),
@@ -528,6 +551,67 @@ it("модель хода — из client/turn/requested, providerId — из th
     expect(await host.bb.storage.kv.get(turnKey("turn-2"))).toMatchObject({ providerId: "prov" });
   });
 
+  it("providerId кэш истекает через 60 секунд", async () => {
+    vi.useFakeTimers({ now: BASE });
+    const thread = vi.fn<ThreadLookup>(async () => ({ providerId: "prov" }));
+    const rows = [
+      row("turn/started", 1, 1_000, {}, "turn-1"),
+      row("turn/completed", 2, 2_000, {}, "turn-1"),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
+    ];
+    const { host } = await load(rows, undefined, 0, undefined, thread);
+    await emit(host, 3);
+    vi.setSystemTime(BASE + 60_001);
+    rows.push(
+      row("turn/started", 4, 3_000, {}, "turn-2"),
+      row("turn/completed", 5, 4_000, {}, "turn-2"),
+      row("thread/tokenUsage/updated", 6, 4_000, { tokenUsage: tokenUsage() }, "turn-2"),
+    );
+    await emit(host, 6);
+    expect(thread).toHaveBeenCalledTimes(2);
+  });
+
+  it("ошибка threads.get кэшируется на 60 секунд", async () => {
+    vi.useFakeTimers({ now: BASE });
+    const thread = vi.fn<ThreadLookup>(async () => { throw new Error("SDK unavailable"); });
+    const rows = [
+      row("turn/started", 1, 1_000, {}, "turn-1"),
+      row("turn/completed", 2, 2_000, {}, "turn-1"),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
+    ];
+    const { host } = await load(rows, undefined, 0, undefined, thread);
+    await emit(host, 3);
+    vi.setSystemTime(BASE + 59_999);
+    rows.push(
+      row("turn/started", 4, 3_000, {}, "turn-2"),
+      row("turn/completed", 5, 4_000, {}, "turn-2"),
+      row("thread/tokenUsage/updated", 6, 4_000, { tokenUsage: tokenUsage() }, "turn-2"),
+    );
+    await emit(host, 6);
+    expect(thread).toHaveBeenCalledOnce();
+    expect(await host.bb.storage.kv.get(turnKey("turn-2"))).toMatchObject({ input: 40, output: 60 });
+  });
+
+  it("ошибка list client/turn/requested → fallback, usage сохраняется", async () => {
+    const options = vi.fn<OptionsLookup>(async () => ({ model: "default-model" }));
+    const { host } = await load([
+      requestRow("model-from-event", 1, 500),
+      row("turn/started", 2, 1_000),
+      row("turn/completed", 3, 2_000),
+      row("thread/tokenUsage/updated", 4, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, options, undefined, (args) => {
+      if (args.types?.length === 1 && args.types[0] === "client/turn/requested") {
+        throw new Error("SDK unavailable");
+      }
+    });
+    await emit(host, 4);
+    expect(options).toHaveBeenCalledOnce();
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({
+      input: 40, output: 60, model: "default-model",
+    });
+    expect(host.harness.inspection.logEntries).toEqual([]);
+  });
+
   it.each(["null", "error"])("defaultExecutionOptions=%s → вызывается, но model отсутствует", async (mode) => {
     const options = vi.fn<OptionsLookup>(async () => {
       if (mode === "error") throw new Error("SDK unavailable");
@@ -538,7 +622,7 @@ it("модель хода — из client/turn/requested, providerId — из th
       row("turn/started", 1, 1_000),
       row("turn/completed", 2, 2_000),
       row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
-    ], undefined, 0, options, {}, thread);
+    ], undefined, 0, options, thread);
     await emit(host, 3);
     expect(options).toHaveBeenCalledOnce();
     const record = await host.bb.storage.kv.get<Record<string, unknown>>(turnKey());
@@ -553,7 +637,7 @@ it("модель хода — из client/turn/requested, providerId — из th
       row("turn/started", 1, 1_000),
       row("turn/completed", 2, 2_000),
       row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
-    ], undefined, 0, undefined, {}, thread);
+    ], undefined, 0, undefined, thread);
     await emit(host, 3);
     const record = await host.bb.storage.kv.get<Record<string, unknown>>(turnKey());
     expect(record).toMatchObject({ input: 40, output: 60 });
@@ -562,171 +646,62 @@ it("модель хода — из client/turn/requested, providerId — из th
   });
 });
 
-describe("замер чистой генерации RPC", () => {
-  const endpoint = "http://localhost:8317/v1";
-  const enabled = { benchEnabled: true, benchEndpoint: endpoint, benchApiKey: "super-secret" };
-  const response = (outputTokens: number): Response => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ usage: { completion_tokens: outputTokens } }),
-  }) as Response;
-
-  function stubBenchFetch() {
-    let now = 0;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
-    const steps = [
-      { outputTokens: 100, durationMs: 1_000 },
-      { outputTokens: 1_000, durationMs: 6_000 },
-      { outputTokens: 100, durationMs: 1_000 },
-      { outputTokens: 1_000, durationMs: 6_000 },
-    ];
-    const fetchMock = vi.fn(async () => {
-      const step = steps[fetchMock.mock.calls.length - 1];
-      if (!step) throw new Error("unexpected fetch");
-      now += step.durationMs;
-      return response(step.outputTokens);
+describe("настройки отображения", () => {
+  it("на пустом kv get отдаёт дефолт; set пишет kv, возвращает состояние и инвалидирует тег", async () => {
+    const { host } = await load([]);
+    expect(await host.harness.behavior.callRpc("tokens_display_get", null))
+      .toEqual(DEFAULT_TOKENS_DISPLAY);
+    const next = await host.harness.behavior.callRpc("tokens_display_set", {
+      target: "badgeField", field: "reasoning", on: true,
     });
-    vi.stubGlobal("fetch", fetchMock);
-    return fetchMock;
-  }
-
-  it.each([
-    ["выключен", { benchEnabled: false, benchEndpoint: endpoint }],
-    ["без endpoint", { benchEnabled: true, benchEndpoint: "" }],
-  ])("%s → отказ без сети", async (_name, settings) => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const { host } = await load([], undefined, 0, undefined, settings);
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "test-model" }))
-      .rejects.toThrow(/выключен|benchEndpoint/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(next).toMatchObject({ badge: { fields: { reasoning: true } } });
+    expect(await host.bb.storage.kv.get("tokens-display")).toEqual(next);
+    expect(host.harness.inspection.experimental_rpcInvalidations).toContainEqual(["tokens-display"]);
   });
 
-  it("сохраняет результат, возвращает list без секрета и инвалидирует bench", async () => {
-    const fetchMock = stubBenchFetch();
-    const lookup = vi.fn<OptionsLookup>(async () => ({ model: "test-model" }));
+  it("два set подряд без await не теряют друг друга", async () => {
+    const { host } = await load([]);
+    await Promise.all([
+      host.harness.behavior.callRpc("tokens_display_set", { target: "badgeField", field: "model", on: true }),
+      host.harness.behavior.callRpc("tokens_display_set", { target: "threadField", field: "turns", on: true }),
+    ]);
+    expect(await host.bb.storage.kv.get("tokens-display")).toMatchObject({
+      badge: { fields: { model: true } },
+      thread: { fields: { turns: true } },
+    });
+  });
+
+  it("битое значение в kv до загрузки → get отдаёт нормализованное, не бросает", async () => {
+    const { host } = await load([], async (host) => {
+      await host.bb.storage.kv.set("tokens-display", { badge: "x" });
+    });
+    expect(await host.harness.behavior.callRpc("tokens_display_get", null)).toEqual(DEFAULT_TOKENS_DISPLAY);
+  });
+
+  it("невалидный патч → ошибка валидации, kv не изменён", async () => {
+    const { host } = await load([], async (host) => {
+      await host.bb.storage.kv.set("tokens-display", DEFAULT_TOKENS_DISPLAY);
+    });
+    await expect(host.harness.behavior.callRpc("tokens_display_set", {
+      target: "badgeField", field: "total", on: true,
+    })).rejects.toThrow();
+    expect(await host.bb.storage.kv.get("tokens-display")).toEqual(DEFAULT_TOKENS_DISPLAY);
+  });
+
+  it("сбор не зависит от показа: выключенные бейдж и строка всё равно пишут ход и сводку", async () => {
     const { host } = await load([
       row("turn/started", 1, 1_000),
       row("turn/completed", 2, 2_000),
       row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
-    ], undefined, 0, lookup, enabled);
+    ], async (host) => {
+      await host.bb.storage.kv.set("tokens-display", {
+        thread: { enabled: false, fields: {} },
+        badge: { enabled: false, fields: {} },
+      });
+    });
     await emit(host, 3);
-    const result = await host.harness.behavior.callRpc("bench_model", { model: "test-model" });
-    expect(result).toMatchObject({ model: "test-model", genTokPerSec: 180, latencyMs: 444 });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(await host.bb.storage.kv.get("token-meter:bench:test-model")).toEqual(result);
-    const list = await host.harness.behavior.callRpc("bench_list", null);
-    expect(list).toMatchObject({
-      models: ["test-model"], results: [result], benchEnabled: true, hasEndpoint: true,
-    });
-    // Бейдж зовёт лёгкий метод: только замеры, без моделей и настроек.
-    expect(await host.harness.behavior.callRpc("bench_results", null)).toEqual({ results: [result] });
-    expect(host.harness.inspection.experimental_rpcInvalidations).toContainEqual(["bench"]);
-    expect(JSON.stringify({
-      result, list, logs: host.harness.inspection.logEntries,
-    })).not.toContain("super-secret");
-  });
-
-  it("bench_list возвращает уникальные модели записанных ходов и только валидные замеры", async () => {
-    const { host } = await load([], async (host) => {
-      for (const [turnId, model] of [["a", "model-b"], ["b", "model-a"], ["c", "model-a"]] as const) {
-        await host.bb.storage.kv.set(`token-meter:turn:${THREAD}:${turnId}`, {
-          threadId: THREAD, turnId, input: 1, cached: 0, output: 1, reasoning: 0,
-          total: 2, model, at: Date.now(),
-        });
-      }
-      await host.bb.storage.kv.set("token-meter:bench:model-a", { broken: true });
-    }, 0, undefined, { benchEnabled: false, benchEndpoint: "" });
-    expect(await host.harness.behavior.callRpc("bench_list", null)).toEqual({
-      models: ["model-a", "model-b"], results: [], benchEnabled: false, hasEndpoint: false,
-    });
-  });
-
-  it("одновременно разрешён только один замер, lock снимается после завершения", async () => {
-    let now = 0;
-    vi.spyOn(Date, "now").mockImplementation(() => now);
-    let releaseFirst = () => {};
-    const steps = [
-      { outputTokens: 1_000, durationMs: 6_000 },
-      { outputTokens: 100, durationMs: 1_000 },
-      { outputTokens: 1_000, durationMs: 6_000 },
-    ];
-    const fetchMock = vi.fn()
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
-        releaseFirst = () => {
-          now += 1_000;
-          resolve(response(100));
-        };
-      }))
-      .mockImplementation(async () => {
-        const step = steps[fetchMock.mock.calls.length - 2];
-        if (!step) throw new Error("unexpected fetch");
-        now += step.durationMs;
-        return response(step.outputTokens);
-      });
-    vi.stubGlobal("fetch", fetchMock);
-    const { host } = await load([], undefined, 0, undefined, enabled);
-    const first = host.harness.behavior.callRpc("bench_model", { model: "test-model" });
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "other-model" }))
-      .rejects.toThrow("уже выполняется");
-    releaseFirst();
-    await expect(first).resolves.toMatchObject({ genTokPerSec: 180 });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    // После успешного resolve lock снят.
-    stubBenchFetch();
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "other-model" }))
-      .resolves.toMatchObject({ genTokPerSec: 180 });
-  });
-
-  it("bench_results отдаёт только замеры, без моделей и секрета", async () => {
-    const { host } = await load([], async (host) => {
-      await host.bb.storage.kv.set("token-meter:bench:model-a", {
-        model: "model-a", genTokPerSec: 207.2, latencyMs: 1_040, at: Date.now(),
-        samples: [
-          { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-          { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-          { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-          { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-        ],
-      });
-      await host.bb.storage.kv.set("token-meter:bench:broken", { broken: true });
-    }, 0, undefined, enabled);
-    const light = await host.harness.behavior.callRpc("bench_results", null);
-    expect(light).toMatchObject({ results: [{ model: "model-a", genTokPerSec: 207.2 }] });
-    expect(Object.keys(light as Record<string, unknown>)).toEqual(["results"]);
-    expect(JSON.stringify(light)).not.toContain("super-secret");
-  });
-
-  it("lock снимается после ошибки замера", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("bad Bearer super-secret");
-    }));
-    const { host } = await load([], undefined, 0, undefined, enabled);
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "test-model" }))
-      .rejects.toThrow(/\[secret\]/);
-    const fetchMock = stubBenchFetch();
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "test-model" }))
-      .resolves.toMatchObject({ genTokPerSec: 180 });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
-  it("отмена вызывающего освобождает lock, замер не записывается", async () => {
-    const fetchMock = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
-      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      if (init?.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-    const controller = new AbortController();
-    const { host } = await load([], undefined, 0, undefined, enabled);
-    const first = host.harness.behavior.callRpc("bench_model", { model: "test-model" }, { signal: controller.signal });
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    controller.abort();
-    await expect(first).rejects.toThrow("замер отменён");
-    expect(await host.bb.storage.kv.get("token-meter:bench:test-model")).toBeUndefined();
-    const ok = stubBenchFetch();
-    await expect(host.harness.behavior.callRpc("bench_model", { model: "test-model" }))
-      .resolves.toMatchObject({ genTokPerSec: 180 });
-    expect(ok).toHaveBeenCalledTimes(4);
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({ output: 60, total: 100 });
+    expect(await host.harness.behavior.callRpc("thread_usage", { threadId: THREAD }))
+      .toMatchObject({ turns: 1, total: 100 });
   });
 });

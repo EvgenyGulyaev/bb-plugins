@@ -30,6 +30,112 @@ describe("RPC", () => {
     const { host } = await load();
     expect(await host.harness.behavior.callRpc("providers_list", null)).toEqual({ providers: [] });
   });
+
+  describe("API-настройки модели", () => {
+    const FILE = JSON.stringify({
+      providers: {
+        "router-gpt": {
+          baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "prov-key", authHeader: true,
+          models: [{ id: "gpt-6.2-sol", apiKey: "model-key", headers: { "X-M": "model-secret" }, reasoning: true }],
+        },
+      },
+    });
+    it("model_update: новые поля пишутся в файл, ответ и providers_list без секретов", async () => {
+      const { host, path } = await load(FILE);
+      const patch = {
+        thinkingLevelMap: { off: null, low: "low", high: "high" },
+        samplingParams: { reasoning_effort: "high" },
+        compat: { supportsDeveloperRole: false, supportsStore: false, promptCacheKeyMode: "disabled" },
+        cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+        promptCache: { short: 300 }, inputLimits: { maxRequestBytes: 100 },
+        api: "openai-completions", baseUrl: "http://localhost:4011/v1",
+      };
+      const updated = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch });
+      const dump = JSON.stringify(updated);
+      for (const secret of ["model-key", "model-secret", "prov-key"]) expect(dump).not.toContain(secret);
+      expect(updated).toMatchObject({ id: "gpt-6.2-sol", apiKeySet: true, headersSet: true, headerNames: ["X-M"] });
+      const onDisk = JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0];
+      expect(onDisk.samplingParams).toEqual({ reasoning_effort: "high" });
+      expect(onDisk.compat.promptCacheKeyMode).toBe("disabled");
+      expect(onDisk.apiKey).toBe("model-key"); // патч не трогал ключ
+      expect(onDisk.headers).toEqual({ "X-M": "model-secret" });
+      const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<Record<string, unknown>> };
+      expect(JSON.stringify(providers)).not.toContain("model-secret");
+      expect(providers[0]).toMatchObject({ authHeader: true, headersSet: false });
+    });
+    it("ключ модели: установка и очистка через RPC", async () => {
+      const { host, path } = await load(FILE);
+      await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { apiKey: "new-model-key" } });
+      expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].apiKey).toBe("new-model-key");
+      const cleared = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { apiKey: "" } }) as Record<string, unknown>;
+      expect(cleared.apiKeySet).toBe(false);
+      expect(JSON.stringify(cleared)).not.toContain("new-model-key");
+      expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].apiKey).toBeUndefined();
+    });
+    it("headers модели: мерж сохраняет невидимые значения, \"\" удаляет, null очищает", async () => {
+      const { host, path } = await load(FILE);
+      await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: { "X-New": "$ENV" } } });
+      expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toEqual({ "X-M": "model-secret", "X-New": "$ENV" });
+      await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: { "X-M": "" } } });
+      expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toEqual({ "X-New": "$ENV" });
+      await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: null } });
+      expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toBeUndefined();
+    });
+    it("disabled-модель: патч применяется, секреты не утекают через providers_list", async () => {
+      const { host } = await load(FILE);
+      await host.harness.behavior.callRpc("model_toggle", { providerId: "router-gpt", modelId: "gpt-6.2-sol", enabled: false });
+      const updated = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { samplingParams: { temperature: 0.5 }, apiKey: "" } });
+      expect(updated).toMatchObject({ id: "gpt-6.2-sol", apiKeySet: false });
+      expect(JSON.stringify(updated)).not.toContain("model-secret");
+      const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ disabled: Array<Record<string, unknown>> }> };
+      expect(providers[0]!.disabled[0]).toMatchObject({ samplingParams: { temperature: 0.5 }, apiKeySet: false, headerNames: ["X-M"] });
+      expect(JSON.stringify(providers)).not.toContain("model-secret");
+      expect(JSON.stringify(providers)).not.toContain("model-key");
+    });
+    it("невалидные JSON-поля отклоняются контрактом, файл не меняется", async () => {
+      const { host, path } = await load(FILE);
+      const before = await readFile(path, "utf8");
+      await expect(host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { compat: { supportsStore: "false" } } })).rejects.toThrow();
+      await expect(host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { cost: { input: 1 } } })).rejects.toThrow();
+      expect(await readFile(path, "utf8")).toBe(before);
+    });
+    it("старый патч из пяти полей работает как раньше", async () => {
+      const { host, path } = await load(FILE);
+      await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { name: "Sol", contextWindow: 500000, maxTokens: null } });
+      const model = JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0];
+      expect(model.name).toBe("Sol");
+      expect(model.contextWindow).toBe(500000);
+      expect(model.maxTokens).toBeUndefined();
+    });
+  });
+
+  describe("API-настройки провайдера", () => {
+    it("provider_save: authHeader/oauth/compat/headers roundtrip, null удаляет, секреты не в ответе", async () => {
+      const { host, path } = await load();
+      const saved = await host.harness.behavior.callRpc("provider_save", {
+        id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "prov-key",
+        authHeader: true, oauth: "radius", compat: { supportsStore: false }, headers: { "X-P": "prov-secret" },
+      }) as Record<string, unknown>;
+      expect(saved).toMatchObject({ authHeader: true, oauth: "radius", compat: { supportsStore: false }, headersSet: true, headerNames: ["X-P"] });
+      expect(JSON.stringify(saved)).not.toContain("prov-secret");
+      expect(JSON.stringify(saved)).not.toContain("prov-key");
+      const onDisk = JSON.parse(await readFile(path, "utf8")).providers.p;
+      expect(onDisk.headers).toEqual({ "X-P": "prov-secret" });
+      await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", headers: { "X-Q": "v2" } });
+      expect(JSON.parse(await readFile(path, "utf8")).providers.p.headers).toEqual({ "X-P": "prov-secret", "X-Q": "v2" });
+      const cleared = await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", authHeader: null, oauth: null, compat: null, headers: null }) as Record<string, unknown>;
+      expect(cleared.headersSet).toBe(false);
+      expect(cleared.authHeader).toBeUndefined();
+      const final = JSON.parse(await readFile(path, "utf8")).providers.p;
+      expect(final.headers).toBeUndefined();
+      expect(final.compat).toBeUndefined();
+      expect(final.apiKey).toBe("prov-key");
+    });
+    it("невалидный compat провайдера отклоняется", async () => {
+      const { host } = await load();
+      await expect(host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", compat: { promptCacheKeyMode: "wrong" } })).rejects.toThrow();
+    });
+  });
   it("provider_save → apiKeySet, ключ не утекает; model_connect/update/disconnect", async () => {
     const { host, path } = await load();
     const saved = await host.harness.behavior.callRpc("provider_save", {
@@ -266,4 +372,123 @@ describe("RPC", () => {
     expect(url).toBe("http://localhost:4010/v1/models");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-key");
   });
+});
+
+describe("токены в общем плагине", () => {
+  it("регистрирует методы токенов рядом со своими; bench-методов нет", async () => {
+    const { host } = await load();
+    expect(await host.harness.behavior.callRpc("providers_list", null)).toEqual({ providers: [] });
+    const display = await host.harness.behavior.callRpc("tokens_display_get", null) as Record<string, unknown>;
+    expect(display).toMatchObject({ thread: { enabled: true }, badge: { enabled: true } });
+    expect(await host.harness.behavior.callRpc("thread_usage", { threadId: "thr_1" })).toBeNull();
+    expect(await host.harness.behavior.callRpc("turn_usage", { keys: ["thr_1:turn-1"] }))
+      .toEqual({ "thr_1:turn-1": null });
+    await expect(host.harness.behavior.callRpc("bench_list", null)).rejects.toThrow();
+  });
+});
+
+describe("API-настройки модели", () => {
+  const FILE = JSON.stringify({
+    providers: {
+      "router-gpt": {
+        baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "prov-key", authHeader: true,
+        models: [{ id: "gpt-6.2-sol", apiKey: "model-key", headers: { "X-M": "model-secret" }, reasoning: true }],
+      },
+    },
+  });
+  it("model_update: новые поля пишутся в файл, ответ и providers_list без секретов", async () => {
+    const { host, path } = await load(FILE);
+    const patch = {
+      thinkingLevelMap: { off: null, low: "low", high: "high" },
+      samplingParams: { reasoning_effort: "high" },
+      compat: { supportsDeveloperRole: false, supportsStore: false, promptCacheKeyMode: "disabled" },
+      cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+      promptCache: { short: 300 }, inputLimits: { maxRequestBytes: 100 },
+      api: "openai-completions", baseUrl: "http://localhost:4011/v1",
+    };
+    const updated = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch });
+    const dump = JSON.stringify(updated);
+    for (const secret of ["model-key", "model-secret", "prov-key"]) expect(dump).not.toContain(secret);
+    expect(updated).toMatchObject({ id: "gpt-6.2-sol", apiKeySet: true, headersSet: true, headerNames: ["X-M"] });
+    const onDisk = JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0];
+    expect(onDisk.samplingParams).toEqual({ reasoning_effort: "high" });
+    expect(onDisk.compat.promptCacheKeyMode).toBe("disabled");
+    expect(onDisk.apiKey).toBe("model-key"); // патч не трогал ключ
+    expect(onDisk.headers).toEqual({ "X-M": "model-secret" });
+    const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<Record<string, unknown>> };
+    expect(JSON.stringify(providers)).not.toContain("model-secret");
+    expect(providers[0]).toMatchObject({ authHeader: true, headersSet: false });
+  });
+  it("ключ модели: установка и очистка через RPC", async () => {
+    const { host, path } = await load(FILE);
+    await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { apiKey: "new-model-key" } });
+    expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].apiKey).toBe("new-model-key");
+    const cleared = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { apiKey: "" } }) as Record<string, unknown>;
+    expect(cleared.apiKeySet).toBe(false);
+    expect(JSON.stringify(cleared)).not.toContain("new-model-key");
+    expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].apiKey).toBeUndefined();
+  });
+  it("headers модели: мерж сохраняет невидимые значения, \"\" удаляет, null очищает", async () => {
+    const { host, path } = await load(FILE);
+    await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: { "X-New": "$ENV" } } });
+    expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toEqual({ "X-M": "model-secret", "X-New": "$ENV" });
+    await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: { "X-M": "" } } });
+    expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toEqual({ "X-New": "$ENV" });
+    await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { headers: null } });
+    expect(JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0].headers).toBeUndefined();
+  });
+  it("disabled-модель: патч применяется, секреты не утекают через providers_list", async () => {
+    const { host } = await load(FILE);
+    await host.harness.behavior.callRpc("model_toggle", { providerId: "router-gpt", modelId: "gpt-6.2-sol", enabled: false });
+    const updated = await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { samplingParams: { temperature: 0.5 }, apiKey: "" } });
+    expect(updated).toMatchObject({ id: "gpt-6.2-sol", apiKeySet: false });
+    expect(JSON.stringify(updated)).not.toContain("model-secret");
+    const { providers } = await host.harness.behavior.callRpc("providers_list", null) as { providers: Array<{ disabled: Array<Record<string, unknown>> }> };
+    expect(providers[0]!.disabled[0]).toMatchObject({ samplingParams: { temperature: 0.5 }, apiKeySet: false, headerNames: ["X-M"] });
+    expect(JSON.stringify(providers)).not.toContain("model-secret");
+    expect(JSON.stringify(providers)).not.toContain("model-key");
+  });
+  it("невалидные JSON-поля отклоняются контрактом, файл не меняется", async () => {
+    const { host, path } = await load(FILE);
+    const before = await readFile(path, "utf8");
+    await expect(host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { compat: { supportsStore: "false" } } })).rejects.toThrow();
+    await expect(host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { cost: { input: 1 } } })).rejects.toThrow();
+    expect(await readFile(path, "utf8")).toBe(before);
+  });
+  it("старый патч из пяти полей работает как раньше", async () => {
+    const { host, path } = await load(FILE);
+    await host.harness.behavior.callRpc("model_update", { providerId: "router-gpt", modelId: "gpt-6.2-sol", patch: { name: "Sol", contextWindow: 500000, maxTokens: null } });
+    const model = JSON.parse(await readFile(path, "utf8")).providers["router-gpt"].models[0];
+    expect(model.name).toBe("Sol");
+    expect(model.contextWindow).toBe(500000);
+    expect(model.maxTokens).toBeUndefined();
+  });
+});
+
+describe("API-настройки провайдера", () => {
+  it("provider_save: authHeader/oauth/compat/headers roundtrip, null удаляет, секреты не в ответе", async () => {
+    const { host, path } = await load();
+    const saved = await host.harness.behavior.callRpc("provider_save", {
+      id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", apiKey: "prov-key",
+      authHeader: true, oauth: "radius", compat: { supportsStore: false }, headers: { "X-P": "prov-secret" },
+    }) as Record<string, unknown>;
+    expect(saved).toMatchObject({ authHeader: true, oauth: "radius", compat: { supportsStore: false }, headersSet: true, headerNames: ["X-P"] });
+    expect(JSON.stringify(saved)).not.toContain("prov-secret");
+    expect(JSON.stringify(saved)).not.toContain("prov-key");
+    const onDisk = JSON.parse(await readFile(path, "utf8")).providers.p;
+    expect(onDisk.headers).toEqual({ "X-P": "prov-secret" });
+    await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", headers: { "X-Q": "v2" } });
+    expect(JSON.parse(await readFile(path, "utf8")).providers.p.headers).toEqual({ "X-P": "prov-secret", "X-Q": "v2" });
+    const cleared = await host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", authHeader: null, oauth: null, compat: null, headers: null }) as Record<string, unknown>;
+    expect(cleared.headersSet).toBe(false);
+    expect(cleared.authHeader).toBeUndefined();
+    const final = JSON.parse(await readFile(path, "utf8")).providers.p;
+    expect(final.headers).toBeUndefined();
+    expect(final.compat).toBeUndefined();
+    expect(final.apiKey).toBe("prov-key");
+  });
+  it("невалидный compat провайдера отклоняется", async () => {
+    const { host } = await load();
+    await expect(host.harness.behavior.callRpc("provider_save", { id: "p", baseUrl: "http://localhost:4010/v1", api: "openai-completions", compat: { promptCacheKeyMode: "wrong" } })).rejects.toThrow();
+ });
 });

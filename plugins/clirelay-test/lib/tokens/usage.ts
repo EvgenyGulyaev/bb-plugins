@@ -1,4 +1,4 @@
-import type { ThreadUsage, TokenUsage, TurnUsage } from "./contract.js";
+import type { ThreadUsage, TokenUsage, TurnUsage } from "./contract";
 
 export const MAX_TURNS_PER_THREAD = 500;
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -59,12 +59,18 @@ export function summarizeTurns(
   const averageTokPerSec = rates.length === 0
     ? undefined
     : Math.round((rates.reduce((sum, rate) => sum + rate, 0) / rates.length) * 10) / 10;
+  // Модель треда — модель самого свежего хода, у которого она есть;
+  // нет ни у одного — поля нет (undefined не проходит JSON-границу RPC).
+  const model = [...turns]
+    .sort((a, b) => b.at - a.at)
+    .find((row) => row.model !== undefined)?.model;
   return {
     threadId,
     total: turns.reduce((sum, row) => sum + row.total, 0),
     turns: turns.length,
     ...(averageTokPerSec === undefined ? {} : { averageTokPerSec }),
     modelContextWindow,
+    ...(model === undefined ? {} : { model }),
   };
 }
 

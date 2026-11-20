@@ -1,21 +1,25 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { benchmarkModel } from "./lib/bench.js";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import {
-  benchResultSchema,
   itemEventRowSchema,
   modelRequestRowSchema,
-  rpcContract,
   threadTag,
   threadUsageSchema,
+  tokensRpcContract,
   turnEventRowSchema,
   turnUsageSchema,
   usageEventRowSchema,
-  type BenchResult,
   type ItemEventRow,
   type TurnUsage,
   type UsageEventRow,
-} from "./lib/contract.js";
-import { makeTurnUsage, retainTurns, summarizeTurns } from "./lib/usage.js";
+} from "./contract";
+import {
+  TOKENS_DISPLAY_KV_KEY,
+  TOKENS_DISPLAY_TAG,
+  applyTokensDisplayPatch,
+  normalizeTokensDisplay,
+  type TokensDisplay,
+} from "./display";
+import { makeTurnUsage, retainTurns, summarizeTurns } from "./usage";
 
 const EVENT_TYPES = ["thread/tokenUsage/updated", "turn/started", "turn/completed", "client/turn/requested"] as const;
 /** Запрос модели хода: всегда отдельным list, чтобы не зависеть от границ страницы. */
@@ -28,11 +32,11 @@ const TOOL_LOOKBACK = 10;
 const STARTED_LOOKBACK = 20;
 /** Сколько `client/turn/requested` перед ходом просматриваем в поисках модели. */
 const REQUESTED_LOOKBACK = 20;
+// Префиксы исторические (от плагина token-meter): коллизий в kv clirelay-test
+// нет, а тесты и документация переносятся дословно.
 const TURN_PREFIX = "token-meter:turn:";
 const THREAD_PREFIX = "token-meter:thread:";
 const SEQ_PREFIX = "token-meter:seq:";
-const BENCH_PREFIX = "token-meter:bench:";
-const BENCH_TAG = "bench";
 /** Айтемы вывода: последний вызов модели начинается после последнего НЕ такого айтема. */
 const MODEL_ITEM_KINDS = new Set(["agentMessage", "reasoning"]);
 /**
@@ -71,7 +75,7 @@ async function findTurnModel(
     for (const row of rows) {
       const parsed = modelRequestRowSchema.safeParse(row);
       if (!parsed.success || !parsed.data.model) continue;
-      // Запросы модели, отправленные уже внутри хода, — не модель этого хода.
+      // Граница включительная: createdAt == startedAt — запрос этого хода; строго позже — уже нет.
       if (boundary.startedAt !== null && parsed.data.createdAt > boundary.startedAt) continue;
       return parsed.data.model;
     }
@@ -149,26 +153,6 @@ async function readTurns(kv: Kv, threadId: string): Promise<TurnUsage[]> {
     const parsed = turnUsageSchema.safeParse(row);
     return parsed.success ? [parsed.data] : [];
   });
-}
-
-async function listRecordedModels(kv: Kv): Promise<string[]> {
-  const models = new Set<string>();
-  const keys = await kv.list(TURN_PREFIX);
-  const rows = await Promise.all(keys.map((key) => kv.get<unknown>(key)));
-  for (const row of rows) {
-    const parsed = turnUsageSchema.safeParse(row);
-    if (parsed.success && parsed.data.model) models.add(parsed.data.model);
-  }
-  return [...models].sort();
-}
-
-async function listBenchmarks(kv: Kv): Promise<BenchResult[]> {
-  const keys = await kv.list(BENCH_PREFIX);
-  const rows = await Promise.all(keys.map((key) => kv.get<unknown>(key)));
-  return rows.flatMap((row) => {
-    const parsed = benchResultSchema.safeParse(row);
-    return parsed.success ? [parsed.data] : [];
-  }).sort((a, b) => a.model.localeCompare(b.model));
 }
 
 async function writeSummary(
@@ -369,31 +353,15 @@ async function dropThread(bb: BbPluginApi, threadId: string): Promise<void> {
   await bb.storage.kv.delete(summaryKey(threadId));
 }
 
-export default async function plugin(bb: BbPluginApi) {
-  const settings = bb.settings.define({
-    benchEndpoint: {
-      type: "string",
-      label: "OpenAI-совместимый endpoint для замера",
-      description: "Base URL, например http://localhost:8317/v1. Запросы уходят только по кнопке.",
-      default: "",
-    },
-    benchApiKey: {
-      type: "string",
-      label: "API key для замера",
-      description: "Необязательный ключ; хранится как secret и не попадает в UI/RPC.",
-      secret: true,
-      default: "",
-    },
-    benchEnabled: {
-      type: "boolean",
-      label: "Разрешить прямой замер модели",
-      description: "По умолчанию выключено: плагин ничего не отправляет.",
-      default: false,
-    },
-  });
-  let activeBench: Promise<BenchResult> | null = null;
+/** Сервер токенов: свой RPC-контракт, свой обработчик событий, свой kv. */
+export async function registerTokens(bb: BbPluginApi): Promise<void> {
+  // ponytail: свой промис-лок модуля; общий `locked` из server.ts не нужен — kv-ключ ни с чем не пересекается.
+  let displayQueue: Promise<unknown> = Promise.resolve();
+  async function readDisplay(): Promise<TokensDisplay> {
+    return normalizeTokensDisplay(await bb.storage.kv.get(TOKENS_DISPLAY_KV_KEY));
+  }
 
-  bb.rpc.register(rpcContract, {
+  bb.rpc.register(defineRpcContract(tokensRpcContract), {
     turn_usage: async ({ keys }) => Object.fromEntries(await Promise.all(keys.map(async (key) => {
       const separator = key.indexOf(":");
       if (separator <= 0 || separator === key.length - 1) return [key, null] as const;
@@ -406,53 +374,24 @@ export default async function plugin(bb: BbPluginApi) {
       const parsed = threadUsageSchema.safeParse(await bb.storage.kv.get<unknown>(summaryKey(threadId)));
       return parsed.success ? parsed.data : null;
     },
-    bench_model: async ({ model }, context) => {
-      if (activeBench) throw new Error("Другой замер уже выполняется");
-      const run = (async () => {
-        const config = await settings.get();
-        if (!config.benchEnabled) throw new Error("Прямой замер выключен: включите benchEnabled");
-        const endpoint = config.benchEndpoint.trim();
-        if (!endpoint) throw new Error("Укажите benchEndpoint в настройках token-meter");
-        const result = await benchmarkModel({
-          model,
-          endpoint,
-          ...(config.benchApiKey ? { apiKey: config.benchApiKey } : {}),
-          // Отмена вызывающим прерывает HTTP и освобождает single-flight ниже.
-          signal: context.experimental_signal,
-        });
-        await bb.storage.kv.set(`${BENCH_PREFIX}${model}`, result);
-        bb.rpc.experimental_invalidate([BENCH_TAG]);
-        return result;
-      })();
-      activeBench = run;
-      try {
-        return await run;
-      } finally {
-        if (activeBench === run) activeBench = null;
-      }
+    tokens_display_get: async () => readDisplay(),
+    // Read-modify-write сериализован: два быстрых клика не должны терять друг друга.
+    tokens_display_set: (patch) => {
+      const run = displayQueue.then(async () => {
+        const next = normalizeTokensDisplay(applyTokensDisplayPatch(await readDisplay(), patch));
+        await bb.storage.kv.set(TOKENS_DISPLAY_KV_KEY, next);
+        bb.rpc.experimental_invalidate([TOKENS_DISPLAY_TAG]);
+        return next;
+      });
+      displayQueue = run.catch(() => undefined);
+      return run;
     },
-    bench_list: async () => {
-      const [models, results, config] = await Promise.all([
-        listRecordedModels(bb.storage.kv),
-        listBenchmarks(bb.storage.kv),
-        settings.get(),
-      ]);
-      return {
-        models,
-        results,
-        benchEnabled: config.benchEnabled,
-        hasEndpoint: config.benchEndpoint.trim().length > 0,
-      };
-    },
-    // Бейдж хода зовёт только этот метод: замеры без списка моделей и настроек.
-    bench_results: async () => ({ results: await listBenchmarks(bb.storage.kv) }),
   });
-  settings.onChange(() => bb.rpc.experimental_invalidate([BENCH_TAG]));
 
   try {
     await pruneAll(bb);
   } catch (cause) {
-    bb.log.warn(`token-meter prune failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    bb.log.warn(`tokens prune failed: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
 
   const pending = new Map<string, Promise<void>>();
@@ -463,7 +402,7 @@ export default async function plugin(bb: BbPluginApi) {
       .catch(() => {})
       .then(() => syncThread(bb, thread.id, sequence, executionLookup))
       .catch((cause: unknown) => {
-        bb.log.warn(`token-meter sync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+        bb.log.warn(`tokens sync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
       });
     pending.set(thread.id, current);
     try {
@@ -478,7 +417,7 @@ export default async function plugin(bb: BbPluginApi) {
       await dropThread(bb, thread.id);
       bb.rpc.experimental_invalidate([threadTag(thread.id)]);
     } catch (cause) {
-      bb.log.warn(`token-meter drop failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+      bb.log.warn(`tokens drop failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   });
 }

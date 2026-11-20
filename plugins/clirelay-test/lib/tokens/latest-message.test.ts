@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLatestMessageStore } from "./latest-message.js";
+import { createLatestMessageStore } from "./latest-message";
 
 describe("latest message election", () => {
   it("один бейдж: выигрывает максимум createdAt внутри turnId", () => {

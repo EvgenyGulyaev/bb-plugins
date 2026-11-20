@@ -1,5 +1,5 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { TOKENS_DISPLAY_TAG, tokensDisplayPatchSchema, tokensDisplaySchema } from "./display";
 
 const tokenCount = z.number().finite().nonnegative();
 
@@ -110,26 +110,14 @@ export const turnUsageSchema = z.object({
   at: tokenCount,
 });
 
-export const benchSampleSchema = z.object({
-  maxTokens: z.number().int().positive(),
-  outputTokens: tokenCount,
-  durationMs: tokenCount,
-});
-
-export const benchResultSchema = z.object({
-  model: z.string().min(1),
-  genTokPerSec: z.number().finite().positive(),
-  latencyMs: z.number().finite(),
-  at: tokenCount,
-  samples: z.array(benchSampleSchema).length(4),
-});
-
 export const threadUsageSchema = z.object({
   threadId: z.string().min(1),
   total: tokenCount,
   turns: z.number().int().nonnegative(),
   averageTokPerSec: tokenCount.optional(),
   modelContextWindow: tokenCount.nullable(),
+  /** Модель самого свежего хода, у которого она есть; иначе поля нет. */
+  model: z.string().min(1).optional(),
 });
 
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
@@ -139,7 +127,6 @@ export type ItemEventRow = z.infer<typeof itemEventRowSchema>;
 export type ModelRequestRow = z.infer<typeof modelRequestRowSchema>;
 export type TurnUsage = z.infer<typeof turnUsageSchema>;
 export type ThreadUsage = z.infer<typeof threadUsageSchema>;
-export type BenchResult = z.infer<typeof benchResultSchema>;
 
 /** RPC cache tag shared by both methods and by the server's invalidation. */
 export function threadTag(threadId: string): string {
@@ -151,7 +138,8 @@ function keyThreadTag(key: string): readonly string[] {
   return separator > 0 ? [threadTag(key.slice(0, separator))] : [];
 }
 
-export const rpcContract = defineRpcContract({
+// Frontend-safe runtime contract: defineRpcContract вызывается только в server.ts.
+export const tokensRpcContract = {
   turn_usage: {
     input: z.object({ keys: z.array(z.string().min(3)).max(500) }).strict(),
     output: z.record(z.string(), turnUsageSchema.nullable()),
@@ -162,24 +150,13 @@ export const rpcContract = defineRpcContract({
     output: threadUsageSchema.nullable(),
     tags: (input: { threadId: string }) => [threadTag(input.threadId)],
   },
-  bench_model: {
-    input: z.object({ model: z.string().min(1) }).strict(),
-    output: benchResultSchema,
-  },
-  bench_list: {
+  tokens_display_get: {
     input: z.null(),
-    output: z.object({
-      models: z.array(z.string().min(1)),
-      results: z.array(benchResultSchema),
-      benchEnabled: z.boolean(),
-      hasEndpoint: z.boolean(),
-    }),
-    tags: () => ["bench"],
+    output: tokensDisplaySchema,
+    tags: () => [TOKENS_DISPLAY_TAG],
   },
-  /** Лёгкий вариант для бейджа: только замеры, без перечисления моделей и настроек. */
-  bench_results: {
-    input: z.null(),
-    output: z.object({ results: z.array(benchResultSchema) }),
-    tags: () => ["bench"],
+  tokens_display_set: {
+    input: tokensDisplayPatchSchema,
+    output: tokensDisplaySchema,
   },
-});
+};

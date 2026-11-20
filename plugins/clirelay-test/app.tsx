@@ -4,13 +4,14 @@ import { useCallback, createContext, useContext, useEffect, useMemo, useRef, use
 import type { FormEvent } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { rpcContract } from "./server";
-import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
+import type { rpcContract, SyncModelView } from "./server";
+import { API_TYPES, COMPAT_FIELDS, MODEL_FIELDS, baseUrlSchema, compatSchema, groupProvidersByBaseUrl, headersPatchSchema, parseJsonField } from "./lib/schema";
+import { effectiveView } from "./lib/model-sync";
 import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import { countdown, quotaResetFallback } from "./lib/countdown";
 import { formatUsd } from "./lib/money";
-import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
+import type { ApiType, CompatValue, ModelFieldSpec, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { accountDisplayName, groupAccountsByProvider, partitionByQuota, relayOrigin, shouldGroupByProvider, successPercent } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
@@ -28,12 +29,15 @@ import {
 } from "./lib/rings";
 import { getRailTarget, mountRingsRail, subscribeRail } from "./lib/rings-rail";
 import { RelayRings } from "./components/relay-rings";
+import { TokensContextSummary, TokensMessageBadge, useTokensContextVisible } from "./components/tokens-slots";
+import { TokensSettingsTab } from "./components/tokens-settings-tab";
 import "./app.css";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type Report = (cause: unknown) => void;
@@ -152,17 +156,6 @@ function RingsToolbar() {
   );
 }
 
-/** Тумблер вкл/выкл модели (role=switch, без новых зависимостей). */
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
-  return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label}
-      onClick={(event) => { event.stopPropagation(); onChange(!checked); }}
-      className={`relative h-4.5 w-8 shrink-0 rounded-full transition-colors ${checked ? "bg-emerald-500" : "bg-muted-foreground/30"}`}>
-      <span className={`absolute top-0.5 left-0.5 size-3.5 rounded-full bg-background shadow-sm transition-transform ${checked ? "translate-x-3.5" : ""}`} />
-    </button>
-  );
-}
-
 /** Двухшаговое подтверждение destructive-действия без модальных диалогов. */
 function ConfirmButton({ label, confirmLabel, onConfirm, icon }: { label: string; confirmLabel: string; onConfirm: () => void; icon: string }) {
   const [armed, setArmed] = useState(false);
@@ -186,21 +179,39 @@ function toDraft(model: Record<string, unknown>): Draft {
     const value = model[field.key];
     if (field.type === "bool") draft[field.key] = value === true;
     else if (field.type === "multiselect") draft[field.key] = Array.isArray(value) ? value.map(String) : ["text"];
+    else if (field.type === "secret" || field.type === "headers") draft[field.key] = ""; // секретные значения не показываются
+    else if (field.type === "json") draft[field.key] = value === undefined || value === null ? "" : JSON.stringify(value, null, 2);
     else draft[field.key] = value === undefined || value === null ? "" : String(value);
   }
   return draft;
 }
 
 /** Форма настроек модели: контролы генерятся из MODEL_FIELDS (тип → контрол). */
-function ModelForm({ providerId, model, rpc, report }: { providerId: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
+function ModelForm({ providerId, providerApi, model, rpc, report }: { providerId: string; providerApi: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
   const initial = useMemo(() => toDraft(model), [model]);
   const [draft, setDraft] = useState<Draft>(initial);
-  useEffect(() => setDraft(initial), [initial]);
+  const [apiKeyClear, setApiKeyClear] = useState(false);
+  const [headersClear, setHeadersClear] = useState(false);
+  const [apiOpen, setApiOpen] = useState(false);
+  useEffect(() => { setDraft(initial); setApiKeyClear(false); setHeadersClear(false); }, [initial]);
   const set = (key: string, value: string | boolean | string[]) => setDraft((current) => ({ ...current, [key]: value }));
   const save = () => {
     const patch: Record<string, unknown> = {};
     for (const field of MODEL_FIELDS) {
       const value = draft[field.key];
+      if (field.type === "secret") {
+        if (apiKeyClear) patch[field.key] = "";
+        else if (value !== "") patch[field.key] = value;
+        continue;
+      }
+      if (field.type === "headers") {
+        if (headersClear) { patch[field.key] = null; continue; }
+        if (value === "") continue;
+        const result = parseJsonField({ ...field, schema: field.schema! }, String(value));
+        if (!result.ok) { toast.error(result.error); return; }
+        if (Object.keys(result.value as object).length) patch[field.key] = result.value;
+        continue;
+      }
       if (JSON.stringify(value) === JSON.stringify(initial[field.key])) continue;
       if (field.type === "bool") patch[field.key] = value;
       else if (field.type === "int") {
@@ -211,36 +222,111 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
           patch[field.key] = num;
         }
       } else if (field.type === "multiselect") patch[field.key] = (value as string[]).length ? value : null;
-      else patch[field.key] = value === "" ? null : value;
+      else if (field.type === "json") {
+        if (value === "") { patch[field.key] = null; continue; }
+        const result = parseJsonField({ ...field, schema: field.schema! }, String(value));
+        if (!result.ok) { toast.error(result.error); return; }
+        const current = model[field.key];
+        if (current !== undefined && JSON.stringify(result.value) === JSON.stringify(current)) continue; // переформатирование без изменений
+        patch[field.key] = result.value;
+      } else if (field.key === "baseUrl" && value !== "") {
+        const result = baseUrlSchema.safeParse(value);
+        if (!result.success) { toast.error(result.error.issues[0]!.message); return; }
+        patch[field.key] = value;
+      } else patch[field.key] = value === "" ? null : value;
     }
     if (!Object.keys(patch).length) { toast("Без изменений"); return; }
     rpc.call("model_update", { providerId, modelId: String(model.id), patch: patch as ModelPatch })
       .then(() => toast.success("Сохранено — pi подхватит при открытии /model"), report);
   };
+  const effectiveApi = (draft.api as string) || providerApi;
+  const control = (field: ModelFieldSpec) => {
+    if (field.type === "bool") return (
+      <Checkbox checked={draft[field.key] === true} onCheckedChange={(v) => set(field.key, v === true)} aria-label={field.label} />
+    );
+    if (field.type === "multiselect") return (
+      <span className="flex gap-3">
+        {field.options!.map((option) => (
+          <span key={option} className="flex items-center gap-1.5 text-xs">
+            <Checkbox checked={(draft[field.key] as string[]).includes(option)}
+              onCheckedChange={(v) => set(field.key, v === true ? [...(draft[field.key] as string[]), option] : (draft[field.key] as string[]).filter((x) => x !== option))}
+              aria-label={option} />
+            {option}
+          </span>
+        ))}
+      </span>
+    );
+    if (field.type === "select") {
+      const current = String(model[field.key] ?? "");
+      return (
+        <select className="h-8 rounded-md border border-input bg-transparent px-2 text-xs" value={String(draft[field.key] ?? "")}
+          onChange={(event) => set(field.key, event.target.value)} aria-label={field.label}>
+          <option value="">как у провайдера</option>
+          {field.options!.map((option) => <option key={option} value={option}>{option}</option>)}
+          {current && !field.options!.includes(current) ? <option value={current}>{current} (текущий)</option> : null}
+        </select>
+      );
+    }
+    if (field.type === "secret") return (
+      <span className="flex items-center gap-1.5">
+        <Input className="h-8 w-40" type="password" autoComplete="off"
+          placeholder={model.apiKeySet ? "задан — пусто = не менять" : "не задан"}
+          value={String(draft[field.key] ?? "")}
+          onChange={(event) => { set(field.key, event.target.value); setApiKeyClear(false); }} aria-label={field.label} />
+        {model.apiKeySet ? (
+          <Button type="button" variant="ghost" size="sm" className={apiKeyClear ? "text-destructive" : "text-muted-foreground"}
+            onClick={() => { setApiKeyClear(!apiKeyClear); set(field.key, ""); }} aria-label="Очистить ключ модели">
+            {apiKeyClear ? "Будет очищен" : "Очистить"}
+          </Button>
+        ) : null}
+      </span>
+    );
+    if (field.type === "json" || field.type === "headers") return (
+      <span className="flex w-full flex-col gap-1">
+        <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={4}
+          value={String(draft[field.key] ?? "")} placeholder={field.placeholder}
+          onChange={(event) => { set(field.key, event.target.value); if (field.type === "headers") setHeadersClear(false); }}
+          aria-label={field.label} />
+        {field.type === "headers" ? (
+          <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>{model.headersSet ? `заданы: ${(model.headerNames as string[]).join(", ")}` : "не заданы"}; значения не показываются, ввод мержится по ключам, "" — удалить ключ</span>
+            {model.headersSet ? (
+              <Button type="button" variant="ghost" size="sm" className={headersClear ? "text-destructive" : "text-muted-foreground"}
+                onClick={() => { setHeadersClear(!headersClear); set(field.key, ""); }} aria-label="Очистить заголовки модели">
+                {headersClear ? "Будут очищены" : "Очистить все"}
+              </Button>
+            ) : null}
+          </span>
+        ) : null}
+        {field.key === "compat" ? (
+          <span className="text-[10px] text-muted-foreground">
+            Поля для {effectiveApi}: {(COMPAT_FIELDS[effectiveApi as ApiType] ?? []).join(", ") || "нет документированных полей"}
+          </span>
+        ) : null}
+      </span>
+    );
+    return (
+      <Input className="h-8 w-40" type={field.type === "int" ? "number" : "text"} placeholder={field.placeholder}
+        value={String(draft[field.key] ?? "")} onChange={(event) => set(field.key, event.target.value)} aria-label={field.label} />
+    );
+  };
+  // hint — у всех advanced-контролов (в т.ч. select/строковых): label сверху, подсказка под контролом.
+  const row = (field: ModelFieldSpec) => (
+    <div key={field.key} className="flex flex-col gap-1 text-sm">
+      <div className={field.type === "json" || field.type === "headers" ? "flex flex-col gap-1" : "flex items-center justify-between gap-3"}>
+        <span className="text-muted-foreground">{field.label}</span>
+        {control(field)}
+      </div>
+      {field.hint ? <span className="text-[10px] text-muted-foreground">{field.hint}</span> : null}
+    </div>
+  );
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-background/60 p-3">
-      {MODEL_FIELDS.map((field) => (
-        <div key={field.key} className="flex items-center justify-between gap-3 text-sm">
-          <span className="text-muted-foreground">{field.label}</span>
-          {field.type === "bool" ? (
-            <Checkbox checked={draft[field.key] === true} onCheckedChange={(v) => set(field.key, v === true)} aria-label={field.label} />
-          ) : field.type === "multiselect" ? (
-            <span className="flex gap-3">
-              {field.options!.map((option) => (
-                <span key={option} className="flex items-center gap-1.5 text-xs">
-                  <Checkbox checked={(draft[field.key] as string[]).includes(option)}
-                    onCheckedChange={(v) => set(field.key, v === true ? [...(draft[field.key] as string[]), option] : (draft[field.key] as string[]).filter((x) => x !== option))}
-                    aria-label={option} />
-                  {option}
-                </span>
-              ))}
-            </span>
-          ) : (
-            <Input className="h-8 w-40" type={field.type === "int" ? "number" : "text"} placeholder={field.placeholder}
-              value={String(draft[field.key] ?? "")} onChange={(event) => set(field.key, event.target.value)} aria-label={field.label} />
-          )}
-        </div>
-      ))}
+      {MODEL_FIELDS.filter((field) => !field.advanced).map(row)}
+      <button type="button" className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground" onClick={() => setApiOpen(!apiOpen)} aria-expanded={apiOpen}>
+        <Icon name="ChevronDown" className={`size-3.5 transition-transform ${apiOpen ? "" : "-rotate-90"}`} />API-настройки
+      </button>
+      {apiOpen ? MODEL_FIELDS.filter((field) => field.advanced).map(row) : null}
       <div className="mt-1 flex justify-end">
         <Button size="sm" onClick={save}><Icon name="Check" className="size-3.5" />Сохранить</Button>
       </div>
@@ -248,7 +334,7 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
   );
 }
 
-function ModelAccordion({ providerId, model, enabled, onToggle, rpc, report }: { providerId: string; model: Record<string, unknown>; enabled: boolean; onToggle: (value: boolean) => void; rpc: Rpc; report: Report }) {
+function ModelAccordion({ providerId, providerApi, model, enabled, onToggle, rpc, report }: { providerId: string; providerApi: string; model: Record<string, unknown>; enabled: boolean; onToggle: (value: boolean) => void; rpc: Rpc; report: Report }) {
   const [open, setOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const modelId = String(model.id);
@@ -280,40 +366,124 @@ function ModelAccordion({ providerId, model, enabled, onToggle, rpc, report }: {
         <ConfirmButton icon="Trash2" label="" confirmLabel="Точно?"
           onConfirm={() => rpc.call("model_disconnect", { providerId, modelId }).then(() => toast.success(`Отключена ${modelId}`), report)} />
       </div>
-      {open ? <div className="px-2 pb-2"><ModelForm providerId={providerId} model={model} rpc={rpc} report={report} /></div> : null}
+      {open ? <div className="px-2 pb-2"><ModelForm providerId={providerId} providerApi={providerApi} model={model} rpc={rpc} report={report} /></div> : null}
     </div>
+  );
+}
+
+/** Диалог подтверждения клонирования donor → новая модель (§3.3). */
+function SyncDialog({ providerId, model, donorId, rpc, report, onClose, onApplied }: {
+  providerId: string; model: SyncModelView; donorId: string; rpc: Rpc; report: Report; onClose: () => void; onApplied: () => void;
+}) {
+  const [replaceInPi, setReplaceInPi] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [partial, setPartial] = useState(false);
+  const donor = model.donor?.id === donorId ? model.donor : model.donorCandidates.find((candidate) => candidate.id === donorId);
+  const view = useMemo(() => effectiveView({ ...model, donor }), [model, donor]);
+  const list = (items: readonly string[]) => items.join(", ");
+  const submit = () => {
+    if (busy) return;
+    setBusy(true);
+    setPartial(false);
+    rpc.call("model_sync_apply", { providerId, modelId: model.id, donorId, replaceInPi }).then(
+      (result) => {
+        setBusy(false);
+        if (result.status === "partial") {
+          // §3.4: models уже записан — повторяем только с той же галочкой.
+          setPartial(true);
+          toast.warning("Модель подключена, выбор pi не изменён");
+          return;
+        }
+        if (!result.modelAdded && result.settings !== "updated") {
+          // Повтор без изменений: второй клон не делается, файлы не тронуты.
+          toast(`Без изменений: ${model.id} уже подключена`);
+          onApplied();
+          onClose();
+          return;
+        }
+        toast.success(`Подключена ${model.id}; открой /model в pi заново`);
+        onApplied();
+        onClose();
+      },
+      (cause) => { setBusy(false); report(cause); },
+    );
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader><DialogTitle>Подключить с настройками</DialogTitle></DialogHeader>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground">Новая модель</span>
+            <span className="font-mono text-xs">{model.id}</span>
+            <span className="text-muted-foreground">Настройки из</span>
+            <span className="font-mono text-xs">{donor?.name ? `${donorId} (${donor.name})` : donorId}</span>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 p-2 text-xs text-muted-foreground">
+            Копируются: API/baseUrl, reasoning, input, sampling, compat, cost/promptCache, ключ и заголовки donor.
+            Значения секретов не показываются.
+          </div>
+          <div className="flex flex-col gap-1 text-xs">
+            <span>contextWindow: {view.contextWindow.value} ({view.contextWindow.label})</span>
+            <span>maxTokens: {view.maxTokens.value} ({view.maxTokens.label})</span>
+            <span>input: {list(view.input.value)} ({view.input.label})</span>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={replaceInPi} onCheckedChange={(value) => setReplaceInPi(value === true)} aria-label="Заменить в выборе pi" />
+            Заменить в выборе pi
+          </label>
+          <p className="text-xs text-muted-foreground">Старую модель не отключаем. defaultModel/defaultProvider не меняем.</p>
+          {partial ? (
+            <p className="rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-500" role="status">
+              Модель подключена, выбор pi не изменён. Повторите с той же галочкой
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Отмена</Button>
+          <Button type="button" disabled={busy} onClick={submit}>
+            <Icon name={busy ? "Loading" : "Plus"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} />Подключить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void; nested?: boolean }) {
   const [open, setOpen] = useState(false);
-  const [discovered, setDiscovered] = useState<string[] | null>(null);
+  const [synced, setSynced] = useState<SyncModelView[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
   const [filter, setFilter] = useState<"all" | "on" | "off">("all");
-  const connected = useMemo(() => new Set(provider.models.map((model) => String(model.id))), [provider.models]);
-  const available = (discovered ?? []).filter((id) => !connected.has(id));
-  const leftGroups = groupByFamily(available.map((id) => ({ id })));
+  const [choice, setChoice] = useState<Record<string, string>>({});
+  const [dialog, setDialog] = useState<{ model: SyncModelView; donorId: string } | null>(null);
+  // Новые = нет ни в models, ни в disabled — проверяем на каждой перерисовке:
+  // после connect + realtime строка обязана исчезнуть, а не ждать нового scan.
+  const known = useMemo(() => new Set([...provider.models, ...provider.disabled].map((model) => String(model.id))), [provider.models, provider.disabled]);
+  const available = useMemo(() => (synced ?? []).filter((model) => !known.has(model.id)), [synced, known]);
+  const leftGroups = groupByFamily(available);
   const rightItems = [
     ...(filter === "off" ? [] : provider.models.map((entry) => ({ entry, on: true, id: String(entry.id) }))),
     ...(filter === "on" ? [] : provider.disabled.map((entry) => ({ entry, on: false, id: String(entry.id) }))),
   ];
   const rightGroups = groupByFamily(rightItems);
   const counts = { all: provider.models.length + provider.disabled.length, on: provider.models.length, off: provider.disabled.length };
+  // Сканирование новых моделей: только чтение, никаких записей (§3.1).
   const discover = useCallback(() => {
     setBusy(true);
     setDiscoverError(null);
-    rpc.call("models_discover", { providerId: provider.id }).then(
-      ({ models }) => { setDiscovered(models); setBusy(false); },
+    rpc.call("models_sync_scan", { providerId: provider.id }).then(
+      ({ models }) => { setSynced(models); setBusy(false); },
       (cause) => { setBusy(false); setDiscoverError(message(cause)); },
     );
   }, [rpc, provider.id]);
   // Автозагрузка один раз: после ошибки не ретраим сам (иначе бесконечный цикл
-  // на недоступном эндпоинте); повтор — только кнопкой ⟳.
+  // на недоступном эндпоинте); повтор — только кнопкой обновления.
   useEffect(() => {
-    if (shouldAutoLoad({ open, loaded: discovered !== null, busy, error: discoverError })) discover();
-  }, [open, discovered, busy, discoverError, discover]);
+    if (shouldAutoLoad({ open, loaded: synced !== null, busy, error: discoverError })) discover();
+  }, [open, synced, busy, discoverError, discover]);
   const connect = (modelId: string) => {
     if (!modelId.trim()) return;
     rpc.call("model_connect", { providerId: provider.id, modelId: modelId.trim() })
@@ -329,7 +499,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
           <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{provider.models.length} подкл.</span>
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
-        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Обновить список моделей"
+        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Проверить обновления"
           onClick={() => { setOpen(true); discover(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Edit" className="size-3.5" /></Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Удалить API?"
@@ -338,7 +508,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
       {open ? (
         <div className="grid gap-3 px-3 pb-3 md:grid-cols-2">
           <div className="rounded-lg border border-border/70 p-2">
-            <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Доступные (GET /models)</div>
+            <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Новые модели (GET /models)</div>
             {busy ? <div className="px-1 py-2 text-xs text-muted-foreground">Загрузка…</div> : null}
             {discoverError ? <div className="mb-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" role="alert">{discoverError}</div> : null}
             <div className="flex flex-col gap-1">
@@ -348,18 +518,53 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
                     {group.family}<span className="font-normal">{group.items.length}</span>
                   </div>
                   <div className="flex flex-col gap-1">
-                    {group.items.map(({ id }) => (
-                      <div key={id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-muted/60">
-                        <span className="truncate font-mono text-xs">{id}</span>
-                        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(id)} aria-label={`Подключить ${id}`}>
-                          <Icon name="Plus" className="size-3.5" />Подключить
-                        </Button>
-                      </div>
-                    ))}
+                    {group.items.map((model) => {
+                      const donorName = model.donor ? model.donor.name || model.donor.id : null;
+                      const picked = choice[model.id] ?? "";
+                      const view = effectiveView({ ...model, donor: model.donor ?? model.donorCandidates.find((candidate) => candidate.id === picked) });
+                      return (
+                        <div key={model.id} className="flex flex-col gap-1 rounded-md px-2 py-1 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-mono text-xs">{model.id}</span>
+                            <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(model.id)} aria-label={`Подключить ${model.id}`}>
+                              <Icon name="Plus" className="size-3.5" />Подключить
+                            </Button>
+                          </div>
+                          {model.donor ? (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <span className="rounded-full border border-border px-1.5 text-[10px] text-foreground">Обновление</span>
+                              <span className="truncate">настройки: {model.donor.name || model.donor.id}{model.donor.enabled ? "" : " (выкл)"}</span>
+                              <span className="truncate">источники лимитов: {view.contextWindow.label}, {view.maxTokens.label}, {view.input.label}</span>
+                              <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground"
+                                onClick={() => setDialog({ model, donorId: model.donor!.id })}>
+                                <Icon name="Plus" className="size-3.5" />Подключить с настройками {donorName}
+                              </Button>
+                            </div>
+                          ) : model.donorCandidates.length > 0 ? (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <select className="h-7 rounded-md border border-input bg-transparent px-2 text-[11px]"
+                                value={picked} onChange={(event) => setChoice((current) => ({ ...current, [model.id]: event.target.value }))}
+                                aria-label="Скопировать настройки из…">
+                                <option value="">Скопировать настройки из…</option>
+                                {model.donorCandidates.map((candidate) => (
+                                  <option key={candidate.id} value={candidate.id}>
+                                    {candidate.name ? `${candidate.id} — ${candidate.name}` : candidate.id}{candidate.enabled ? "" : " (выкл)"}
+                                  </option>
+                                ))}
+                              </select>
+                              <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" disabled={!picked}
+                                onClick={() => setDialog({ model, donorId: picked })}>
+                                <Icon name="Plus" className="size-3.5" />С настройками…
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
-              {!busy && !discoverError && available.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{discovered === null ? "Раскрой адрес — список загрузится сам" : "Все доступные уже подключены"}</div> : null}
+              {!busy && !discoverError && available.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{synced === null ? "Раскрой адрес — список загрузится сам" : "Новых моделей нет — всё подключено"}</div> : null}
             </div>
             <form className="mt-2 flex gap-1.5" onSubmit={(event) => { event.preventDefault(); connect(manualId); }}>
               <Input className="h-8 flex-1 font-mono text-xs" placeholder="добавить по id вручную" value={manualId} onChange={(event) => setManualId(event.target.value)} aria-label="id модели вручную" />
@@ -386,7 +591,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
                   </div>
                   <div className="flex flex-col gap-1.5">
                     {group.items.map(({ entry, on }) => (
-                      <ModelAccordion key={String(entry.id)} providerId={provider.id} model={entry} enabled={on}
+                      <ModelAccordion key={String(entry.id)} providerId={provider.id} providerApi={provider.api} model={entry} enabled={on}
                         onToggle={(value) => rpc.call("model_toggle", { providerId: provider.id, modelId: String(entry.id), enabled: value })
                           .then(() => toast.success(value ? `Включена ${entry.id}` : `Выключена ${entry.id} — настройки сохранены`), report)}
                         rpc={rpc} report={report} />
@@ -398,6 +603,11 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             </div>
           </div>
         </div>
+      ) : null}
+      {dialog ? (
+        <SyncDialog providerId={provider.id} model={dialog.model} donorId={dialog.donorId} rpc={rpc} report={report}
+          onApplied={() => setSynced((current) => current?.filter((entry) => entry.id !== dialog.model.id) ?? current)}
+          onClose={() => setDialog(null)} />
       ) : null}
     </section>
   );
@@ -432,14 +642,40 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
   const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? "");
   const [api, setApi] = useState<string>(editing?.api ?? "openai-completions");
   const [apiKey, setApiKey] = useState("");
+  const [authHeader, setAuthHeader] = useState(editing?.authHeader ?? false);
+  const [oauth, setOauth] = useState(editing?.oauth ?? "");
+  const [compat, setCompat] = useState(editing?.compat ? JSON.stringify(editing.compat, null, 2) : "");
+  const [headers, setHeaders] = useState("");
+  const [headersClear, setHeadersClear] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    rpc.call("provider_save", { id, name: name || undefined, baseUrl, api: api as ApiType, apiKey: apiKey || undefined })
+    const payload: {
+      id: string; name?: string; baseUrl: string; api: ApiType; apiKey?: string;
+      authHeader?: boolean | null; oauth?: "radius" | null; compat?: CompatValue | null; headers?: Record<string, string> | null;
+    } = { id, name: name || undefined, baseUrl, api: api as ApiType, apiKey: apiKey || undefined };
+    if (authHeader !== (editing?.authHeader ?? false)) payload.authHeader = authHeader ? true : null;
+    if (oauth !== (editing?.oauth ?? "")) payload.oauth = oauth === "" ? null : "radius";
+    const compatInitial = editing?.compat ? JSON.stringify(editing.compat, null, 2) : "";
+    if (compat !== compatInitial) {
+      if (compat.trim() === "") payload.compat = null;
+      else {
+        const result = parseJsonField({ key: "compat", label: "Совместимость провайдера", type: "json", schema: compatSchema }, compat);
+        if (!result.ok) { toast.error(result.error); return; }
+        payload.compat = result.value;
+      }
+    }
+    if (headersClear) payload.headers = null;
+    else if (headers.trim() !== "") {
+      const result = parseJsonField({ key: "headers", label: "Заголовки провайдера", type: "headers", schema: headersPatchSchema }, headers);
+      if (!result.ok) { toast.error(result.error); return; }
+      if (Object.keys(result.value as object).length) payload.headers = result.value;
+    }
+    rpc.call("provider_save", payload)
       .then(() => { toast.success("Адрес сохранён"); onClose(); }, report);
   };
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{editing ? "Настроить API" : "Добавить API"}</DialogTitle></DialogHeader>
         <form className="flex flex-col gap-3" onSubmit={submit}>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">id (slug)</span>
@@ -454,6 +690,27 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
             </select></label>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">API-ключ {editing ? "(пусто = не менять)" : ""}</span>
             <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" aria-label="API-ключ" /></label>
+          <label className="flex items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">Authorization: Bearer (authHeader)</span>
+            <Checkbox checked={authHeader} onCheckedChange={(v) => setAuthHeader(v === true)} aria-label="authHeader" /></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">OAuth</span>
+            <select className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" value={oauth} onChange={(event) => setOauth(event.target.value)} aria-label="oauth">
+              <option value="">нет</option><option value="radius">radius</option>
+            </select></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Совместимость провайдера (compat, JSON)</span>
+            <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={4} value={compat}
+              placeholder='{"supportsStore": false}' onChange={(event) => setCompat(event.target.value)} aria-label="compat провайдера" /></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Заголовки провайдера (JSON)</span>
+            <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={3} value={headers}
+              placeholder='{"X-Api-Key": "$ENV_NAME"}' onChange={(event) => { setHeaders(event.target.value); setHeadersClear(false); }} aria-label="Заголовки провайдера" />
+            <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>{editing?.headersSet ? `заданы: ${editing.headerNames.join(", ")}` : "не заданы"}; значения не показываются, мерж по ключам, "" — удалить ключ</span>
+              {editing?.headersSet ? (
+                <Button type="button" variant="ghost" size="sm" className={headersClear ? "text-destructive" : "text-muted-foreground"}
+                  onClick={() => { setHeadersClear(!headersClear); setHeaders(""); }} aria-label="Очистить заголовки провайдера">
+                  {headersClear ? "Будут очищены" : "Очистить все"}
+                </Button>
+              ) : null}
+            </span></label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Отмена</Button>
             <Button type="submit"><Icon name="Check" className="size-3.5" />Сохранить</Button>
@@ -780,7 +1037,7 @@ function ApiModelsPage() {
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ editing: ProviderView | null } | null>(null);
-  const [tab, setTab] = useState<"accounts" | "connect">("accounts");
+  const [tab, setTab] = useState<"accounts" | "connect" | "settings">("accounts");
   const report = useCallback((cause: unknown) => { const text = message(cause); setError(text); toast.error(text); }, []);
   const refetch = useCallback(() => {
     rpc.call("providers_list").then(({ providers }) => { setProviders(providers as ProviderView[]); setError(null); }, report);
@@ -807,9 +1064,13 @@ function ApiModelsPage() {
             className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "connect" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
             <Icon name="Workflow" className="size-4" />Подключение
           </button>
+          <button type="button" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "settings" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            <Icon name="Settings" className="size-4" />Настройки
+          </button>
         </div>
         {error ? <p className="mb-4 text-sm text-destructive" role="alert">{error}</p> : null}
-        {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
+        {tab === "settings" ? <TokensSettingsTab /> : providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
           <AccountsTab providers={providers} rpc={rpc} report={report} />
         ) : (
           <div className="flex flex-col gap-3">
@@ -850,5 +1111,9 @@ function RingsOverlay() {
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "relay-rings-anchor", mount: ({ pluginId }) => mountRingsRail(document, pluginId) });
   app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Workflow", path: "api-models", component: ApiModelsPage });
+  app.slots.experimental_messageMetadata({ id: "tokens", placement: "actionRow", component: TokensMessageBadge });
+  app.slots.experimental_threadContextSegment({
+    id: "tokens", title: "Токены", group: "tokens", summary: TokensContextSummary, useVisible: useTokensContextVisible,
+  });
   app.slots.experimental_appOverlay({ id: "relay-rings", component: RingsOverlay });
 });

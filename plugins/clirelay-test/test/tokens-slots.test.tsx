@@ -7,11 +7,13 @@ import type {
   ExperimentalMessageMetadataProps,
   ExperimentalThreadContextSegmentProps,
 } from "@get-bb/plugin-sdk/app";
-import type { BenchResult, ThreadUsage, TurnUsage } from "../lib/contract.js";
+import type { ThreadUsage, TurnUsage } from "../lib/tokens/contract";
+import { DEFAULT_TOKENS_DISPLAY, type TokensDisplay } from "../lib/tokens/display";
+import { TokensMessageBadge } from "../components/tokens-slots";
 
 const app = await loadPluginApp(() => import("../app"));
-const metadata = app.messageMetadata.find((row) => row.id === "token-meter")!;
-const context = app.threadContextSegments.find((row) => row.id === "token-meter")!;
+const metadata = app.messageMetadata.find((row) => row.id === "tokens")!;
+const context = app.threadContextSegments.find((row) => row.id === "tokens")!;
 const THREAD = "thr_1";
 const TURN = "turn-1";
 const KEY = `${THREAD}:${TURN}`;
@@ -49,32 +51,36 @@ function contextProps(): ExperimentalThreadContextSegmentProps {
     threadId: THREAD,
     projectId: "project-1",
     environment: null,
-    segments: [{ key: "token-meter/token-meter", pluginId: "token-meter" }],
+    segments: [{ key: "tokens/tokens", pluginId: "clirelay-test" }],
     isExpanded: false,
     onToggle: () => {},
   };
 }
 
-function mountMessage(props: ExperimentalMessageMetadataProps["message"], usage: TurnUsage | null, benchmarks: BenchResult[] = []) {
+function mountMessage(
+  props: ExperimentalMessageMetadataProps["message"],
+  usage: TurnUsage | null,
+  display: TokensDisplay = DEFAULT_TOKENS_DISPLAY,
+) {
   const slot = renderSlot({ component: metadata.component }, { message: props }, {
-    pluginId: "token-meter",
+    pluginId: "clirelay-test",
     rpc: {
       turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? usage : null])),
       thread_usage: () => null,
-      // Бейдж не должен звать тяжёлый bench_list: только лёгкие замеры.
-      bench_results: () => ({ results: benchmarks }),
+      tokens_display_get: () => display,
     } as never,
   });
   slots.push(slot);
   return slot;
 }
 
-function mountContext(value: ThreadUsage | null) {
+function mountContext(value: ThreadUsage | null, display: TokensDisplay = DEFAULT_TOKENS_DISPLAY) {
   const slot = renderSlot({ component: context.summary }, contextProps(), {
-    pluginId: "token-meter",
+    pluginId: "clirelay-test",
     rpc: {
       turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, null])),
       thread_usage: () => value,
+      tokens_display_get: () => display,
     } as never,
   });
   slots.push(slot);
@@ -94,58 +100,12 @@ describe("messageMetadata", () => {
   it("при записи рисует бейдж и полный title", async () => {
     const slot = mountMessage(message(), turn());
     expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.)")).toBeTruthy();
-    const badge = slot.container.querySelector(".token-meter-badge");
+    const badge = slot.container.querySelector(".api-tokens-badge");
     expect(badge?.getAttribute("title")).toContain("Reasoning: 120");
     expect(badge?.getAttribute("title")).toContain("Кеш чтение: 260000");
     expect(badge?.getAttribute("title")).toContain("Кеш запись: 5000");
     expect(badge?.getAttribute("title")).toContain("Последний вызов: 12.5 с · Весь ход: 20 с");
     expect(badge?.getAttribute("title")).toContain("Эффективная скорость последнего вызова: 59.2 ток/с — выход ÷ время от конца последнего инструмента до конца хода; включает ожидание первого токена");
-  });
-
-  it("добавляет прямой замер модели хода в бейдж и title", async () => {
-    const benchmark: BenchResult = {
-      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
-      at: Date.UTC(2026, 0, 2, 12),
-      samples: [
-        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-      ],
-    };
-    const slot = mountMessage(message(), turn({ model: "test-model" }), [benchmark]);
-    expect(await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.) · модель ~207")).toBeTruthy();
-    expect(slot.container.querySelector(".token-meter-badge")?.getAttribute("title"))
-      .toContain("Чистая генерация модели test-model: ~207 ток/с, задержка ~1.0 с (замер 2026-01-02)");
-  });
-
-  it("бейдж берёт замеры лёгким bench_results, а не bench_list", async () => {
-    const benchmark: BenchResult = {
-      model: "test-model", genTokPerSec: 207.2, latencyMs: 1_040,
-      at: Date.UTC(2026, 0, 2, 12),
-      samples: [
-        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-        { maxTokens: 150, outputTokens: 100, durationMs: 1_000 },
-        { maxTokens: 1_500, outputTokens: 1_000, durationMs: 6_000 },
-      ],
-    };
-    const benchList = vi.fn(() => {
-      throw new Error("bench_list не должен вызываться из бейджа");
-    });
-    const slot = renderSlot({ component: metadata.component }, { message: message() }, {
-      pluginId: "token-meter",
-      rpc: {
-        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, key === KEY ? turn({ model: "test-model" }) : null])),
-        thread_usage: () => null,
-        bench_list: benchList,
-        bench_results: () => ({ results: [benchmark] }),
-      } as never,
-    });
-    slots.push(slot);
-    expect(await slot.findByText(/модель ~207/)).toBeTruthy();
-    expect(benchList).not.toHaveBeenCalled();
-    expect(slot.inspection.rpcCalls.filter((call) => call.method === "bench_results")).toHaveLength(1);
   });
 
   it("без записи → null", async () => {
@@ -175,16 +135,17 @@ describe("messageMetadata", () => {
     const second = mountMessage(message({ id: "message-2", createdAt: 200 }), turn());
     await second.findByText(/↑1.2k/);
     await waitFor(() => expect(first.container.childNodes).toHaveLength(0));
-    expect(second.container.querySelectorAll(".token-meter-badge")).toHaveLength(1);
+    expect(second.container.querySelectorAll(".api-tokens-badge")).toHaveLength(1);
   });
 
   it("инвалидация тега thread:<id> обновляет keyed query, чужой тег — нет", async () => {
     let current = turn({ output: 10 });
     const slot = renderSlot({ component: metadata.component }, { message: message() }, {
-      pluginId: "token-meter",
+      pluginId: "clirelay-test",
       rpc: {
         turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, current])),
         thread_usage: () => null,
+        tokens_display_get: () => DEFAULT_TOKENS_DISPLAY,
       } as never,
     });
     slots.push(slot);
@@ -207,7 +168,7 @@ describe("messageMetadata", () => {
     const second = mountMessage(message({ id: "message-1", createdAt: 100 }), turn());
     await act(async () => {});
     expect(second.container.childNodes).toHaveLength(0);
-    expect(first.container.querySelectorAll(".token-meter-badge")).toHaveLength(1);
+    expect(first.container.querySelectorAll(".api-tokens-badge")).toHaveLength(1);
   });
 });
 
@@ -227,6 +188,7 @@ describe("threadContextSegment", () => {
       rpc: {
         turn_usage: () => ({}),
         thread_usage: () => current,
+        tokens_display_get: () => DEFAULT_TOKENS_DISPLAY,
       } as never,
     });
     slots.push(slot);
@@ -239,5 +201,100 @@ describe("threadContextSegment", () => {
     current = summary({ total: 200 });
     await slot.behavior.experimental_invalidateRpc([`thread:${THREAD}`]);
     await slot.findByText(/Σ 200 токенов/);
+  });
+});
+
+describe("настройки отображения", () => {
+  const withBadge = (patch: Partial<TokensDisplay["badge"]>): TokensDisplay => ({
+    ...DEFAULT_TOKENS_DISPLAY,
+    badge: { ...DEFAULT_TOKENS_DISPLAY.badge, ...patch },
+  });
+
+  it("показ выключен → null, turn_usage не вызывается, сообщение не регистрируется", async () => {
+    const slot = mountMessage(message(), turn(), withBadge({ enabled: false }));
+    await act(async () => {});
+    expect(slot.container.childNodes).toHaveLength(0);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "turn_usage")).toHaveLength(0);
+  });
+
+  it("поля бейджа из настроек: reasoning и модель; все сняты → null без пустого span", async () => {
+    const slot = mountMessage(message(), turn({ model: "test-model" }), withBadge({
+      fields: { ...DEFAULT_TOKENS_DISPLAY.badge.fields, reasoning: true, model: true },
+    }));
+    const badge = await slot.findByText(/reasoning 120/);
+    expect(badge.textContent).toContain("test-model");
+
+    const empty = mountMessage(message(), turn(), withBadge({
+      fields: { input: false, output: false, cache: false, reasoning: false, speed: false, model: false },
+    }));
+    await waitFor(() => expect(empty.inspection.rpcCalls.filter((call) => call.method === "turn_usage")).toHaveLength(1));
+    await act(async () => {});
+    expect(empty.container.childNodes).toHaveLength(0);
+  });
+
+  it("настройки ещё не пришли → null и turn_usage не вызывается", async () => {
+    const slot = renderSlot({ component: metadata.component }, { message: message() }, {
+      pluginId: "clirelay-test",
+      rpc: {
+        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, turn()])),
+        thread_usage: () => null,
+        tokens_display_get: () => new Promise(() => {}),
+      } as never,
+    });
+    slots.push(slot);
+    await act(async () => {});
+    expect(slot.container.childNodes).toHaveLength(0);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "turn_usage")).toHaveLength(0);
+  });
+
+  it("строка треда выключена → summary null, thread_usage не вызывается", async () => {
+    const slot = mountContext(summary(), {
+      ...DEFAULT_TOKENS_DISPLAY,
+      thread: { ...DEFAULT_TOKENS_DISPLAY.thread, enabled: false },
+    });
+    await act(async () => {});
+    expect(slot.container.childNodes).toHaveLength(0);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "thread_usage")).toHaveLength(0);
+  });
+
+  it("инвалидация tokens-display применяется без ремаунта", async () => {
+    let current = DEFAULT_TOKENS_DISPLAY;
+    const slot = renderSlot({ component: metadata.component }, { message: message() }, {
+      pluginId: "clirelay-test",
+      rpc: {
+        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, turn()])),
+        thread_usage: () => null,
+        tokens_display_get: () => current,
+      } as never,
+    });
+    slots.push(slot);
+    await slot.findByText("↑1.2k ↓740 · cache 265k · 59.2 ток/с (эфф.)");
+    current = withBadge({ fields: { ...DEFAULT_TOKENS_DISPLAY.badge.fields, cache: false, speed: false } });
+    await slot.behavior.experimental_invalidateRpc(["tokens-display"]);
+    await slot.findByText("↑1.2k ↓740");
+  });
+
+  it("useVisible сегмента зарегистрирован", () => {
+    expect(typeof (context as { useVisible?: unknown }).useVisible).toBe("function");
+  });
+
+  it("два бейджа в одном окне → один запрос настроек", async () => {
+    const pair = () => (
+      <div>
+        <TokensMessageBadge message={message({ id: "message-1", createdAt: 100 })} />
+        <TokensMessageBadge message={message({ id: "message-2", createdAt: 200 })} />
+      </div>
+    );
+    const slot = renderSlot({ component: pair }, {}, {
+      pluginId: "clirelay-test",
+      rpc: {
+        turn_usage: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((key) => [key, turn()])),
+        thread_usage: () => null,
+        tokens_display_get: () => DEFAULT_TOKENS_DISPLAY,
+      } as never,
+    });
+    slots.push(slot);
+    await slot.findAllByText(/↑1.2k/);
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "tokens_display_get")).toHaveLength(1);
   });
 });
