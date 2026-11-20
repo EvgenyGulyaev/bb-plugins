@@ -26,6 +26,7 @@ function mount() {
     rpc: {
       providers_list: () => ({ providers: [provider] }),
       models_discover: () => ({ models: [] }),
+      models_sync_scan: () => ({ models: [] }),
       relay_accounts: () => ({ configured: false, items: [] }),
       rings_state: () => ({ selected: [], size: 40, perRow: 1 }),
       model_update: () => ({ id: "m-sol" }),
