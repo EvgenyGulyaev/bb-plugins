@@ -38,6 +38,7 @@
 - несколько провайдеров на одном адресе показываются вложенно под общей группой адреса;
 - внутри адреса слева — доступные модели (`GET {baseUrl}/models` минус уже подключённые) и ручное добавление по id, справа — подключённые;
 - аккордеон подключённой модели → форма настроек по типам полей pi (`name`, `reasoning` bool, `contextWindow`/`maxTokens` int, `input` multiselect); неизвестные поля файла сохраняются;
+- секция «API-настройки» модели: api/baseUrl-override, ключ и заголовки (write-only), thinkingLevelMap, samplingParams, compat, cost, promptCache, inputLimits; у провайдера — authHeader, oauth, compat, headers; секреты не возвращаются фронтенду;
 - кнопка «Тест» у модели: минимальный реальный запрос (`POST /chat/completions`, `max_tokens: 8`, таймаут 30с) → латентность и кусочек ответа в тосте; ошибки санитизируются (v1: только `openai-completions`);
 - путь к файлу pi конфигурируется: `bb plugin config clirelay-test set modelsPath <путь>` + `bb plugin reload clirelay-test`;
 - вкладка «Аккаунты»: квоты аккаунтов relay с барами, сбросом, фильтрами и тумблерами;

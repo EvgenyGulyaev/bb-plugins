@@ -81,8 +81,11 @@ BB-плагин для лёгкого подключения моделей с A
   `max_tokens: 8`, таймаут 30с) и показывает латентность и кусочек ответа;
   ошибки санитизируются. v1: только `openai-completions`.
 - Форма генерится из схемы полей (`lib/schema.ts`): bool → чекбокс, int → число,
-  enum → селект, multiselect → чекбоксы. v1: `name`, `reasoning`, `contextWindow`,
-  `maxTokens`, `input`. Compat/Sampling/Cost — следующие итерации.
+  enum → селект, multiselect → чекбоксы, JSON-поля → textarea с zod-валидацией.
+  Базовые: `name`, `reasoning`, `contextWindow`, `maxTokens`, `input`.
+  Секция «API-настройки» (сворачиваемая): `api`/`baseUrl` (переопределения
+  провайдера), `apiKey` модели, `headers`, `thinkingLevelMap`, `samplingParams`,
+  `samplingParamsByThinkingLevel`, `compat`, `cost`, `promptCache`, `inputLimits`.
 
 ## Сценарий
 
@@ -160,5 +163,32 @@ management API санитизируются (без URL).
 - Якорь колец вставлен в разметку рейла bb; при смене этой разметки кольца
   просто не появятся (панель продолжает работать).
 - Ключи `!command` не резолвятся для discovery (literal и `$ENV` — да).
-- Редкие поля (`thinkingLevelMap`, `inputLimits`, `headers`, `promptCache`,
-  `samplingParams*`) не редактируются, но сохраняются в файле как есть.
+
+## API-настройки моделей и провайдеров
+
+Секция «API-настройки» в форме модели (вкладка «Подключение» → аккордеон модели):
+
+- `api` / `baseUrl` — переопределения провайдера; пусто = наследовать.
+- `thinkingLevelMap` — какие значения pi шлёт провайдеру для уровней
+  `off/minimal/low/medium/high/xhigh/max`; `null` = уровень недоступен.
+- `samplingParams` / `samplingParamsByThinkingLevel` — поля тела запроса
+  (например `reasoning_effort`) и переопределения по уровням thinking;
+  только OpenAI-compatible API.
+- `compat` — совместимость с API (`supportsDeveloperRole`, `supportsStore`,
+  `promptCacheKeyMode`, `thinkingFormat`, …). Подсказка под полем перечисляет
+  документированные поля для текущего api; неизвестные поля сохраняются как есть.
+- `cost` — USD за 1M токенов (`input/output/cacheRead/cacheWrite` обязательны,
+  `tiers` — пороги по входу запроса), `promptCache` — секунды жизни кэша
+  `{short, long}`, `inputLimits` — лимиты размера запроса и изображений.
+- JSON-поля редактируются текстом с валидацией: ошибка показывает поле и путь.
+  Пустое поле = удалить настройку из models.json.
+
+Секреты: `apiKey` модели и значения `headers` никогда не возвращаются фронтенду —
+видны только флаг «задан» и имена заголовков. Ключ: пусто = не менять, кнопка
+«Очистить» = удалить. Заголовки: ввод мержится по ключам на сервере
+(`""`-значение удаляет ключ, «Очистить все» удаляет поле), невидимые значения
+сохраняются. Запись атомарная, неизвестные поля файла не теряются.
+
+В форме провайдера («Настроить адрес»): `authHeader` (Authorization: Bearer),
+`oauth` (radius), `compat` и `headers` провайдера — с той же секретной семантикой.
+`modelOverrides` не редактируется и сохраняется в файле как есть.
