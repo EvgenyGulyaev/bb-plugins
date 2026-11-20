@@ -44,10 +44,13 @@ type ScanModel = {
   donorCandidates?: Array<Record<string, unknown>>;
 };
 
-function mount(scan: ScanModel[], options: { applyError?: string; applyResult?: unknown } = {}) {
+type Providers = typeof provider;
+
+function mount(scan: ScanModel[], options: { applyError?: string; applyResult?: unknown; providers?: Providers[] } = {}) {
+  let providers = options.providers ?? [provider];
   const slot: RenderedSlot = renderSlot({ component: panel.component }, { subPath: "" }, {
     rpc: {
-      providers_list: () => ({ providers: [provider] }),
+      providers_list: () => ({ providers }),
       models_discover: () => ({ models: [] }),
       models_sync_scan: () => ({ models: scan }),
       relay_accounts: () => ({ configured: false, items: [] }),
@@ -59,7 +62,11 @@ function mount(scan: ScanModel[], options: { applyError?: string; applyResult?: 
       },
     } as never,
   } as RenderSlotOptions);
-  return { slot, calls: (method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method) as Array<{ method: string; input: unknown }> };
+  return {
+    slot,
+    calls: (method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method) as Array<{ method: string; input: unknown }>,
+    setProviders: (next: Providers[]) => { providers = next; },
+  };
 }
 
 async function openConnectTab() {
@@ -115,6 +122,18 @@ describe("scan", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: "gpt-v6.2.0-sol" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "С настройками…" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("подключённая модель исчезает из «Новых» после realtime-обновления", async () => {
+    const { slot, calls, setProviders } = mount([{ id: "new-1", donorCandidates: [] }]);
+    await openConnectTab();
+    expect(await screen.findByRole("button", { name: "Подключить new-1" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Подключить new-1" }));
+    await waitFor(() => expect(calls("model_connect")).toHaveLength(1));
+    // Сервер пишет модель в models.json и публикует api-models-changed.
+    setProviders([{ ...provider, models: [...provider.models, { ...donor, id: "new-1" }] }]);
+    await slot.behavior.emitRealtime("api-models-changed", {});
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Подключить new-1" })).toBeNull());
   });
 
   it("обычная новая модель: только «Подключить»", async () => {

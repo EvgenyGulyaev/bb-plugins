@@ -459,7 +459,10 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
   const [filter, setFilter] = useState<"all" | "on" | "off">("all");
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [dialog, setDialog] = useState<{ model: SyncModelView; donorId: string } | null>(null);
-  const available = synced ?? [];
+  // Новые = нет ни в models, ни в disabled — проверяем на каждой перерисовке:
+  // после connect + realtime строка обязана исчезнуть, а не ждать нового scan.
+  const known = useMemo(() => new Set([...provider.models, ...provider.disabled].map((model) => String(model.id))), [provider.models, provider.disabled]);
+  const available = useMemo(() => (synced ?? []).filter((model) => !known.has(model.id)), [synced, known]);
   const leftGroups = groupByFamily(available);
   const rightItems = [
     ...(filter === "off" ? [] : provider.models.map((entry) => ({ entry, on: true, id: String(entry.id) }))),
