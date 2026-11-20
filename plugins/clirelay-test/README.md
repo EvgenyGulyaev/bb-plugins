@@ -254,8 +254,10 @@ id из `GET /models`, которого нет ни в `models`, ни в `disabl
 Донор подбирается детерминированно (`lib/model-sync.ts`, без LLM и fuzzy): тот же
 provider, точно равные `(family, variant)` из парсинга id, и только более старая
 версия. Один максимум версии → кнопка **«Подключить с настройками <донор>»**;
-равный максимум или дубликат id → только ручной select «Скопировать настройки из…»;
-нет пары, downgrade или непарсящийся id → обычное «Подключить».
+равный максимум версии у разных id → только ручной select «Скопировать настройки
+из…» с кандидатами; дубликат id в pool → донора нет и кандидатов нет (даже если
+версия старше новой); нет пары, уже есть версия ≥ новей, downgrade или
+непарсящийся id → обычное «Подключить».
 
 Три вида строк:
 
@@ -280,12 +282,18 @@ donor — **без значений секретов**), итоговые `conte
 - `replaceInPi:false` (галочка снята) → `settings.json` не читается и не пишется;
 - `replaceInPi:true` → preflight `settings.json` **до** записи models: битый JSON,
   не-object root, не тот тип `enabledModels`/`compaction`/`compaction.modelOverrides` →
-  ошибка, оба файла байт-в-байт;
+  ошибка, оба файла байт-в-байт; из `modelOverrides` проверяются только donor/new
+  ключи — посторонняя битая запись sync не блокирует;
 - если models записан, а запись settings упала → `status:"partial"`, `settings:"failed"`;
   UI показывает «Модель подключена, выбор pi не изменён. Повторите с той же галочкой»,
   повтор не переклонирует модель и добирает только недостающий settings patch;
 - полный успех → `status:"applied"`, отсутствие изменений → `noop`. Ответ содержит
-  `modelAdded` и `sources` (обязателен при `modelAdded:true`).
+  `modelAdded` и `sources` (обязателен при `modelAdded:true`). Повтор без галочки —
+  `noop`, повтор с галочкой, который действительно дописал settings — `applied`
+  (`modelAdded:false, settings:"updated"`);
+- донор валидируется на сервере в обеих ветках (added и retry): допускается только
+  автодонор или кандидат из tie, `modelId` в retry обязан быть подключён
+  (`hasModel`), выключенная модель → ошибка без записи;
 
 `settings.json` берётся рядом с `models.json` (`join(dirname(modelsPath), "settings.json")`),
 отдельной настройки нет. Патчатся только exact-ключи `${providerId}/${modelId}`:
@@ -293,7 +301,7 @@ donor — **без значений секретов**), итоговые `conte
 - `enabledModels`: отсутствует → не создаётся (создание одного pattern ограничило бы
   остальные модели); array → exact donor заменяется на new на позиции первого donor,
   лишние exact donor/new убираются, wildcards и partial patterns не трогаются;
-  exact donor нет → `enabledModels` unchanged, новый не добавляется;
+  exact donor нет → `enabledModels` байт-в-байт (new и его дубли остаются как есть);
 - `compaction.modelOverrides[donorKey]` при отсутствии `newKey` — deep clone на new key,
   donor override сохраняется; new уже есть — не перезаписывается;
 - `defaultModel`, `defaultProvider`, `modelThinkingLevels`, project settings и прочие

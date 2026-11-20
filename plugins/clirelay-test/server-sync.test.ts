@@ -196,6 +196,17 @@ describe("model_sync_apply", () => {
     expect(file.providers.p!.models.map((model) => model.id)).toEqual(["gpt-6.2-sol", "gpt-7.1-sol"]);
   });
 
+  it("unrelated битый compaction override не блокирует пару donor/new", async () => {
+    const broken = { ...SETTINGS, compaction: { modelOverrides: { ...SETTINGS.compaction.modelOverrides, "other/x": "broken" } } };
+    const { host, settingsPath } = await load([DONOR], { settings: broken });
+    api([{ id: "gpt-7.1-sol", context_window: 200000 }]);
+    const result = await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: true });
+    expect((result as { settings: string }).settings).toBe("updated");
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, any>;
+    expect(settings.compaction.modelOverrides["other/x"]).toBe("broken");
+    expect(settings.compaction.modelOverrides["p/gpt-7.1-sol"]).toEqual({ contextWindow: 123, nested: { a: [1] } });
+  });
+
   it("битый settings.json → ошибка, models не записан, файлы не изменены", async () => {
     const { host, path, settingsPath } = await load([DONOR], { settings: { enabledModels: "p/gpt-6.2-sol" } });
     const modelsBefore = await readFile(path, "utf8");
@@ -236,11 +247,39 @@ describe("model_sync_apply", () => {
 
     await rm(bak, { recursive: true, force: true });
     const second = await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: true });
-    expect(second).toEqual({ status: "noop", modelAdded: false, settings: "updated" });
+    expect(second).toEqual({ status: "applied", modelAdded: false, settings: "updated" });
     expect(await readFile(path, "utf8")).toBe(modelsAfterFirst); // второго клона нет
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, any>;
     expect(settings.enabledModels).toEqual(["p/gpt-7.1-sol", "wild/*", "other/x"]);
     expect(settings.compaction.modelOverrides["p/gpt-7.1-sol"]).toEqual({ contextWindow: 123, nested: { a: [1] } });
+  });
+
+  it("retry: чужой donor отклоняется, settings байт-в-байт", async () => {
+    const { host, path, settingsPath } = await load([DONOR, { id: "gpt-6.2-eco", apiKey: "eco-key" }, { id: "gpt-7.1-sol", apiKey: "sol-key" }], { settings: SETTINGS });
+    const modelsBefore = await readFile(path, "utf8");
+    const settingsBefore = await readFile(settingsPath, "utf8");
+    api([{ id: "gpt-7.1-sol" }]);
+    await expect(host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-eco", replaceInPi: true })).rejects.toThrow(/донор/);
+    expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+    expect(await readFile(path, "utf8")).toBe(modelsBefore);
+  });
+
+  it("retry: downgrade-donor (версия новее модели) отклоняется", async () => {
+    const { host, settingsPath } = await load([{ id: "gpt-8.1-sol", apiKey: "new-key" }, DONOR], { settings: SETTINGS });
+    const settingsBefore = await readFile(settingsPath, "utf8");
+    api([{ id: "gpt-6.2-sol" }]);
+    await expect(host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-6.2-sol", donorId: "gpt-8.1-sol", replaceInPi: true })).rejects.toThrow(/донор/);
+    expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+  });
+
+  it("retry: выключенный modelId не попадает в enabledModels", async () => {
+    const { host, path, settingsPath } = await load([DONOR], { settings: SETTINGS, disabled: [{ id: "gpt-7.1-sol", apiKey: "off-key" }] });
+    const modelsBefore = await readFile(path, "utf8");
+    const settingsBefore = await readFile(settingsPath, "utf8");
+    api([{ id: "gpt-7.1-sol" }]);
+    await expect(host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: true })).rejects.toThrow(/выключена/);
+    expect(await readFile(settingsPath, "utf8")).toBe(settingsBefore);
+    expect(await readFile(path, "utf8")).toBe(modelsBefore);
   });
 
   it("вход строгий: клиентские metadata и секреты не принимаются", async () => {
@@ -293,6 +332,24 @@ describe("model_sync_apply", () => {
     expect(await readFile(path, "utf8")).toBe(before);
   });
 
+  it("donor input:['audio'] → поля input нет, source default", async () => {
+    const { host, path } = await load([{ ...DONOR, input: ["audio"] }]);
+    api([{ id: "gpt-7.1-sol" }]);
+    const result = await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: false });
+    expect((result as { sources: { input: string } }).sources.input).toBe("default");
+    const file = JSON.parse(await readFile(path, "utf8")) as { providers: Record<string, { models: Array<Record<string, unknown>> }> };
+    expect(file.providers.p!.models[1]).not.toHaveProperty("input");
+  });
+
+  it("API без уровней и donor без reasoning → reasoning не выдумывается", async () => {
+    const { reasoning: _drop, ...noReasoning } = DONOR;
+    const { host, path } = await load([noReasoning]);
+    api([{ id: "gpt-7.1-sol" }]);
+    await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: false });
+    const file = JSON.parse(await readFile(path, "utf8")) as { providers: Record<string, { models: Array<Record<string, unknown>> }> };
+    expect(file.providers.p!.models[1]).not.toHaveProperty("reasoning");
+  });
+
   it("повтор идемпотентен: modelAdded:false, без дубликатов и перезаписи", async () => {
     const { host, path, settingsPath } = await load([DONOR], { settings: SETTINGS });
     api([{ id: "gpt-7.1-sol", context_window: 200000 }]);
@@ -303,7 +360,8 @@ describe("model_sync_apply", () => {
     expect(await readFile(path, "utf8")).toBe(modelsOnce);
 
     const third = await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: true });
-    expect(third).toEqual({ status: "noop", modelAdded: false, settings: "updated" });
+    // 7c: retry, который реально обновил settings, — это applied, не noop.
+    expect(third).toEqual({ status: "applied", modelAdded: false, settings: "updated" });
     const fourth = await host.harness.behavior.callRpc("model_sync_apply", { providerId: "p", modelId: "gpt-7.1-sol", donorId: "gpt-6.2-sol", replaceInPi: true });
     expect(fourth).toEqual({ status: "noop", modelAdded: false, settings: "unchanged" });
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, any>;
