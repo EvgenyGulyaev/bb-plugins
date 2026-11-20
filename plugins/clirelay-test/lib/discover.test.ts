@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DiscoverError, discoverModels, resolveApiKey, testModel } from "./discover";
+import { DiscoverError, discoverModelDetails, discoverModels, resolveApiKey, testModel } from "./discover";
 
 const ok = (body: unknown) => async () => new Response(JSON.stringify(body), { status: 200 });
 
@@ -47,6 +47,89 @@ describe("discoverModels", () => {
     const html = async () => new Response("<html>", { status: 200 });
     await expect(discoverModels("http://localhost:4010/v1", undefined, html)).rejects.toThrow(/не JSON/);
     await expect(discoverModels("http://localhost:4010/v1", undefined, ok({}))).rejects.toThrow(/нет списка/);
+  });
+});
+
+describe("discoverModelDetails", () => {
+  const details = (body: unknown) => discoverModelDetails("http://localhost:4010/v1", undefined, ok(body));
+
+  it("id sorted/deduped + только whitelist metadata", async () => {
+    const result = await details({
+      data: [
+        { id: "b", context_window: 200000, max_tokens: 8192, input_modalities: ["text", "image", "audio"], supported_reasoning_levels: ["low", "high"], pricing: { input: 1 }, description: "d", secret: "leak" },
+        { id: "a" },
+        { id: "b" },
+      ],
+    });
+    expect(result.map((model) => model.id)).toEqual(["a", "b"]);
+    expect(result[1]).toEqual({
+      id: "b", contextWindow: 200000, maxTokens: 8192,
+      input: ["text", "image"], supportedReasoningLevels: ["low", "high"],
+    });
+    const json = JSON.stringify(result);
+    expect(json).not.toContain("pricing");
+    expect(json).not.toContain("leak");
+  });
+  const byId = async (body: unknown) => new Map((await details(body)).map((model) => [model.id, model]));
+
+  it("alias-пары: одно валидное → использовать, равные → использовать, разные → unreliable", async () => {
+    const map = await byId({
+      data: [
+        { id: "one", max_context_window: 100000, max_output_tokens: 4096 },
+        { id: "equal", context_window: 100000, max_context_window: 100000, max_tokens: 4096, max_output_tokens: 4096 },
+        { id: "differ", context_window: 100000, max_context_window: 200000, max_tokens: 4096, max_output_tokens: 8192 },
+        { id: "swapped", context_window: 100000, max_context_window: "200000" },
+      ],
+    });
+    expect(map.get("one")).toEqual({ id: "one", contextWindow: 100000, maxTokens: 4096 });
+    expect(map.get("equal")).toEqual({ id: "equal", contextWindow: 100000, maxTokens: 4096 });
+    expect(map.get("differ")).toEqual({ id: "differ" });
+    expect(map.get("swapped")).toEqual({ id: "swapped", contextWindow: 100000 });
+  });
+  it("числа: строки, float, 0, negative, overflow отклоняются", async () => {
+    const result = await details({
+      data: [
+        { id: "s", context_window: "128000", max_tokens: "16384" },
+        { id: "f", context_window: 128000.5, max_tokens: 16384.25 },
+        { id: "z", context_window: 0, max_tokens: 0 },
+        { id: "n", context_window: -1, max_tokens: -5 },
+        { id: "big", context_window: 10_000_001, max_tokens: 1_000_001 },
+        { id: "edge", context_window: 10_000_000, max_tokens: 1_000_000 },
+        { id: "nan", context_window: Number.NaN, max_tokens: Number.POSITIVE_INFINITY },
+      ],
+    });
+    expect(result).toEqual([
+      { id: "big" }, { id: "edge", contextWindow: 10_000_000, maxTokens: 1_000_000 },
+      { id: "f" }, { id: "n" }, { id: "nan" }, { id: "s" }, { id: "z" },
+    ]);
+  });
+  it("input_modalities: только text/image, dedupe, пусто → поля нет", async () => {
+    const map = await byId({
+      data: [
+        { id: "deduped", input_modalities: ["image", "text", "image"] },
+        { id: "empty", input_modalities: ["audio", "video"] },
+        { id: "wrongType", input_modalities: "text" },
+      ],
+    });
+    expect(map.get("deduped")!.input).toEqual(["image", "text"]);
+    expect(map.get("empty")).toEqual({ id: "empty" });
+    expect(map.get("wrongType")).toEqual({ id: "wrongType" });
+  });
+  it("supported_reasoning_levels: all-valid → как есть, иначе поле целиком игнорируется", async () => {
+    const map = await byId({
+      data: [
+        { id: "ok", supported_reasoning_levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+        { id: "bad", supported_reasoning_levels: ["low", "turbo"] },
+        { id: "empty", supported_reasoning_levels: [] },
+      ],
+    });
+    expect(map.get("ok")!.supportedReasoningLevels).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(map.get("bad")).toEqual({ id: "bad" });
+    expect(map.get("empty")).toEqual({ id: "empty", supportedReasoningLevels: [] });
+  });
+  it("discoverModels остаётся проекцией id (старый контракт)", async () => {
+    const body = { data: [{ id: "a", context_window: 1 }] };
+    expect(await discoverModels("http://localhost:4010/v1", undefined, ok(body))).toEqual(["a"]);
   });
 });
 

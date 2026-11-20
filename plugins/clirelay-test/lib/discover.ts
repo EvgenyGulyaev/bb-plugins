@@ -16,11 +16,70 @@ export function resolveApiKey(raw: unknown, env: NodeJS.ProcessEnv = process.env
   return raw;
 }
 
-export async function discoverModels(
+export type InputModality = "text" | "image";
+export type ReasoningLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** Только эти поля читаем из GET /models; всё остальное игнорируем. */
+export interface DiscoveredModel {
+  id: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  input?: InputModality[];
+  supportedReasoningLevels?: ReasoningLevel[];
+}
+
+const CONTEXT_LIMIT = 10_000_000;
+const MAX_TOKENS_LIMIT = 1_000_000;
+const LEVELS = new Set<string>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+// Число из API: только finite positive safe integer в разумных границах. Не клампим.
+function safePositive(value: unknown, limit: number): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= limit ? value : undefined;
+}
+
+// Alias-пара: одно валидное → оно; оба равны → оно; оба разные → unreliable (undefined).
+function aliased(a: unknown, b: unknown, limit: number): number | undefined {
+  const left = safePositive(a, limit);
+  const right = safePositive(b, limit);
+  if (left !== undefined && right !== undefined) return left === right ? left : undefined;
+  return left ?? right;
+}
+
+function modalities(value: unknown): InputModality[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const result: InputModality[] = [];
+  for (const item of value) {
+    if ((item === "text" || item === "image") && !result.includes(item)) result.push(item);
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+// Либо весь массив из известных уровней, либо поле игнорируется целиком.
+function reasoningLevels(value: unknown): ReasoningLevel[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((item) => typeof item === "string" && LEVELS.has(item))) return undefined;
+  return value as ReasoningLevel[];
+}
+
+function metadataFor(item: Record<string, unknown>): Omit<DiscoveredModel, "id"> {
+  const metadata: Omit<DiscoveredModel, "id"> = {};
+  const contextWindow = aliased(item.context_window, item.max_context_window, CONTEXT_LIMIT);
+  if (contextWindow !== undefined) metadata.contextWindow = contextWindow;
+  const maxTokens = aliased(item.max_tokens, item.max_output_tokens, MAX_TOKENS_LIMIT);
+  if (maxTokens !== undefined) metadata.maxTokens = maxTokens;
+  const input = modalities(item.input_modalities);
+  if (input) metadata.input = input;
+  const levels = reasoningLevels(item.supported_reasoning_levels);
+  if (levels) metadata.supportedReasoningLevels = levels;
+  return metadata;
+}
+
+/** Детальный парсер GET /models: sorted/deduped id + whitelist metadata. */
+export async function discoverModelDetails(
   baseUrl: string,
   apiKey: string | undefined,
   fetchImpl: typeof fetch = fetch,
-): Promise<string[]> {
+): Promise<DiscoveredModel[]> {
   const url = `${baseUrl.replace(/\/+$/, "")}/models`;
   let response: Response;
   try {
@@ -42,16 +101,22 @@ export async function discoverModels(
   const record = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
   const items = Array.isArray(body) ? body : record && Array.isArray(record.data) ? record.data : null;
   if (!items) throw new DiscoverError("в ответе нет списка моделей (ожидался { data: [...] })");
-  const ids = items
-    .map((item) =>
-      typeof item === "string"
-        ? item
-        : item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string"
-          ? ((item as Record<string, unknown>).id as string)
-          : null,
-    )
-    .filter((id): id is string => !!id);
-  return [...new Set(ids)].sort().slice(0, 1000);
+  const models = new Map<string, DiscoveredModel>();
+  for (const item of items) {
+    const id = typeof item === "string" ? item : item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string" ? ((item as Record<string, unknown>).id as string) : null;
+    if (!id || models.has(id)) continue; // первое вхождение id побеждает
+    models.set(id, { id, ...(item && typeof item === "object" ? metadataFor(item as Record<string, unknown>) : {}) });
+  }
+  return [...models.values()].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)).slice(0, 1000);
+}
+
+/** Старый контракт: только список id. */
+export async function discoverModels(
+  baseUrl: string,
+  apiKey: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
+  return (await discoverModelDetails(baseUrl, apiKey, fetchImpl)).map((model) => model.id);
 }
 
 export interface ModelTestResult { ok: boolean; latencyMs: number; detail: string }
