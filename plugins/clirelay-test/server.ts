@@ -5,11 +5,11 @@ import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { discoverModels, resolveApiKey, testModel } from "./lib/discover";
 import {
-  addModelEntry, connectModel, deleteProvider, disconnectModel, hasModel, listProviders,
-  readModelsFile, removeModelEntry, resolveModelsPath, updateModel, upsertProvider, writeModelsFile,
+  addModelEntry, applyModelPatch, connectModel, deleteProvider, disconnectModel, hasModel, listProviders,
+  modelView, readModelsFile, removeModelEntry, resolveModelsPath, updateModel, upsertProvider, writeModelsFile,
   type ModelEntry, type ModelsFile,
 } from "./lib/models-file";
-import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
+import { apiTypeSchema, baseUrlSchema, compatSchema, headersPatchSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
 import { registerTokens } from "./lib/tokens/server";
@@ -32,6 +32,11 @@ const providerViewSchema = z.object({
   baseUrl: z.string(),
   api: z.string(),
   apiKeySet: z.boolean(),
+  authHeader: z.boolean().optional(),
+  oauth: z.string().optional(),
+  compat: z.looseObject({}).optional(),
+  headersSet: z.boolean(),
+  headerNames: z.array(z.string()),
   models: z.array(z.looseObject({ id: z.string() })),
   disabled: z.array(z.looseObject({ id: z.string() })),
 });
@@ -45,6 +50,10 @@ export const rpcContract = defineRpcContract({
       baseUrl: baseUrlSchema,
       api: apiTypeSchema,
       apiKey: z.string().max(500).optional(),
+      authHeader: z.boolean().nullable().optional(),
+      oauth: z.enum(["radius"]).nullable().optional(),
+      compat: compatSchema.nullable().optional(),
+      headers: headersPatchSchema.nullable().optional(),
     }).strict(),
     output: providerViewSchema,
   },
@@ -178,7 +187,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     providers_list: async () => {
       const views = listProviders(await readModelsFile(filePath));
-      for (const view of views) view.disabled = await readDisabled(view.id);
+      for (const view of views) view.disabled = (await readDisabled(view.id)).map(modelView);
       return { providers: views };
     },
     provider_save: async (input) =>
@@ -247,18 +256,15 @@ export default async function plugin(bb: BbPluginApi) {
           const result = updateModel(file, providerId, modelId, patch);
           await writeModelsFile(filePath, file);
           bb.realtime.publish(CHANGED, {});
-          return result;
+          return modelView(result);
         }
         const disabled = await readDisabled(providerId);
         const entry = disabled.find((model) => model.id === modelId);
         if (!entry) throw new Error(`Модель не найдена: ${modelId}`);
-        for (const [key, value] of Object.entries(patch)) {
-          if (value === null) delete entry[key];
-          else if (value !== undefined) entry[key] = value;
-        }
+        applyModelPatch(entry, patch);
         await bb.storage.kv.set(disabledKey(providerId), disabled);
         bb.realtime.publish(CHANGED, {});
-        return entry;
+        return modelView(entry);
       }),
     model_test: async ({ providerId, modelId }) => {
       const file = await readModelsFile(filePath);
