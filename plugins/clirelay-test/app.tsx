@@ -4,8 +4,9 @@ import { useCallback, createContext, useContext, useEffect, useMemo, useRef, use
 import type { FormEvent } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { rpcContract } from "./server";
+import type { rpcContract, SyncModelView } from "./server";
 import { API_TYPES, COMPAT_FIELDS, MODEL_FIELDS, baseUrlSchema, compatSchema, groupProvidersByBaseUrl, headersPatchSchema, parseJsonField } from "./lib/schema";
+import { effectiveView } from "./lib/model-sync";
 import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import { countdown, quotaResetFallback } from "./lib/countdown";
@@ -378,35 +379,116 @@ function ModelAccordion({ providerId, providerApi, model, enabled, onToggle, rpc
   );
 }
 
+/** Диалог подтверждения клонирования donor → новая модель (§3.3). */
+function SyncDialog({ providerId, model, donorId, rpc, report, onClose, onApplied }: {
+  providerId: string; model: SyncModelView; donorId: string; rpc: Rpc; report: Report; onClose: () => void; onApplied: () => void;
+}) {
+  const [replaceInPi, setReplaceInPi] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [partial, setPartial] = useState(false);
+  const donor = model.donor?.id === donorId ? model.donor : model.donorCandidates.find((candidate) => candidate.id === donorId);
+  const view = useMemo(() => effectiveView({ ...model, donor }), [model, donor]);
+  const list = (items: readonly string[]) => items.join(", ");
+  const submit = () => {
+    if (busy) return;
+    setBusy(true);
+    setPartial(false);
+    rpc.call("model_sync_apply", { providerId, modelId: model.id, donorId, replaceInPi }).then(
+      (result) => {
+        setBusy(false);
+        if (result.status === "partial") {
+          // §3.4: models уже записан — повторяем только с той же галочкой.
+          setPartial(true);
+          toast.warning("Модель подключена, выбор pi не изменён");
+          return;
+        }
+        if (!result.modelAdded && result.settings !== "updated") {
+          // Повтор без изменений: второй клон не делается, файлы не тронуты.
+          toast(`Без изменений: ${model.id} уже подключена`);
+          onApplied();
+          onClose();
+          return;
+        }
+        toast.success(`Подключена ${model.id}; открой /model в pi заново`);
+        onApplied();
+        onClose();
+      },
+      (cause) => { setBusy(false); report(cause); },
+    );
+  };
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader><DialogTitle>Подключить с настройками</DialogTitle></DialogHeader>
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground">Новая модель</span>
+            <span className="font-mono text-xs">{model.id}</span>
+            <span className="text-muted-foreground">Настройки из</span>
+            <span className="font-mono text-xs">{donor?.name ? `${donorId} (${donor.name})` : donorId}</span>
+          </div>
+          <div className="rounded-md border border-border/70 bg-muted/20 p-2 text-xs text-muted-foreground">
+            Копируются: API/baseUrl, reasoning, input, sampling, compat, cost/promptCache, ключ и заголовки donor.
+            Значения секретов не показываются.
+          </div>
+          <div className="flex flex-col gap-1 text-xs">
+            <span>contextWindow: {view.contextWindow.value} ({view.contextWindow.label})</span>
+            <span>maxTokens: {view.maxTokens.value} ({view.maxTokens.label})</span>
+            <span>input: {list(view.input.value)} ({view.input.label})</span>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={replaceInPi} onCheckedChange={(value) => setReplaceInPi(value === true)} aria-label="Заменить в выборе pi" />
+            Заменить в выборе pi
+          </label>
+          <p className="text-xs text-muted-foreground">Старую модель не отключаем. defaultModel/defaultProvider не меняем.</p>
+          {partial ? (
+            <p className="rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-500" role="status">
+              Модель подключена, выбор pi не изменён. Повторите с той же галочкой
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>Отмена</Button>
+          <Button type="button" disabled={busy} onClick={submit}>
+            <Icon name={busy ? "Loading" : "Plus"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} />Подключить
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { provider: ProviderView; rpc: Rpc; report: Report; onEdit: () => void; nested?: boolean }) {
   const [open, setOpen] = useState(false);
-  const [discovered, setDiscovered] = useState<string[] | null>(null);
+  const [synced, setSynced] = useState<SyncModelView[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [manualId, setManualId] = useState("");
   const [filter, setFilter] = useState<"all" | "on" | "off">("all");
-  const connected = useMemo(() => new Set(provider.models.map((model) => String(model.id))), [provider.models]);
-  const available = (discovered ?? []).filter((id) => !connected.has(id));
-  const leftGroups = groupByFamily(available.map((id) => ({ id })));
+  const [choice, setChoice] = useState<Record<string, string>>({});
+  const [dialog, setDialog] = useState<{ model: SyncModelView; donorId: string } | null>(null);
+  const available = synced ?? [];
+  const leftGroups = groupByFamily(available);
   const rightItems = [
     ...(filter === "off" ? [] : provider.models.map((entry) => ({ entry, on: true, id: String(entry.id) }))),
     ...(filter === "on" ? [] : provider.disabled.map((entry) => ({ entry, on: false, id: String(entry.id) }))),
   ];
   const rightGroups = groupByFamily(rightItems);
   const counts = { all: provider.models.length + provider.disabled.length, on: provider.models.length, off: provider.disabled.length };
+  // Сканирование новых моделей: только чтение, никаких записей (§3.1).
   const discover = useCallback(() => {
     setBusy(true);
     setDiscoverError(null);
-    rpc.call("models_discover", { providerId: provider.id }).then(
-      ({ models }) => { setDiscovered(models); setBusy(false); },
+    rpc.call("models_sync_scan", { providerId: provider.id }).then(
+      ({ models }) => { setSynced(models); setBusy(false); },
       (cause) => { setBusy(false); setDiscoverError(message(cause)); },
     );
   }, [rpc, provider.id]);
   // Автозагрузка один раз: после ошибки не ретраим сам (иначе бесконечный цикл
-  // на недоступном эндпоинте); повтор — только кнопкой ⟳.
+  // на недоступном эндпоинте); повтор — только кнопкой обновления.
   useEffect(() => {
-    if (shouldAutoLoad({ open, loaded: discovered !== null, busy, error: discoverError })) discover();
-  }, [open, discovered, busy, discoverError, discover]);
+    if (shouldAutoLoad({ open, loaded: synced !== null, busy, error: discoverError })) discover();
+  }, [open, synced, busy, discoverError, discover]);
   const connect = (modelId: string) => {
     if (!modelId.trim()) return;
     rpc.call("model_connect", { providerId: provider.id, modelId: modelId.trim() })
@@ -422,7 +504,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
           <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">{provider.models.length} подкл.</span>
           {!provider.apiKeySet ? <span className="shrink-0 text-[10px] text-destructive">ключ не задан</span> : null}
         </button>
-        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Обновить список моделей"
+        <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Проверить обновления"
           onClick={() => { setOpen(true); discover(); }}><Icon name={busy ? "Loading" : "Download"} className={`size-3.5 ${busy ? "animate-spin" : ""}`} /></Button>
         <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" aria-label="Настроить адрес" onClick={onEdit}><Icon name="Edit" className="size-3.5" /></Button>
         <ConfirmButton icon="Trash2" label="" confirmLabel="Удалить API?"
@@ -431,7 +513,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
       {open ? (
         <div className="grid gap-3 px-3 pb-3 md:grid-cols-2">
           <div className="rounded-lg border border-border/70 p-2">
-            <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Доступные (GET /models)</div>
+            <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">Новые модели (GET /models)</div>
             {busy ? <div className="px-1 py-2 text-xs text-muted-foreground">Загрузка…</div> : null}
             {discoverError ? <div className="mb-2 rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" role="alert">{discoverError}</div> : null}
             <div className="flex flex-col gap-1">
@@ -441,18 +523,53 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
                     {group.family}<span className="font-normal">{group.items.length}</span>
                   </div>
                   <div className="flex flex-col gap-1">
-                    {group.items.map(({ id }) => (
-                      <div key={id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1 hover:bg-muted/60">
-                        <span className="truncate font-mono text-xs">{id}</span>
-                        <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(id)} aria-label={`Подключить ${id}`}>
-                          <Icon name="Plus" className="size-3.5" />Подключить
-                        </Button>
-                      </div>
-                    ))}
+                    {group.items.map((model) => {
+                      const donorName = model.donor ? model.donor.name || model.donor.id : null;
+                      const picked = choice[model.id] ?? "";
+                      const view = effectiveView({ ...model, donor: model.donor ?? model.donorCandidates.find((candidate) => candidate.id === picked) });
+                      return (
+                        <div key={model.id} className="flex flex-col gap-1 rounded-md px-2 py-1 hover:bg-muted/60">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-mono text-xs">{model.id}</span>
+                            <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" onClick={() => connect(model.id)} aria-label={`Подключить ${model.id}`}>
+                              <Icon name="Plus" className="size-3.5" />Подключить
+                            </Button>
+                          </div>
+                          {model.donor ? (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <span className="rounded-full border border-border px-1.5 text-[10px] text-foreground">Обновление</span>
+                              <span className="truncate">настройки: {model.donor.name || model.donor.id}{model.donor.enabled ? "" : " (выкл)"}</span>
+                              <span className="truncate">источники лимитов: {view.contextWindow.label}, {view.maxTokens.label}, {view.input.label}</span>
+                              <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground"
+                                onClick={() => setDialog({ model, donorId: model.donor!.id })}>
+                                <Icon name="Plus" className="size-3.5" />Подключить с настройками {donorName}
+                              </Button>
+                            </div>
+                          ) : model.donorCandidates.length > 0 ? (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <select className="h-7 rounded-md border border-input bg-transparent px-2 text-[11px]"
+                                value={picked} onChange={(event) => setChoice((current) => ({ ...current, [model.id]: event.target.value }))}
+                                aria-label="Скопировать настройки из…">
+                                <option value="">Скопировать настройки из…</option>
+                                {model.donorCandidates.map((candidate) => (
+                                  <option key={candidate.id} value={candidate.id}>
+                                    {candidate.name ? `${candidate.id} — ${candidate.name}` : candidate.id}{candidate.enabled ? "" : " (выкл)"}
+                                  </option>
+                                ))}
+                              </select>
+                              <Button variant="ghost" size="sm" className="shrink-0 text-muted-foreground" disabled={!picked}
+                                onClick={() => setDialog({ model, donorId: picked })}>
+                                <Icon name="Plus" className="size-3.5" />С настройками…
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
-              {!busy && !discoverError && available.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{discovered === null ? "Раскрой адрес — список загрузится сам" : "Все доступные уже подключены"}</div> : null}
+              {!busy && !discoverError && available.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{synced === null ? "Раскрой адрес — список загрузится сам" : "Новых моделей нет — всё подключено"}</div> : null}
             </div>
             <form className="mt-2 flex gap-1.5" onSubmit={(event) => { event.preventDefault(); connect(manualId); }}>
               <Input className="h-8 flex-1 font-mono text-xs" placeholder="добавить по id вручную" value={manualId} onChange={(event) => setManualId(event.target.value)} aria-label="id модели вручную" />
@@ -491,6 +608,11 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
             </div>
           </div>
         </div>
+      ) : null}
+      {dialog ? (
+        <SyncDialog providerId={provider.id} model={dialog.model} donorId={dialog.donorId} rpc={rpc} report={report}
+          onApplied={() => setSynced((current) => current?.filter((entry) => entry.id !== dialog.model.id) ?? current)}
+          onClose={() => setDialog(null)} />
       ) : null}
     </section>
   );
