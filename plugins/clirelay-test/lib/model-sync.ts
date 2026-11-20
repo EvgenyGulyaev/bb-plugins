@@ -17,7 +17,6 @@ export const DONOR_FIELDS = [
   "inputLimits",
 ] as const;
 
-export const INPUT_VALUE_LIMIT = { text: 10_000_000, image: 10_000_000 } as const;
 export const CONTEXT_LIMIT = 10_000_000;
 export const MAX_TOKENS_LIMIT = 1_000_000;
 
@@ -103,11 +102,12 @@ export function matchDonor(newId: string, pool: DonorEntry[]): DonorMatch {
     else matching.set(entry.id, { entry, version: parsed.version });
   }
   if (matching.size === 0) return { donor: null, candidates: [] };
-  if (duplicated) return { donor: null, candidates: sortCandidates([...matching.values()]), ambiguous: "duplicate" };
 
+  // §4.2.2: версия >= новой — уже не upgrade: донор и ручной выбор не нужны
+  // даже при дубликате id (значение дубликата — тот же или более новый id).
   const values = [...matching.values()];
-  // Версия >= новой — это не upgrade: donor и candidates отсутствуют.
   if (values.some((item) => compareVersions(item.version, target.version) >= 0)) return { donor: null, candidates: [] };
+  if (duplicated) return { donor: null, candidates: [], ambiguous: "duplicate" };
 
   let best: { entry: DonorEntry; version: number[] } | undefined;
   let tie = false;
