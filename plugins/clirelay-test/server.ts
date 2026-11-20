@@ -294,6 +294,22 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  /** Провайдер для sync: reads models.json под тем же lock, что и мутации. */
+  const syncTarget = (providerId: string) => locked(async () => {
+    const file = await readModelsFile(filePath);
+    const entry = file.providers[providerId];
+    if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+    if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+    return { baseUrl: entry.baseUrl, apiKey: entry.apiKey as string | undefined };
+  });
+
+  /** Scan-срез: новые id + безопасные donor-предложения. Вызывается под lock. */
+  const scanModels = async (providerId: string, details: DiscoveredModel[]) => {
+    const file = await readModelsFile(filePath);
+    if (!file.providers[providerId]) throw new Error(`Провайдер не найден: ${providerId}`);
+    return syncScan(details, providerModels(file, providerId), await readDisabled(providerId));
+  };
+
   bb.rpc.register(rpcContract, {
     providers_list: async () => {
       const views = listProviders(await readModelsFile(filePath));
@@ -315,22 +331,14 @@ export default async function plugin(bb: BbPluginApi) {
     },
     model_connect: async ({ providerId, modelId }) => ({ connected: await mutate((file) => connectModel(file, providerId, modelId)) }),
     models_sync_scan: async ({ providerId }) => {
-      const file = await readModelsFile(filePath);
-      const entry = file.providers[providerId];
-      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
-      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
-      const details = await discoverModelDetails(entry.baseUrl, resolveApiKey(entry.apiKey));
-      const enabled = providerModels(file, providerId);
-      const disabled = await readDisabled(providerId);
-      return { models: syncScan(details, enabled, disabled) };
+      const target = await syncTarget(providerId);
+      const details = await discoverModelDetails(target.baseUrl, resolveApiKey(target.apiKey));
+      return { models: await locked(() => scanModels(providerId, details)) };
     },
     model_sync_apply: async ({ providerId, modelId, donorId, replaceInPi }) => {
       // Сетевой fetch — без lock; чтение/запись файлов и kv — внутри locked.
-      const snapshot = await readModelsFile(filePath);
-      const entry = snapshot.providers[providerId];
-      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
-      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
-      const details = await discoverModelDetails(entry.baseUrl, resolveApiKey(entry.apiKey));
+      const target = await syncTarget(providerId);
+      const details = await discoverModelDetails(target.baseUrl, resolveApiKey(target.apiKey));
       return locked(async () => {
         const file = await readModelsFile(filePath);
         const provider = file.providers[providerId];
