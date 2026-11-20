@@ -12,6 +12,7 @@ const panel = app.navPanels[0]!;
 const model = {
   id: "m-sol", name: "Sol", reasoning: true, contextWindow: 500000,
   compat: { supportsStore: false }, samplingParams: { reasoning_effort: "high" },
+  apiKey: "leak", headers: { "X-M": "leak" },
   apiKeySet: true, headersSet: true, headerNames: ["X-M"],
 };
 const provider = {
@@ -78,5 +79,19 @@ describe("форма API-настроек модели", () => {
     expect((await screen.findByLabelText("API-ключ модели") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("Заголовки модели") as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByText(/заданы: X-M/)).toBeTruthy();
+  });
+  it("значения apiKey/headers из записи не попадают в разметку (регресс toDraft-эха)", async () => {
+    mount();
+    await openModelForm();
+    expect(document.body.textContent ?? "").not.toContain("leak");
+    for (const node of Array.from(document.querySelectorAll("input, textarea"))) {
+      expect((node as HTMLInputElement | HTMLTextAreaElement).value).not.toContain("leak");
+    }
+  });
+  it("подсказки видны у простых advanced-контролов (api, baseUrl)", async () => {
+    mount();
+    await openModelForm();
+    expect(screen.getByText("Пусто = тип API провайдера")).toBeTruthy();
+    expect(screen.getByText("Пусто = адрес провайдера")).toBeTruthy();
   });
 });

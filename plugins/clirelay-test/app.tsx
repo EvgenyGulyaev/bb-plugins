@@ -310,7 +310,6 @@ function ModelForm({ providerId, providerApi, model, rpc, report }: { providerId
             Поля для {effectiveApi}: {(COMPAT_FIELDS[effectiveApi as ApiType] ?? []).join(", ") || "нет документированных полей"}
           </span>
         ) : null}
-        {field.hint ? <span className="text-[10px] text-muted-foreground">{field.hint}</span> : null}
       </span>
     );
     return (
@@ -318,10 +317,14 @@ function ModelForm({ providerId, providerApi, model, rpc, report }: { providerId
         value={String(draft[field.key] ?? "")} onChange={(event) => set(field.key, event.target.value)} aria-label={field.label} />
     );
   };
+  // hint — у всех advanced-контролов (в т.ч. select/строковых): label сверху, подсказка под контролом.
   const row = (field: ModelFieldSpec) => (
-    <div key={field.key} className={field.type === "json" || field.type === "headers" ? "flex flex-col gap-1 text-sm" : "flex items-center justify-between gap-3 text-sm"}>
-      <span className="text-muted-foreground">{field.label}</span>
-      {control(field)}
+    <div key={field.key} className="flex flex-col gap-1 text-sm">
+      <div className={field.type === "json" || field.type === "headers" ? "flex flex-col gap-1" : "flex items-center justify-between gap-3"}>
+        <span className="text-muted-foreground">{field.label}</span>
+        {control(field)}
+      </div>
+      {field.hint ? <span className="text-[10px] text-muted-foreground">{field.hint}</span> : null}
     </div>
   );
   return (
