@@ -78,6 +78,13 @@ describe("validateSettings", () => {
       expect(() => validateSettings(bad)).toThrow(/settings\.json/);
     }
   });
+  it("проверяет только donor/new override, чужая битая запись не блокирует sync", () => {
+    const keys = { providerId: "p", donorId: "gpt-6.2-sol", modelId: "gpt-7.1-sol" };
+    const settings = { compaction: { modelOverrides: { "other/x": "broken", "p/gpt-6.2-sol": { keep: 1 } } } };
+    expect(() => validateSettings(settings, keys)).not.toThrow();
+    expect(() => validateSettings({ compaction: { modelOverrides: { "p/gpt-6.2-sol": "broken" } } }, keys)).toThrow(/settings\.json/);
+    expect(() => validateSettings({ compaction: { modelOverrides: { "p/gpt-7.1-sol": 1 } } }, keys)).toThrow(/settings\.json/);
+  });
 });
 
 describe("patchSettings — §6", () => {
@@ -140,6 +147,21 @@ describe("patchSettings — §6", () => {
       enabledModels: ["router-test/gpt-7.1-sol"],
       extra: [1, 2],
     });
+  });
+  it("new ставится на позицию первого donor: ['p/n','x','p/d'] → ['x','p/n']", () => {
+    const result = patchSettings({ enabledModels: ["p/n", "x", "p/d"] }, { providerId: "p", donorId: "d", modelId: "n" });
+    expect(result.changed).toBe(true);
+    expect(result.settings.enabledModels).toEqual(["x", "p/n"]);
+  });
+  it("exact donor отсутствует, есть new → enabledModels байт-в-байт", () => {
+    const result = patchSettings({ enabledModels: ["p/n", "x", "p/n"] }, { providerId: "p", donorId: "d", modelId: "n" });
+    expect(result.changed).toBe(false);
+    expect(result.settings.enabledModels).toEqual(["p/n", "x", "p/n"]);
+  });
+  it("нет ни donor, ни new → enabledModels байт-в-байт", () => {
+    const result = patchSettings({ enabledModels: ["p/n", "p/n"] }, { providerId: "p", donorId: "d", modelId: "n" });
+    expect(result.changed).toBe(false);
+    expect(result.settings.enabledModels).toEqual(["p/n", "p/n"]);
   });
   it("идемпотентен: повтор даёт тот же JSON", () => {
     const once = patchSettings({ enabledModels: ["router-test/gpt-6.2-sol"], compaction: { modelOverrides: { "router-test/gpt-6.2-sol": { a: 1 } } } }, keys);

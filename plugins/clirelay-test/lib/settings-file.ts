@@ -40,9 +40,11 @@ export async function readSettingsFile(path: string): Promise<SettingsFile> {
 
 /**
  * §6 preflight: структуры, которые мы собираемся патчить, обязаны быть того же
- * типа. Отклоняем заранее, чтобы не записать ни models, ни settings.
+ * типа. Отклоняем заранее, чтобы не записать ни models, ни settings. Если
+ * переданы `keys`, проверяем только donor/new override — чужая битая запись
+ * sync не блокирует.
  */
-export function validateSettings(settings: SettingsFile): void {
+export function validateSettings(settings: SettingsFile, keys?: SyncKeys): void {
   const { enabledModels, compaction } = settings;
   if (enabledModels !== undefined) {
     if (!Array.isArray(enabledModels)) throw new Error("settings.json: enabledModels должен быть массивом строк");
@@ -53,16 +55,17 @@ export function validateSettings(settings: SettingsFile): void {
     const overrides = compaction.modelOverrides;
     if (overrides !== undefined) {
       if (!plainObject(overrides)) throw new Error("settings.json: compaction.modelOverrides должен быть объектом");
-      for (const [key, value] of Object.entries(overrides)) {
-        if (!plainObject(value)) throw new Error(`settings.json: compaction.modelOverrides["${key}"] должен быть объектом`);
+      const touched = keys ? [settingsSourceKey(keys, "donor"), settingsSourceKey(keys, "new")] : Object.keys(overrides);
+      for (const key of touched) {
+        if (key in overrides && !plainObject(overrides[key])) throw new Error(`settings.json: compaction.modelOverrides["${key}"] должен быть объектом`);
       }
     }
   }
 }
 
 // ponytail: одна ротация .bak, как в models-file; апгрейд — нумерованные копии.
-export async function writeSettingsFile(path: string, data: SettingsFile): Promise<void> {
-  validateSettings(data);
+export async function writeSettingsFile(path: string, data: SettingsFile, keys?: SyncKeys): Promise<void> {
+  validateSettings(data, keys);
   // Не перезаписываем повреждённый файл: читаем прежнее состояние до записи.
   await readSettingsFile(path);
   await mkdir(dirname(path), { recursive: true });
@@ -90,22 +93,18 @@ export function patchSettings(settings: SettingsFile, keys: SyncKeys): PatchResu
 
   const models = next.enabledModels;
   if (Array.isArray(models)) {
-    let placed = false;
-    const result: string[] = [];
-    for (const item of models as string[]) {
-      if (item === donorKey || item === newKey) {
-        if (placed) {
-          changed = true;
-          continue; // лишние exact-дубликаты target убираем
-        }
-        placed = true;
-        result.push(newKey);
-        if (item !== newKey) changed = true;
-        continue;
+    const list = models as string[];
+    const at = list.indexOf(donorKey);
+    // §6: exact donor отсутствует → enabledModels не трогаем.
+    if (at >= 0) {
+      const before = list.slice(0, at).filter((item) => item !== newKey);
+      const after = list.slice(at + 1).filter((item) => item !== donorKey && item !== newKey);
+      const result = [...before, newKey, ...after];
+      if (JSON.stringify(result) !== JSON.stringify(list)) {
+        next.enabledModels = result;
+        changed = true;
       }
-      result.push(item);
     }
-    if (changed || result.length !== models.length) next.enabledModels = result;
   }
 
   const compaction = next.compaction;

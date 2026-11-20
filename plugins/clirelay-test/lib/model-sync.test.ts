@@ -63,7 +63,10 @@ describe("matchDonor — таблица §4.2", () => {
   });
   it("причина ambiguity различает tie и duplicate (§4.2): ручной выбор только при tie", () => {
     expect(matchDonor("gpt-7-sol", pool("gpt-6.2-sol", "gpt-v6.2.0-sol")).ambiguous).toBe("tie");
-    expect(matchDonor("gpt-7.1-sol", [...pool("gpt-6.2-sol"), { id: "gpt-6.2-sol", enabled: false }]).ambiguous).toBe("duplicate");
+    // duplicate оставлен маркером причины, но выбор не предлагается вовсе.
+    expect(matchDonor("gpt-7.1-sol", [...pool("gpt-6.2-sol"), { id: "gpt-6.2-sol", enabled: false }])).toEqual({
+      donor: null, candidates: [], ambiguous: "duplicate",
+    });
     expect(matchDonor("gpt-7.1-sol", pool("gpt-6.2-sol")).ambiguous).toBeUndefined();
   });
   it("ambiguous candidates включают все подходящие более старые версии", () => {
@@ -71,10 +74,18 @@ describe("matchDonor — таблица §4.2", () => {
     expect(result.donor).toBeNull();
     expect(result.candidates.map((entry) => entry.id)).toEqual(["gpt-6.2-sol", "gpt-v6.2.0-sol", "gpt-5.0-sol"]);
   });
-  it("дубликат id в pool не выбирается молча", () => {
+  it("дубликат id в pool не выбирается молча и кандидатов не даёт", () => {
     const result = matchDonor("gpt-7.1-sol", [...pool("gpt-6.2-sol"), { id: "gpt-6.2-sol", enabled: false }]);
-    expect(result.donor).toBeNull();
-    expect(result.candidates.map((entry) => entry.id)).toEqual(["gpt-6.2-sol"]);
+    expect(result).toEqual({ donor: null, candidates: [], ambiguous: "duplicate" });
+  });
+  it("дубликат id при версии >= новой → донора и кандидатов нет (§4.2.2)", () => {
+    // Значения у дубликата неизвестны, но версия уже не старше новой: upgrade не нужен.
+    const result = matchDonor("gpt-6.2-sol", [...pool("gpt-7.1-sol", "gpt-6.0-sol"), { id: "gpt-6.0-sol", enabled: false }]);
+    expect(result).toEqual({ donor: null, candidates: [] });
+  });
+  it("дубликат id при равной новой версии → донора и кандидатов нет", () => {
+    const result = matchDonor("gpt-6.2-sol", [...pool("gpt-6.2-sol"), { id: "gpt-6.2-sol", enabled: false }]);
+    expect(result).toEqual({ donor: null, candidates: [] });
   });
   it("disabled-донор матчится и помечен enabled:false", () => {
     const result = matchDonor("gpt-7.1-sol", [{ id: "gpt-6.2-sol", enabled: false }]);
