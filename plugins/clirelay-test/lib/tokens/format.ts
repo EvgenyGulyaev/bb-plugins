@@ -6,7 +6,7 @@ import { DEFAULT_TOKENS_DISPLAY, type BadgeFields, type ThreadFields } from "./d
 
 /** Бейджу хватает usage последнего вызова: части полей может не быть. */
 export type TurnTextInput = Pick<TurnUsage, "input" | "cached" | "output">
-  & Partial<Pick<TurnUsage, "reasoning" | "tokPerSec" | "model">>;
+  & Partial<Pick<TurnUsage, "reasoning" | "tokPerSec" | "model" | "total" | "durationMs" | "usageSource">>;
 export type ThreadTextInput = Pick<ThreadUsage, "total" | "turns" | "modelContextWindow">
   & Partial<Pick<ThreadUsage, "averageTokPerSec" | "model">>;
 
@@ -47,6 +47,17 @@ export function formatTurnText(
   usage: TurnTextInput,
   fields: BadgeFields = DEFAULT_TOKENS_DISPLAY.badge.fields,
 ): string {
+  if (usage.usageSource === "contextWindow") {
+    const segments: string[] = [];
+    if (fields.input || fields.output || fields.cache) {
+      segments.push(`контекст ${formatCompact(usage.total ?? 0)}`);
+    }
+    if (fields.speed && usage.durationMs != null && usage.durationMs > 0) {
+      segments.push(formatDuration(usage.durationMs));
+    }
+    if (fields.model && usage.model) segments.push(usage.model);
+    return segments.join(" · ");
+  }
   const segments: string[] = [];
   const arrows = [
     ...(fields.input ? [`↑${formatCompact(usage.input)}`] : []),
@@ -66,6 +77,16 @@ export function formatTurnTitle(usage: TurnUsage): string {
     `Последний вызов: ${usage.durationMs == null ? "недоступна" : formatDuration(usage.durationMs)}`,
     ...(usage.turnDurationMs === undefined ? [] : [`Весь ход: ${formatDuration(usage.turnDurationMs)}`]),
   ].join(" · ");
+  if (usage.usageSource === "contextWindow") {
+    return [
+      ...(usage.model ? [`Модель: ${usage.model}`] : []),
+      `Контекст (использовано): ${usage.total}`,
+      ...(usage.modelContextWindow != null ? [`Окно контекста: ${usage.modelContextWindow}`] : []),
+      "Разбивка вход/выход/кеш: не сообщается провайдером",
+      durations,
+      "Эффективная скорость: недоступна — провайдер не сообщает outputTokens",
+    ].join("\n");
+  }
   return [
     ...(usage.model ? [`Модель: ${usage.model}`] : []),
     `Вход: ${usage.input}`,

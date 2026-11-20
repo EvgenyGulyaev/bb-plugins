@@ -1,9 +1,54 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { contract, resetHostContract, preferencesSchema, usageResponseSchema, type Overview } from "./contract.ts";
+import { isAntigravityProvider } from "./antigravity-usage.ts";
+import { contract, hostContract, preferencesSchema, usageResponseSchema, type Overview, type Usage } from "./contract.ts";
 import { orderedProviders } from "./limits.ts";
 
+const ANTIGRAVITY_CACHE_TTL_MS = 60_000;
+
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error("Aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error("Aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      error => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+  });
+}
+
 export default function plugin(bb: BbPluginApi) {
-  const host = bb.hosts.experimental_client({ contract: resetHostContract });
+  const host = bb.hosts.experimental_client({ contract: hostContract });
+  const antigravityCache = new Map<string, { fetchedAt: number; usage: Usage }>();
+  const antigravityInflight = new Map<string, Promise<Usage>>();
+
+  async function readAntigravity(hostId: string, force: boolean, signal?: AbortSignal): Promise<Usage> {
+    const cached = antigravityCache.get(hostId);
+    if (!force && cached && Date.now() - cached.fetchedAt < ANTIGRAVITY_CACHE_TTL_MS) {
+      return cached.usage;
+    }
+    let pending = !force ? antigravityInflight.get(hostId) : undefined;
+    if (!pending) {
+      const request = host.call("readAntigravityUsage", {}, { hostId, timeoutMs: 30_000 })
+        .then(usage => {
+          if (usage.status !== "error") antigravityCache.set(hostId, { fetchedAt: Date.now(), usage });
+          else antigravityCache.delete(hostId);
+          return usage;
+        })
+        .catch((): Usage => {
+          antigravityCache.delete(hostId);
+          return { status: "error", message: "Не удалось получить лимиты Google Antigravity." };
+        })
+        .finally(() => {
+          if (antigravityInflight.get(hostId) === request) antigravityInflight.delete(hostId);
+        });
+      antigravityInflight.set(hostId, request);
+      pending = request;
+    }
+    return raceAbort(pending, signal);
+  }
+
   async function resetTarget(input: { hostId: string | null; accountId: string }, signal?: AbortSignal) {
     const hostId = input.hostId ?? (await bb.sdk.system.config()).primaryHostId;
     if (!hostId) throw new Error("Выберите компьютер с установленным Codex CLI.");
@@ -19,25 +64,41 @@ export default function plugin(bb: BbPluginApi) {
   }
   async function read(hostId: string | null, force = false, signal?: AbortSignal): Promise<Overview> {
     const selectedHost = hostId ?? (await bb.sdk.system.config()).primaryHostId;
-    const [saved, roster] = await Promise.all([
+    const [saved, usageRoster, allProviders] = await Promise.all([
       preferences(),
       bb.sdk.providers.list(selectedHost ? { capability: "usage", hostId: selectedHost } : { capability: "usage" }),
+      bb.sdk.providers.list(selectedHost ? { hostId: selectedHost } : {}),
     ]);
+    const nativeUsageIds = new Set(usageRoster.map(provider => provider.id));
+    const antigravityProviders = allProviders.filter(provider => !nativeUsageIds.has(provider.id) && isAntigravityProvider(provider));
+    const antigravityIds = new Set(antigravityProviders.map(provider => provider.id));
+    const roster = [...usageRoster, ...antigravityProviders];
+
     const input = { force: false, machineIds: selectedHost ? [selectedHost] : null, providerIds: [] as string[], maxAgeMs: 60_000 };
     const getUsage = (args: typeof input) => bb.sdk.plugins.callRpc({
       pluginId: "bb--provider-usage", method: "getUsage", input: args, outputSchema: usageResponseSchema, signal,
     });
     let machine: Awaited<ReturnType<typeof getUsage>>["machines"][number] | undefined;
+    let antigravityUsage: Usage | null = null;
     let error: string | null = null;
     try {
       const inventory = await getUsage(input);
       machine = selectedHost ? inventory.machines.find(m => m.id === selectedHost) : inventory.machines.find(m => m.status === "connected");
-      const enabled = roster.filter(provider => saved.find(p => p.id === provider.id)?.enabled
+      const enabledNative = usageRoster.filter(provider => saved.find(p => p.id === provider.id)?.enabled
         ?? machine?.providers.some(p => p.providerId === provider.id && p.usage?.status !== "not_installed") ?? false);
-      if (machine?.status === "connected" && enabled.length) {
+      const enabledAntigravity = antigravityProviders.filter(provider => saved.find(p => p.id === provider.id)?.enabled ?? true);
+      if (machine?.status === "connected") {
         const machineId = machine.id;
-        const loaded = await getUsage({ ...input, machineIds: [machineId], providerIds: enabled.map(p => p.id), force });
-        machine = loaded.machines.find(m => m.id === machineId);
+        const [loaded, loadedAntigravity] = await Promise.all([
+          enabledNative.length
+            ? getUsage({ ...input, machineIds: [machineId], providerIds: enabledNative.map(p => p.id), force })
+            : Promise.resolve(null),
+          enabledAntigravity.length
+            ? readAntigravity(machineId, force, signal)
+            : Promise.resolve(null),
+        ]);
+        if (loaded) machine = loaded.machines.find(m => m.id === machineId);
+        antigravityUsage = loadedAntigravity;
       }
       error = !machine ? "Компьютер с данными лимитов не найден."
         : machine.status !== "connected" ? "Компьютер отключён. Данные не обновлены."
@@ -46,7 +107,10 @@ export default function plugin(bb: BbPluginApi) {
       error = "Не удалось прочитать лимиты. Проверьте, включён ли встроенный Provider Usage.";
     }
     const providers = roster.map(provider => {
-      const accounts = machine?.providers.filter(p => p.providerId === provider.id) ?? [];
+      const isCustomAntigravity = antigravityIds.has(provider.id);
+      const accounts = isCustomAntigravity
+        ? (antigravityUsage ? [{ id: `${provider.id}-account`, accountLabel: null, usage: antigravityUsage }] : [])
+        : (machine?.providers.filter(p => p.providerId === provider.id) ?? []);
       return {
         id: provider.id, displayName: provider.displayName, logoUrl: provider.logoUrl ?? null, icon: provider.icon ?? null,
         strings: { iconTint: provider.strings?.iconTint ?? null }, accounts,
@@ -83,6 +147,9 @@ export default function plugin(bb: BbPluginApi) {
     },
   });
   for (const event of ["thread.idle", "thread.failed"] as const) {
-    bb.events.on(event, () => { bb.rpc.experimental_invalidate(["usage-rings"]); });
+    bb.events.on(event, () => {
+      antigravityCache.clear();
+      bb.rpc.experimental_invalidate(["usage-rings"]);
+    });
   }
 }

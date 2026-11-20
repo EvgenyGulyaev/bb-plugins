@@ -1,5 +1,7 @@
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { createAntigravityUsageLookup, type AntigravityUsageLookup } from "./antigravity-transcript";
 import {
+  contextWindowUsageEventRowSchema,
   itemEventRowSchema,
   modelRequestRowSchema,
   threadTag,
@@ -8,6 +10,7 @@ import {
   turnEventRowSchema,
   turnUsageSchema,
   usageEventRowSchema,
+  type ContextWindowUsageEventRow,
   type ItemEventRow,
   type TurnUsage,
   type UsageEventRow,
@@ -19,9 +22,15 @@ import {
   normalizeTokensDisplay,
   type TokensDisplay,
 } from "./display";
-import { makeTurnUsage, retainTurns, summarizeTurns } from "./usage";
+import { makeContextWindowTurnUsage, makeTurnUsage, retainTurns, summarizeTurns } from "./usage";
 
-const EVENT_TYPES = ["thread/tokenUsage/updated", "turn/started", "turn/completed", "client/turn/requested"] as const;
+const EVENT_TYPES = [
+  "thread/tokenUsage/updated",
+  "thread/contextWindowUsage/updated",
+  "turn/started",
+  "turn/completed",
+  "client/turn/requested",
+] as const;
 /** Запрос модели хода: всегда отдельным list, чтобы не зависеть от границ страницы. */
 const MODEL_REQUEST_TYPES = ["client/turn/requested"] as const;
 const ITEM_EVENT_TYPES = ["item/started", "item/completed"] as const;
@@ -205,6 +214,56 @@ async function saveUsage(
   await writeSummary(bb, threadId, kept, event.data.tokenUsage.modelContextWindow);
 }
 
+async function saveContextWindowUsage(
+  bb: BbPluginApi,
+  event: ContextWindowUsageEventRow,
+  windowStartedAt: number | null | undefined,
+  turnStartedAt: number | null,
+  endedAt: number,
+  execution: ExecutionInfo,
+  antigravityLookup: AntigravityUsageLookup,
+): Promise<boolean> {
+  const { threadId, turnId } = event;
+  const existing = turnUsageSchema.safeParse(await bb.storage.kv.get<unknown>(turnKey(threadId, turnId)));
+  if (existing.success && existing.data.usageSource !== "contextWindow") return false;
+
+  const providerThreadId = event.data.providerThreadId;
+  const enriched = providerThreadId
+    ? await antigravityLookup({
+      providerThreadId,
+      usedTokens: event.data.contextWindowUsage.usedTokens,
+      eventCreatedAt: event.createdAt,
+      modelContextWindow: event.data.contextWindowUsage.modelContextWindow,
+    })
+    : null;
+
+  const record = enriched
+    ? makeTurnUsage({
+      threadId,
+      turnId,
+      tokenUsage: enriched,
+      windowStartedAt,
+      endedAt,
+      turnStartedAt,
+      ...execution,
+      at: event.createdAt,
+    })
+    : makeContextWindowTurnUsage({
+      threadId,
+      turnId,
+      contextWindowUsage: event.data.contextWindowUsage,
+      windowStartedAt,
+      endedAt,
+      turnStartedAt,
+      ...execution,
+      at: event.createdAt,
+    });
+  await bb.storage.kv.set(turnKey(threadId, turnId), record);
+  const kept = await pruneThread(bb.storage.kv, threadId, Date.now());
+  await writeSummary(bb, threadId, kept, event.data.contextWindowUsage.modelContextWindow);
+  return true;
+}
+
 async function pruneAll(bb: BbPluginApi): Promise<void> {
   const now = Date.now();
   const kept = new Map<string, TurnUsage[]>();
@@ -292,7 +351,13 @@ function isToolItem(row: ItemEventRow): boolean {
   return row.itemKind !== undefined && !MODEL_ITEM_KINDS.has(row.itemKind);
 }
 
-async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: number, executionLookup: ExecutionLookup): Promise<void> {
+async function syncThread(
+  bb: BbPluginApi,
+  threadId: string,
+  signalSequence: number,
+  executionLookup: ExecutionLookup,
+  antigravityLookup: AntigravityUsageLookup,
+): Promise<void> {
   let afterSeq = await bb.storage.kv.get<number>(sequenceKey(threadId)) ?? 0;
   if (afterSeq >= signalSequence) return;
   let changed = false;
@@ -312,6 +377,7 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
 
     let maxSeq = afterSeq;
     const usageByTurn = new Map<string, UsageEventRow>();
+    const contextUsageByTurn = new Map<string, ContextWindowUsageEventRow>();
     const started = new Map<string, number>();
     const completed = new Map<string, number>();
     for (const row of rows) {
@@ -321,21 +387,36 @@ async function syncThread(bb: BbPluginApi, threadId: string, signalSequence: num
         if (parsed.success) usageByTurn.set(parsed.data.turnId, parsed.data);
         continue;
       }
+      if (row.type === "thread/contextWindowUsage/updated") {
+        const parsed = contextWindowUsageEventRowSchema.safeParse(row);
+        if (parsed.success && parsed.data.data.contextWindowUsage.estimated !== true) {
+          contextUsageByTurn.set(parsed.data.turnId, parsed.data);
+        }
+        continue;
+      }
       const point = turnEventRowSchema.safeParse(row);
       if (!point.success) continue;
       if (point.data.type === "turn/started") started.set(point.data.turnId, point.data.createdAt);
       else completed.set(point.data.turnId, point.data.createdAt);
     }
 
-    const usages = [...usageByTurn.values()].sort((a, b) => a.seq - b.seq);
+    const usages = [
+      ...usageByTurn.values(),
+      ...[...contextUsageByTurn.values()].filter((item) => !usageByTurn.has(item.turnId)),
+    ].sort((a, b) => a.seq - b.seq);
     for (const usage of usages) {
       const turnStartedAt = started.get(usage.turnId) ?? await findStartedAt(bb, threadId, usage.seq, usage.turnId);
       const endedAt = completed.get(usage.turnId) ?? usage.createdAt;
       const toolWindow = await findToolWindow(bb, threadId, usage.seq, usage.turnId);
       const windowStartedAt = toolWindow.known ? toolWindow.startedAt ?? turnStartedAt : undefined;
       const execution = await executionLookup(threadId, { seq: usage.seq, startedAt: turnStartedAt });
-      await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt, execution);
-      changed = true;
+      if (usage.type === "thread/tokenUsage/updated") {
+        await saveUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt, execution);
+        changed = true;
+      } else {
+        const saved = await saveContextWindowUsage(bb, usage, windowStartedAt, turnStartedAt, endedAt, execution, antigravityLookup);
+        if (saved) changed = true;
+      }
     }
     const nextSeq = rows.length < EVENTS_PAGE_LIMIT ? Math.max(signalSequence, maxSeq) : maxSeq;
     await bb.storage.kv.set(sequenceKey(threadId), nextSeq);
@@ -396,11 +477,12 @@ export async function registerTokens(bb: BbPluginApi): Promise<void> {
 
   const pending = new Map<string, Promise<void>>();
   const executionLookup = createExecutionLookup(bb);
+  const antigravityLookup = createAntigravityUsageLookup();
   bb.events.on("experimental_thread.events", async ({ thread, sequence }) => {
     const previous = pending.get(thread.id) ?? Promise.resolve();
     const current = previous
       .catch(() => {})
-      .then(() => syncThread(bb, thread.id, sequence, executionLookup))
+      .then(() => syncThread(bb, thread.id, sequence, executionLookup, antigravityLookup))
       .catch((cause: unknown) => {
         bb.log.warn(`tokens sync failed: ${cause instanceof Error ? cause.message : String(cause)}`);
       });
