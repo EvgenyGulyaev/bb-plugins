@@ -173,6 +173,14 @@
 }
 
 .api-tokens-context {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
   font-size: 11px;
   line-height: 1.3;
+}
+
+.api-tokens-context-solo {
+  padding-left: 12px;
+  transform: translateY(6px);
 }

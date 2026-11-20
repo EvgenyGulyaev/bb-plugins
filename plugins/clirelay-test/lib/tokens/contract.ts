@@ -20,6 +20,12 @@ export const tokenUsageSchema = z.object({
   promptCacheTtlMs: tokenCount.optional(),
 });
 
+export const contextWindowUsageSchema = z.object({
+  usedTokens: tokenCount,
+  modelContextWindow: tokenCount.nullable(),
+  estimated: z.boolean().optional(),
+});
+
 const eventScopeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("thread") }),
   z.object({ kind: z.literal("turn"), turnId: z.string().min(1) }),
@@ -46,6 +52,17 @@ export const usageEventRowSchema = z.object({
   type: z.literal("thread/tokenUsage/updated"),
   ...eventBaseShape,
   data: z.object({ tokenUsage: tokenUsageSchema }),
+})
+  .refine((row) => scopeTurnId(row) !== undefined, requireTurnScope)
+  .transform((row) => ({ ...row, turnId: scopeTurnId(row) as string }));
+
+export const contextWindowUsageEventRowSchema = z.object({
+  type: z.literal("thread/contextWindowUsage/updated"),
+  ...eventBaseShape,
+  data: z.object({
+    providerThreadId: z.string().min(1).optional(),
+    contextWindowUsage: contextWindowUsageSchema,
+  }),
 })
   .refine((row) => scopeTurnId(row) !== undefined, requireTurnScope)
   .transform((row) => ({ ...row, turnId: scopeTurnId(row) as string }));
@@ -93,6 +110,8 @@ export const modelRequestRowSchema = z.object({
 export const turnUsageSchema = z.object({
   threadId: z.string().min(1),
   turnId: z.string().min(1),
+  /** Источник usage: полный `thread/tokenUsage/updated` или только `thread/contextWindowUsage/updated` (например, ACP/Gemini). */
+  usageSource: z.enum(["tokenUsage", "contextWindow"]).optional(),
   input: tokenCount,
   cached: tokenCount,
   cacheRead: tokenCount.optional(),
@@ -100,6 +119,7 @@ export const turnUsageSchema = z.object({
   output: tokenCount,
   reasoning: tokenCount,
   total: tokenCount,
+  modelContextWindow: tokenCount.nullable().optional(),
   /** Окно последнего вызова модели; отсутствует, когда окно неизвестно (старые записи хранят null). */
   durationMs: z.union([z.number().positive(), z.null()]).optional(),
   /** Весь ход: turn/completed − turn/started. */
@@ -121,7 +141,9 @@ export const threadUsageSchema = z.object({
 });
 
 export type TokenUsage = z.infer<typeof tokenUsageSchema>;
+export type ContextWindowUsage = z.infer<typeof contextWindowUsageSchema>;
 export type UsageEventRow = z.infer<typeof usageEventRowSchema>;
+export type ContextWindowUsageEventRow = z.infer<typeof contextWindowUsageEventRowSchema>;
 export type TurnEventRow = z.infer<typeof turnEventRowSchema>;
 export type ItemEventRow = z.infer<typeof itemEventRowSchema>;
 export type ModelRequestRow = z.infer<typeof modelRequestRowSchema>;

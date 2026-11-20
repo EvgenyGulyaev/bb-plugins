@@ -202,7 +202,7 @@ describe("события → kv → RPC", () => {
     expect(rows).toHaveLength(249);
     const { host, calls } = await load(rows);
     await emit(host, 249);
-    const pageCalls = calls.filter((call) => call.types?.length === 4);
+    const pageCalls = calls.filter((call) => call.types?.length === 5);
     expect(pageCalls.map((call) => [call.afterSeq, call.limit])).toEqual([
       ["0", "100"],
       ["100", "100"],
@@ -315,7 +315,7 @@ describe("события → kv → RPC", () => {
     await Promise.all([emit(host, 3), emit(host, 3)]);
     expect(await host.bb.storage.kv.list(`token-meter:turn:${THREAD}:`)).toEqual([turnKey()]);
     expect(await host.bb.storage.kv.get(`token-meter:seq:${THREAD}`)).toBe(3);
-    const usagePages = calls.filter((call) => call.types?.length === 4);
+    const usagePages = calls.filter((call) => call.types?.length === 5);
     expect(usagePages).toHaveLength(1);
     expect(host.harness.inspection.experimental_rpcInvalidations).toHaveLength(1);
   });

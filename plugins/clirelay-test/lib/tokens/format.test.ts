@@ -105,4 +105,20 @@ describe("title бейджа", () => {
     const { model: _model, ...bare } = usage;
     expect(formatTurnTitle(bare).startsWith("Вход: ")).toBe(true);
   });
+
+  it("форматирует contextWindow-only usage (ACP/Gemini)", () => {
+    expect(formatTurnText({
+      usageSource: "contextWindow",
+      input: 0, cached: 0, output: 0, total: 15_813, durationMs: 4_497,
+    })).toBe("контекст 15.8k · 4.5 с");
+    const title = formatTurnTitle({
+      threadId: "thr_1", turnId: "turn-1", usageSource: "contextWindow",
+      input: 0, cached: 0, output: 0, reasoning: 0, total: 15_813,
+      modelContextWindow: 1_048_576, durationMs: 4_500, turnDurationMs: 4_500,
+      model: "gemini-4-neon", providerId: "acp-antigravity-acp", at: 1_000,
+    });
+    expect(title).toContain("Контекст (использовано): 15813");
+    expect(title).toContain("Окно контекста: 1048576");
+    expect(title).toContain("Эффективная скорость: недоступна — провайдер не сообщает outputTokens");
+  });
 });
