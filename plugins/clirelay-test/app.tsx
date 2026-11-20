@@ -28,12 +28,15 @@ import {
 } from "./lib/rings";
 import { getRailTarget, mountRingsRail, subscribeRail } from "./lib/rings-rail";
 import { RelayRings } from "./components/relay-rings";
+import { TokensContextSummary, TokensMessageBadge, useTokensContextVisible } from "./components/tokens-slots";
+import { TokensSettingsTab } from "./components/tokens-settings-tab";
 import "./app.css";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 
 type Rpc = ReturnType<typeof useRpc<typeof rpcContract>>;
 type Report = (cause: unknown) => void;
@@ -149,17 +152,6 @@ function RingsToolbar() {
           onChange={(event) => control.setPerRow(Number(event.target.value))} />
       </label>
     </div>
-  );
-}
-
-/** Тумблер вкл/выкл модели (role=switch, без новых зависимостей). */
-function Switch({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
-  return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label}
-      onClick={(event) => { event.stopPropagation(); onChange(!checked); }}
-      className={`relative h-4.5 w-8 shrink-0 rounded-full transition-colors ${checked ? "bg-emerald-500" : "bg-muted-foreground/30"}`}>
-      <span className={`absolute top-0.5 left-0.5 size-3.5 rounded-full bg-background shadow-sm transition-transform ${checked ? "translate-x-3.5" : ""}`} />
-    </button>
   );
 }
 
@@ -780,7 +772,7 @@ function ApiModelsPage() {
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<{ editing: ProviderView | null } | null>(null);
-  const [tab, setTab] = useState<"accounts" | "connect">("accounts");
+  const [tab, setTab] = useState<"accounts" | "connect" | "settings">("accounts");
   const report = useCallback((cause: unknown) => { const text = message(cause); setError(text); toast.error(text); }, []);
   const refetch = useCallback(() => {
     rpc.call("providers_list").then(({ providers }) => { setProviders(providers as ProviderView[]); setError(null); }, report);
@@ -807,9 +799,13 @@ function ApiModelsPage() {
             className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "connect" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
             <Icon name="Workflow" className="size-4" />Подключение
           </button>
+          <button type="button" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition ${tab === "settings" ? "bg-background font-medium shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+            <Icon name="Settings" className="size-4" />Настройки
+          </button>
         </div>
         {error ? <p className="mb-4 text-sm text-destructive" role="alert">{error}</p> : null}
-        {providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
+        {tab === "settings" ? <TokensSettingsTab /> : providers === null ? <p className="text-sm text-muted-foreground">Загрузка…</p> : tab === "accounts" ? (
           <AccountsTab providers={providers} rpc={rpc} report={report} />
         ) : (
           <div className="flex flex-col gap-3">
@@ -850,5 +846,9 @@ function RingsOverlay() {
 export default definePluginApp((app) => {
   app.contentScripts.register({ id: "relay-rings-anchor", mount: ({ pluginId }) => mountRingsRail(document, pluginId) });
   app.slots.navPanel({ id: "api-models", title: "Api модели", icon: "Workflow", path: "api-models", component: ApiModelsPage });
+  app.slots.experimental_messageMetadata({ id: "tokens", placement: "actionRow", component: TokensMessageBadge });
+  app.slots.experimental_threadContextSegment({
+    id: "tokens", title: "Токены", group: "tokens", summary: TokensContextSummary, useVisible: useTokensContextVisible,
+  });
   app.slots.experimental_appOverlay({ id: "relay-rings", component: RingsOverlay });
 });

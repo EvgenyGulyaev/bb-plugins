@@ -156,3 +156,23 @@
 @media (pointer: coarse) {
   .relay-ring-button { min-width: 44px; min-height: 44px; }
 }
+
+/* Бейдж токенов у ответа и сегмент строки треда. Свои классы api-tokens-* —
+   с прежним плагином token-meter не пересекаемся. */
+.api-tokens-badge,
+.api-tokens-context {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.api-tokens-badge {
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.8;
+}
+
+.api-tokens-context {
+  font-size: 11px;
+  line-height: 1.3;
+}
