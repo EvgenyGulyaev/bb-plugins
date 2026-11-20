@@ -1,4 +1,4 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import {
   itemEventRowSchema,
   modelRequestRowSchema,
@@ -361,7 +361,7 @@ export async function registerTokens(bb: BbPluginApi): Promise<void> {
     return normalizeTokensDisplay(await bb.storage.kv.get(TOKENS_DISPLAY_KV_KEY));
   }
 
-  bb.rpc.register(tokensRpcContract, {
+  bb.rpc.register(defineRpcContract(tokensRpcContract), {
     turn_usage: async ({ keys }) => Object.fromEntries(await Promise.all(keys.map(async (key) => {
       const separator = key.indexOf(":");
       if (separator <= 0 || separator === key.length - 1) return [key, null] as const;
