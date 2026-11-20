@@ -1,4 +1,3 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { TOKENS_DISPLAY_TAG, tokensDisplayPatchSchema, tokensDisplaySchema } from "./display";
 
@@ -139,7 +138,8 @@ function keyThreadTag(key: string): readonly string[] {
   return separator > 0 ? [threadTag(key.slice(0, separator))] : [];
 }
 
-export const tokensRpcContract = defineRpcContract({
+// Frontend-safe runtime contract: defineRpcContract вызывается только в server.ts.
+export const tokensRpcContract = {
   turn_usage: {
     input: z.object({ keys: z.array(z.string().min(3)).max(500) }).strict(),
     output: z.record(z.string(), turnUsageSchema.nullable()),
@@ -159,4 +159,4 @@ export const tokensRpcContract = defineRpcContract({
     input: tokensDisplayPatchSchema,
     output: tokensDisplaySchema,
   },
-});
+};
