@@ -7,7 +7,7 @@ import {
   useBbContext, experimental_useSidebarThreads,
 } from "@get-bb/plugin-sdk/app";
 import { contract, type Account, type Provider } from "./contract";
-import { remainingPercent, selectWindow, type UsageWindow } from "./limits";
+import { groupWindows, remainingPercent, selectWindow, type UsageWindow } from "./limits";
 import { getRailTarget, mountRail, subscribeRail } from "./rail";
 import { ResetButton, ResetsDialog } from "./resets";
 import "./app.css";
@@ -65,7 +65,7 @@ function ProviderRing({ provider, error, hostId, resetOpen, onShowResets }: {
   const percent = window && !error ? remainingPercent(window) : null;
   const refresh = experimental_useRpcMutation({ contract, method: "refresh" });
   const refreshError = refresh.error ? "Не удалось обновить лимиты." : null;
-  const title = `${provider.displayName}: ${percent === null ? "лимит недоступен" : `${windowLabel(window!)} — осталось ${percent}%`}`;
+  const title = `${provider.displayName}: ${percent === null ? "лимит недоступен" : `${window!.group ? `${window!.group} · ` : ""}${windowLabel(window!)} — осталось ${percent}%`}`;
   const tone = percent === null ? "unknown" : percent <= 5 ? "critical" : percent <= 20 ? "warning" : "normal";
   const resetTarget = account ? { hostId, accountId: account.id } : null;
   return <Popover.Root>
@@ -95,15 +95,33 @@ function ProviderRing({ provider, error, hostId, resetOpen, onShowResets }: {
         </div>
         {(error || refreshError) && <p className="usage-rings-notice" role="status">{refreshError ?? error}</p>}
         {provider.accounts.length === 0 && <p className="usage-rings-muted">Лимиты пока не получены.</p>}
-        {provider.accounts.map(a => <div key={a.id} className="usage-rings-account">
-          <div className="usage-rings-account-label">{a.accountLabel ?? (a.usage?.status === "ok" ? a.usage.accountEmail : null) ?? provider.displayName}
-            {a.usage?.status === "ok" && a.usage.planLabel && <span>{a.usage.planLabel}</span>}</div>
-          {a.usage?.status === "ok" && a.usage.windows.length > 0 ? a.usage.windows.map((w, index) => <div className="usage-rings-window" key={`${w.label}-${index}`}>
-            <div><span>{windowLabel(w)}</span><strong>{remainingPercent(w)}% осталось</strong></div>
-            <meter min="0" max="100" value={remainingPercent(w)} aria-label={`${windowLabel(w)}: осталось ${remainingPercent(w)}%`} />
-            <p className="usage-rings-muted" title={w.resetsAt ? new Date(w.resetsAt).toLocaleString() : undefined}>{resetLabel(w.resetsAt)}</p>
-          </div>) : <p className="usage-rings-muted">{accountMessage(a)}</p>}
-        </div>)}
+        {provider.accounts.map(a => {
+          const accountHeading = a.accountLabel ?? (a.usage?.status === "ok" ? a.usage.accountEmail : null);
+          const planLabel = a.usage?.status === "ok" ? a.usage.planLabel : null;
+          const groups = a.usage?.status === "ok" ? groupWindows(a.usage.windows) : [];
+          const hasNamedGroups = groups.some(g => g.name !== null);
+          const showAccountHeader = Boolean(accountHeading || planLabel || provider.accounts.length > 1 || !hasNamedGroups);
+          const renderWindow = (w: UsageWindow, index: number) => {
+            const left = remainingPercent(w);
+            const showReset = w.resetsAt !== null || !w.group || left < 100;
+            return <div className="usage-rings-window" key={`${w.group ?? ""}-${w.label}-${index}`}>
+              <div><span>{windowLabel(w)}</span><strong>{left}% осталось</strong></div>
+              <meter min="0" max="100" value={left} aria-label={`${w.group ? `${w.group} · ` : ""}${windowLabel(w)}: осталось ${left}%`} />
+              {showReset && <p className="usage-rings-muted" title={w.resetsAt ? new Date(w.resetsAt).toLocaleString() : undefined}>{resetLabel(w.resetsAt)}</p>}
+            </div>;
+          };
+          return <div key={a.id} className="usage-rings-account">
+            {showAccountHeader && <div className="usage-rings-account-label">{accountHeading ?? provider.displayName}
+              {planLabel && <span>{planLabel}</span>}</div>}
+            {a.usage?.status === "ok" && groups.length > 0 ? groups.map((group, groupIndex) => group.name
+              ? <div key={`${group.name}-${groupIndex}`} className="usage-rings-group">
+                  <div className="usage-rings-group-title">{group.name}</div>
+                  {group.windows.map(renderWindow)}
+                </div>
+              : <div key={`ungrouped-${groupIndex}`}>{group.windows.map(renderWindow)}</div>
+            ) : <p className="usage-rings-muted">{accountMessage(a)}</p>}
+          </div>;
+        })}
       </Popover.Content>
     </Popover.Portal>
   </Popover.Root>;

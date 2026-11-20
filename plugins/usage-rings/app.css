@@ -7,7 +7,7 @@
 .usage-ring-progress { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); fill: none; stroke-width: 2; pointer-events: none; }
 .usage-ring-track { stroke: var(--sidebar-border); }
 .usage-ring-fill { stroke: currentColor; stroke-linecap: round; }
-.usage-ring-logo { width: 14px; height: 14px; color: var(--sidebar-foreground); pointer-events: none; }
+.usage-ring-logo { width: 12px; height: 12px; color: var(--sidebar-foreground); pointer-events: none; }
 .usage-ring-percent { font-size: 10px; line-height: 12px; font-variant-numeric: tabular-nums; }
 .usage-ring-button[data-tone="warning"] { color: var(--warning-text, var(--warning)); }
 .usage-ring-button[data-tone="critical"] { color: var(--destructive-text, var(--destructive)); }
@@ -24,6 +24,9 @@
 .usage-rings-account { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .usage-rings-account-label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; overflow-wrap: anywhere; }
 .usage-rings-account-label > span { color: var(--muted-foreground); }
+.usage-rings-group + .usage-rings-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.usage-rings-group-title { font-size: 13px; font-weight: 600; color: var(--popover-foreground); }
+.usage-rings-group .usage-rings-window { margin-top: 10px; }
 .usage-rings-window { margin-top: 14px; }
 .usage-rings-window > div { display: flex; justify-content: space-between; gap: 10px; }
 .usage-rings-window meter { display: block; width: 100%; height: 6px; margin-top: 7px; appearance: none; border: 0; background: var(--border); border-radius: 4px; }
