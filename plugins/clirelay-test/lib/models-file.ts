@@ -65,12 +65,30 @@ function modelsArray(entry: ProviderEntry): ModelEntry[] {
 
 export function upsertProvider(
   file: ModelsFile,
-  input: { id: string; name?: string; baseUrl: string; api: string; apiKey?: string },
+  input: {
+    id: string; name?: string; baseUrl: string; api: string; apiKey?: string;
+    authHeader?: boolean | null; oauth?: string | null;
+    compat?: Record<string, unknown> | null; headers?: Record<string, string> | null;
+  },
 ): void {
   const next: ProviderEntry = { ...(file.providers[input.id] ?? {}), baseUrl: input.baseUrl, api: input.api };
   if (input.name) next.name = input.name;
   else delete next.name;
   if (input.apiKey) next.apiKey = input.apiKey; // пусто → прежний ключ сохраняется
+  for (const key of ["authHeader", "oauth", "compat"] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (value === null) delete next[key];
+    else next[key] = value;
+  }
+  if (input.headers !== undefined) {
+    if (input.headers === null) delete next.headers;
+    else {
+      const merged = mergeHeaders(next.headers, input.headers);
+      if (merged) next.headers = merged;
+      else delete next.headers;
+    }
+  }
   file.providers[input.id] = next;
 }
 
@@ -116,33 +134,81 @@ export function hasModel(file: ModelsFile, providerId: string, modelId: string):
   return modelsArray(provider(file, providerId)).some((model) => model.id === modelId);
 }
 
+// Мерж заголовков по ключам: "" удаляет ключ; пустой результат → null (поле удаляется).
+export function mergeHeaders(current: unknown, patch: Record<string, string>): Record<string, unknown> | null {
+  const base: Record<string, unknown> =
+    current && typeof current === "object" && !Array.isArray(current) ? { ...(current as Record<string, unknown>) } : {};
+  for (const [name, value] of Object.entries(patch)) {
+    if (value === "") delete base[name];
+    else base[name] = value;
+  }
+  return Object.keys(base).length ? base : null;
+}
+
+// Единое применение патча: enabled (updateModel) и disabled (server.ts) — один код.
+export function applyModelPatch(model: ModelEntry, patch: ModelPatch): void {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (value === null) { delete model[key]; continue; }
+    if (key === "apiKey") {
+      if (value === "") delete model.apiKey;
+      else model.apiKey = value;
+      continue;
+    }
+    if (key === "headers") {
+      const next = mergeHeaders(model.headers, value as Record<string, string>);
+      if (next) model.headers = next;
+      else delete model.headers;
+      continue;
+    }
+    model[key] = value;
+  }
+}
+
+export type ModelView = ModelEntry & { apiKeySet: boolean; headersSet: boolean; headerNames: string[] };
+
+// RPC-граница: apiKey и значения headers не отдаются никогда; только флаги и имена.
+export function modelView(entry: ModelEntry): ModelView {
+  const { apiKey, headers, ...rest } = entry;
+  const headerNames = headers && typeof headers === "object" && !Array.isArray(headers) ? Object.keys(headers) : [];
+  return {
+    ...rest,
+    apiKeySet: typeof apiKey === "string" && apiKey.length > 0,
+    headersSet: headerNames.length > 0,
+    headerNames,
+  };
+}
+
 export function updateModel(
   file: ModelsFile, providerId: string, modelId: string, patch: ModelPatch,
 ): ModelEntry {
   const model = modelsArray(provider(file, providerId)).find((entry) => entry.id === modelId);
   if (!model) throw new Error(`Модель не найдена: ${modelId}`);
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) delete model[key];
-    else if (value !== undefined) model[key] = value;
-  }
+  applyModelPatch(model, patch);
   return model;
 }
 
 export function listProviders(file: ModelsFile): ProviderView[] {
-  return Object.entries(file.providers).map(([id, entry]) => ({
-    id,
-    // RPC-граница требует чистый JSON: отсутствующее имя не пишем вовсе.
-    ...(typeof entry.name === "string" ? { name: entry.name } : {}),
-    baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl : "",
-    api: typeof entry.api === "string" ? entry.api : "openai-completions",
-    apiKeySet: typeof entry.apiKey === "string" && entry.apiKey.length > 0,
-    disabled: [],
-    models: (Array.isArray(entry.models) ? entry.models : [])
-      .filter((model): model is ModelEntry =>
-        !!model && typeof model === "object" && typeof (model as Record<string, unknown>).id === "string")
-      .map((model) => {
-        const { apiKey: _key, headers: _headers, ...rest } = model;
-        return rest;
-      }),
-  }));
+  return Object.entries(file.providers).map(([id, entry]) => {
+    const headers = entry.headers && typeof entry.headers === "object" && !Array.isArray(entry.headers)
+      ? (entry.headers as Record<string, unknown>) : null;
+    return {
+      id,
+      // RPC-граница требует чистый JSON: отсутствующее имя не пишем вовсе.
+      ...(typeof entry.name === "string" ? { name: entry.name } : {}),
+      baseUrl: typeof entry.baseUrl === "string" ? entry.baseUrl : "",
+      api: typeof entry.api === "string" ? entry.api : "openai-completions",
+      apiKeySet: typeof entry.apiKey === "string" && entry.apiKey.length > 0,
+      ...(entry.authHeader === true ? { authHeader: true } : {}),
+      ...(typeof entry.oauth === "string" ? { oauth: entry.oauth } : {}),
+      ...(entry.compat && typeof entry.compat === "object" && !Array.isArray(entry.compat) ? { compat: entry.compat as Record<string, unknown> } : {}),
+      headersSet: !!headers && Object.keys(headers).length > 0,
+      headerNames: headers ? Object.keys(headers) : [],
+      disabled: [],
+      models: (Array.isArray(entry.models) ? entry.models : [])
+        .filter((model): model is ModelEntry =>
+          !!model && typeof model === "object" && typeof (model as Record<string, unknown>).id === "string")
+        .map(modelView),
+    };
+  });
 }
