@@ -267,3 +267,16 @@ describe("RPC", () => {
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-key");
   });
 });
+
+describe("токены в общем плагине", () => {
+  it("регистрирует методы токенов рядом со своими; bench-методов нет", async () => {
+    const { host } = await load();
+    expect(await host.harness.behavior.callRpc("providers_list", null)).toEqual({ providers: [] });
+    const display = await host.harness.behavior.callRpc("tokens_display_get", null) as Record<string, unknown>;
+    expect(display).toMatchObject({ thread: { enabled: true }, badge: { enabled: true } });
+    expect(await host.harness.behavior.callRpc("thread_usage", { threadId: "thr_1" })).toBeNull();
+    expect(await host.harness.behavior.callRpc("turn_usage", { keys: ["thr_1:turn-1"] }))
+      .toEqual({ "thr_1:turn-1": null });
+    await expect(host.harness.behavior.callRpc("bench_list", null)).rejects.toThrow();
+  });
+});

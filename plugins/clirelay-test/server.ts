@@ -12,6 +12,7 @@ import {
 import { apiTypeSchema, baseUrlSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
+import { registerTokens } from "./lib/tokens/server";
 import {
   RINGS_CHANGED,
   RINGS_KV_KEY,
@@ -343,6 +344,9 @@ export default async function plugin(bb: BbPluginApi) {
     rings_size: async ({ size }) => mutateRings((state) => ({ ...state, size: clampRingSize(size) })),
     rings_per_row: async ({ perRow }) => mutateRings((state) => ({ ...state, perRow: clampRingPerRow(perRow) })),
   });
+
+  // Токены: свой RPC-контракт и свой обработчик событий треда.
+  await registerTokens(bb);
 
   bb.log.info("api-models loaded");
 }

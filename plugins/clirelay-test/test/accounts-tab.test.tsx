@@ -42,12 +42,12 @@ function mount(options: {
       providers_list: () => ({ providers: [provider] }),
       relay_accounts: () => ({ configured: true, items: options.accountItems ?? accounts }),
       rings_state: () => rings,
-      rings_toggle: (input) => {
+      rings_toggle: (input: unknown) => {
         const { key, on } = input as { key: string; on: boolean };
         return { ...rings, selected: on ? [...rings.selected, key] : rings.selected.filter((entry) => entry !== key) };
       },
-      rings_size: (input) => ({ ...rings, size: (input as { size: number }).size }),
-      rings_per_row: (input) => ({ ...rings, perRow: (input as { perRow: number }).perRow }),
+      rings_size: (input: unknown) => ({ ...rings, size: (input as { size: number }).size }),
+      rings_per_row: (input: unknown) => ({ ...rings, perRow: (input as { perRow: number }).perRow }),
       ...options.rpc,
     } as never,
   } as RenderSlotOptions);
