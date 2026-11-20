@@ -192,6 +192,12 @@ function donorView(entry: ModelEntry, enabled: boolean) {
   return view;
 }
 
+/** §3.2/§4.2: автодонор либо ручной выбор из candidates при tie; дубликат/несовпадение — отказ. */
+function allowedDonor(match: ReturnType<typeof matchDonor>, donorId: string): boolean {
+  return match.donor === donorId
+    || (match.ambiguous === "tie" && match.candidates.some((candidate) => candidate.id === donorId));
+}
+
 /** Синхронизация не трогает выключенные/подключённые записи: только новые id из API. */
 function syncScan(details: DiscoveredModel[], enabled: ModelEntry[], disabled: ModelEntry[]) {
   const known = new Set([...enabled, ...disabled].map((entry) => entry.id));
@@ -355,10 +361,7 @@ export default async function plugin(bb: BbPluginApi) {
             ...disabled.map((model) => ({ id: model.id, enabled: false })),
           ];
           const match = matchDonor(modelId, pool);
-          // §3.2/§4.2: автодонор либо ручной выбор из candidates при tie; дубликат id — отказ.
-          const allowed = match.donor === donorId
-            || (match.ambiguous === "tie" && match.candidates.some((candidate) => candidate.id === donorId));
-          if (!allowed) throw new Error(`не подходит донор ${donorId} для ${modelId}`);
+          if (!allowedDonor(match, donorId)) throw new Error(`не подходит донор ${donorId} для ${modelId}`);
           const donor = providerModels(file, providerId).find((model) => model.id === donorId)
             ?? disabled.find((model) => model.id === donorId);
           if (!donor) throw new Error(`Донор не найден: ${donorId}`);
@@ -370,8 +373,11 @@ export default async function plugin(bb: BbPluginApi) {
           if (contextWindow.value !== undefined) clone.contextWindow = contextWindow.value;
           if (maxTokens.value !== undefined) clone.maxTokens = maxTokens.value;
           if (input.value) clone.input = input.value;
+          else delete clone.input;
           const reasoning = effectiveReasoning(discovered.supportedReasoningLevels, donor);
-          clone.reasoning = reasoning.reasoning;
+          // §5.3: без API-уровней и без donor.reasoning — поле не выдумываем.
+          if (discovered.supportedReasoningLevels || donor.reasoning !== undefined) clone.reasoning = reasoning.reasoning;
+          else delete clone.reasoning;
           if (reasoning.thinkingLevelMap) clone.thinkingLevelMap = reasoning.thinkingLevelMap;
           else delete clone.thinkingLevelMap;
 
@@ -381,7 +387,7 @@ export default async function plugin(bb: BbPluginApi) {
             // §3.4: preflight settings до записи models — corrupt/invalid файл
             // не должен оставить подключённую модель с невалидным settings.
             const current = await readSettingsFile(settingsPath);
-            validateSettings(current);
+            validateSettings(current, keys);
             patched = patchSettings(current, keys);
             settingsResult = patched.changed ? "updated" : "unchanged";
           }
@@ -392,7 +398,7 @@ export default async function plugin(bb: BbPluginApi) {
           const sources = { contextWindow: contextWindow.source, maxTokens: maxTokens.source, input: input.source };
           if (patched?.changed) {
             try {
-              await writeSettingsFile(settingsPath, patched.settings);
+              await writeSettingsFile(settingsPath, patched.settings, keys);
             } catch {
               // §3.4: models уже записан → не откатываем; повтор доберёт settings.
               return { status: "partial" as const, modelAdded: true, settings: "failed" as const, sources };
@@ -404,16 +410,25 @@ export default async function plugin(bb: BbPluginApi) {
         // Идемпотентный повтор: модели не перезаписываем, только недостающий settings.
         // Модель могла быть подключена обычным путём или уже удалена из API.
         if (!replaceInPi) return { status: "noop" as const, modelAdded: false, settings: "skipped" as const };
+        // Retry не должен втянуть модель, которой нет в модели pi (disabled).
+        if (!hasModel(file, providerId, modelId)) throw new Error(`Модель выключена или не подключена: ${modelId}`);
+        // §4.2: та же проверка пары, что и в ветке added — не даём поставить чужим/старым донором.
+        const retryPool = [
+          ...providerModels(file, providerId).filter((model) => model.id !== modelId).map((model) => ({ id: model.id, enabled: true })),
+          ...disabled.filter((model) => model.id !== modelId).map((model) => ({ id: model.id, enabled: false })),
+        ];
+        if (!allowedDonor(matchDonor(modelId, retryPool), donorId)) throw new Error(`не подходит донор ${donorId} для ${modelId}`);
         const current = await readSettingsFile(settingsPath);
-        validateSettings(current);
+        validateSettings(current, keys);
         const patched = patchSettings(current, keys);
         if (!patched.changed) return { status: "noop" as const, modelAdded: false, settings: "unchanged" as const };
         try {
-          await writeSettingsFile(settingsPath, patched.settings);
+          await writeSettingsFile(settingsPath, patched.settings, keys);
         } catch {
           return { status: "partial" as const, modelAdded: false, settings: "failed" as const };
         }
-        return { status: "noop" as const, modelAdded: false, settings: "updated" as const };
+        // 7c: settings реально изменился → это applied, а не noop.
+        return { status: "applied" as const, modelAdded: false, settings: "updated" as const };
       });
     },
     model_disconnect: async ({ providerId, modelId }) => ({
