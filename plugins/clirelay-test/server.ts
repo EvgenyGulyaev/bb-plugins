@@ -3,12 +3,19 @@
 import { homedir } from "node:os";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { discoverModels, resolveApiKey, testModel } from "./lib/discover";
+import { discoverModelDetails, discoverModels, resolveApiKey, testModel, type DiscoveredModel } from "./lib/discover";
 import {
   addModelEntry, applyModelPatch, connectModel, deleteProvider, disconnectModel, hasModel, listProviders,
   modelView, readModelsFile, removeModelEntry, resolveModelsPath, updateModel, upsertProvider, writeModelsFile,
   type ModelEntry, type ModelsFile,
 } from "./lib/models-file";
+import {
+  cloneDonorEntry, effectiveInput, effectiveLimit, effectiveReasoning, inputModalities, matchDonor,
+  type InputModality,
+} from "./lib/model-sync";
+import {
+  patchSettings, readSettingsFile, resolveSettingsPath, validateSettings, writeSettingsFile, type SyncKeys,
+} from "./lib/settings-file";
 import { apiTypeSchema, baseUrlSchema, compatSchema, headersPatchSchema, modelIdSchema, modelPatchSchema, providerIdSchema } from "./lib/schema";
 import { fetchAuthFileStates, fetchRelayAccounts, relayAccountSchema, relayOrigin, setAuthFileDisabled } from "./lib/relay-accounts";
 import { getManagementToken, loginRelay, type RelaySession } from "./lib/relay-auth";
@@ -41,6 +48,41 @@ const providerViewSchema = z.object({
   disabled: z.array(z.looseObject({ id: z.string() })),
 });
 
+const syncLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const modalitySchema = z.enum(["text", "image"]);
+const donorViewSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  enabled: z.boolean(),
+  contextWindow: z.number().optional(),
+  maxTokens: z.number().optional(),
+  input: z.array(modalitySchema).optional(),
+});
+const syncModelViewSchema = z.object({
+  id: z.string(),
+  contextWindow: z.number().optional(),
+  maxTokens: z.number().optional(),
+  input: z.array(modalitySchema).optional(),
+  supportedReasoningLevels: z.array(syncLevelSchema).optional(),
+  donor: donorViewSchema.optional(),
+  donorCandidates: z.array(donorViewSchema),
+});
+const syncSourcesSchema = z.object({
+  contextWindow: z.enum(["api", "donor", "default"]),
+  maxTokens: z.enum(["api", "donor", "default"]),
+  input: z.enum(["api", "donor", "default"]),
+});
+const syncApplyOutputSchema = z.object({
+  status: z.enum(["applied", "partial", "noop"]),
+  modelAdded: z.boolean(),
+  settings: z.enum(["skipped", "updated", "unchanged", "failed"]),
+  sources: syncSourcesSchema.optional(),
+});
+
+// Типы для фронта (import type — во фронт-бандл не попадает).
+export type DonorView = z.infer<typeof donorViewSchema>;
+export type SyncModelView = z.infer<typeof syncModelViewSchema>;
+
 export const rpcContract = defineRpcContract({
   providers_list: { input: z.null(), output: z.object({ providers: z.array(providerViewSchema) }) },
   provider_save: {
@@ -62,6 +104,19 @@ export const rpcContract = defineRpcContract({
   model_connect: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
     output: z.object({ connected: z.boolean() }),
+  },
+  models_sync_scan: {
+    input: z.object({ providerId: providerIdSchema }).strict(),
+    output: z.object({ models: z.array(syncModelViewSchema) }),
+  },
+  model_sync_apply: {
+    input: z.object({
+      providerId: providerIdSchema,
+      modelId: modelIdSchema,
+      donorId: modelIdSchema,
+      replaceInPi: z.boolean(),
+    }).strict(),
+    output: syncApplyOutputSchema,
   },
   model_disconnect: {
     input: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }).strict(),
@@ -110,6 +165,61 @@ export const rpcContract = defineRpcContract({
 });
 
 const CHANGED = "api-models-changed";
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** Модели провайдера из models.json без мутации (read-only доступ для sync). */
+function providerModels(file: ModelsFile, providerId: string): ModelEntry[] {
+  const models = file.providers[providerId]?.models;
+  if (!Array.isArray(models)) return [];
+  return models.filter((model): model is ModelEntry =>
+    !!model && typeof model === "object" && typeof (model as Record<string, unknown>).id === "string");
+}
+
+/** DonorView (§7): только id/name/enabled и несекретные лимиты/input. */
+function donorView(entry: ModelEntry, enabled: boolean) {
+  const view: {
+    id: string; name?: string; enabled: boolean; contextWindow?: number; maxTokens?: number; input?: InputModality[];
+  } = { id: entry.id, enabled };
+  if (typeof entry.name === "string" && entry.name) view.name = entry.name;
+  const contextWindow = positiveInteger(entry.contextWindow);
+  if (contextWindow !== undefined) view.contextWindow = contextWindow;
+  const maxTokens = positiveInteger(entry.maxTokens);
+  if (maxTokens !== undefined) view.maxTokens = maxTokens;
+  const input = inputModalities(entry.input);
+  if (input) view.input = input;
+  return view;
+}
+
+/** Синхронизация не трогает выключенные/подключённые записи: только новые id из API. */
+function syncScan(details: DiscoveredModel[], enabled: ModelEntry[], disabled: ModelEntry[]) {
+  const known = new Set([...enabled, ...disabled].map((entry) => entry.id));
+  const pool = [...enabled.map((entry) => ({ entry, enabled: true })), ...disabled.map((entry) => ({ entry, enabled: false }))];
+  const byId = new Map(pool.map((item) => [item.entry.id, item]));
+  return details
+    .filter((model) => !known.has(model.id))
+    .map((model) => {
+      const match = matchDonor(model.id, pool.map((item) => ({ id: item.entry.id, enabled: item.enabled })));
+      const view: {
+        id: string; contextWindow?: number; maxTokens?: number; input?: InputModality[];
+        supportedReasoningLevels?: DiscoveredModel["supportedReasoningLevels"];
+        donor?: ReturnType<typeof donorView>; donorCandidates: Array<ReturnType<typeof donorView>>;
+      } = { id: model.id, donorCandidates: [] };
+      if (model.contextWindow !== undefined) view.contextWindow = model.contextWindow;
+      if (model.maxTokens !== undefined) view.maxTokens = model.maxTokens;
+      if (model.input) view.input = model.input;
+      if (model.supportedReasoningLevels) view.supportedReasoningLevels = model.supportedReasoningLevels;
+      const donor = match.donor ? byId.get(match.donor) : undefined;
+      if (!match.donor && match.candidates.length > 0) {
+        view.donorCandidates = match.candidates.map((candidate) => donorView(byId.get(candidate.id)!.entry, candidate.enabled));
+      } else if (donor) {
+        view.donor = donorView(donor.entry, donor.enabled);
+      }
+      return view;
+    });
+}
 
 export default async function plugin(bb: BbPluginApi) {
   // Путь к файлу pi конфигурируется: Settings → Installed plugins → Api модели
@@ -204,6 +314,101 @@ export default async function plugin(bb: BbPluginApi) {
       return { models: await discoverModels(entry.baseUrl, resolveApiKey(entry.apiKey)) };
     },
     model_connect: async ({ providerId, modelId }) => ({ connected: await mutate((file) => connectModel(file, providerId, modelId)) }),
+    models_sync_scan: async ({ providerId }) => {
+      const file = await readModelsFile(filePath);
+      const entry = file.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const details = await discoverModelDetails(entry.baseUrl, resolveApiKey(entry.apiKey));
+      const enabled = providerModels(file, providerId);
+      const disabled = await readDisabled(providerId);
+      return { models: syncScan(details, enabled, disabled) };
+    },
+    model_sync_apply: async ({ providerId, modelId, donorId, replaceInPi }) => {
+      // Сетевой fetch — без lock; чтение/запись файлов и kv — внутри locked.
+      const snapshot = await readModelsFile(filePath);
+      const entry = snapshot.providers[providerId];
+      if (!entry) throw new Error(`Провайдер не найден: ${providerId}`);
+      if (typeof entry.baseUrl !== "string" || !entry.baseUrl) throw new Error("у провайдера не задан baseUrl");
+      const details = await discoverModelDetails(entry.baseUrl, resolveApiKey(entry.apiKey));
+      return locked(async () => {
+        const file = await readModelsFile(filePath);
+        const provider = file.providers[providerId];
+        if (!provider) throw new Error(`Провайдер не найден: ${providerId}`);
+        const disabled = await readDisabled(providerId);
+        const settingsPath = resolveSettingsPath(filePath);
+        const keys: SyncKeys = { providerId, donorId, modelId };
+        const added = !hasModel(file, providerId, modelId) && !disabled.some((model) => model.id === modelId);
+
+        if (added) {
+          const discovered = details.find((model) => model.id === modelId);
+          if (!discovered) throw new Error(`Модель не найдена в API: ${modelId}`);
+          const pool = [
+            ...providerModels(file, providerId).map((model) => ({ id: model.id, enabled: true })),
+            ...disabled.map((model) => ({ id: model.id, enabled: false })),
+          ];
+          const match = matchDonor(modelId, pool);
+          // §3.2/§4.2: автодонор либо ручной выбор из candidates при tie; дубликат id — отказ.
+          const allowed = match.donor === donorId
+            || (match.ambiguous === "tie" && match.candidates.some((candidate) => candidate.id === donorId));
+          if (!allowed) throw new Error(`не подходит донор ${donorId} для ${modelId}`);
+          const donor = providerModels(file, providerId).find((model) => model.id === donorId)
+            ?? disabled.find((model) => model.id === donorId);
+          if (!donor) throw new Error(`Донор не найден: ${donorId}`);
+
+          const contextWindow = effectiveLimit(discovered.contextWindow, donor, "contextWindow");
+          const maxTokens = effectiveLimit(discovered.maxTokens, donor, "maxTokens");
+          const input = effectiveInput(discovered.input, donor);
+          const clone = cloneDonorEntry(donor, modelId);
+          if (contextWindow.value !== undefined) clone.contextWindow = contextWindow.value;
+          if (maxTokens.value !== undefined) clone.maxTokens = maxTokens.value;
+          if (input.value) clone.input = input.value;
+          const reasoning = effectiveReasoning(discovered.supportedReasoningLevels, donor);
+          clone.reasoning = reasoning.reasoning;
+          if (reasoning.thinkingLevelMap) clone.thinkingLevelMap = reasoning.thinkingLevelMap;
+          else delete clone.thinkingLevelMap;
+
+          let settingsResult: "skipped" | "updated" | "unchanged" = "skipped";
+          let patched: ReturnType<typeof patchSettings> | null = null;
+          if (replaceInPi) {
+            // §3.4: preflight settings до записи models — corrupt/invalid файл
+            // не должен оставить подключённую модель с невалидным settings.
+            const current = await readSettingsFile(settingsPath);
+            validateSettings(current);
+            patched = patchSettings(current, keys);
+            settingsResult = patched.changed ? "updated" : "unchanged";
+          }
+
+          addModelEntry(file, providerId, clone);
+          await writeModelsFile(filePath, file);
+          bb.realtime.publish(CHANGED, {});
+          const sources = { contextWindow: contextWindow.source, maxTokens: maxTokens.source, input: input.source };
+          if (patched?.changed) {
+            try {
+              await writeSettingsFile(settingsPath, patched.settings);
+            } catch {
+              // §3.4: models уже записан → не откатываем; повтор доберёт settings.
+              return { status: "partial" as const, modelAdded: true, settings: "failed" as const, sources };
+            }
+          }
+          return { status: "applied" as const, modelAdded: true, settings: settingsResult, sources };
+        }
+
+        // Идемпотентный повтор: модели не перезаписываем, только недостающий settings.
+        // Модель могла быть подключена обычным путём или уже удалена из API.
+        if (!replaceInPi) return { status: "noop" as const, modelAdded: false, settings: "skipped" as const };
+        const current = await readSettingsFile(settingsPath);
+        validateSettings(current);
+        const patched = patchSettings(current, keys);
+        if (!patched.changed) return { status: "noop" as const, modelAdded: false, settings: "unchanged" as const };
+        try {
+          await writeSettingsFile(settingsPath, patched.settings);
+        } catch {
+          return { status: "partial" as const, modelAdded: false, settings: "failed" as const };
+        }
+        return { status: "noop" as const, modelAdded: false, settings: "updated" as const };
+      });
+    },
     model_disconnect: async ({ providerId, modelId }) => ({
       removed: await locked(async () => {
         const file = await readModelsFile(filePath);

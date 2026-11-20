@@ -19,7 +19,7 @@ export default defineConfig({
     name: "bb-plugin-clirelay-test",
     setupFiles: ["./vitest.setup.ts"],
     environment: "node",
-    include: ["lib/**/*.test.ts", "server.test.ts", "test/**/*.test.{ts,tsx}"],
+    include: ["lib/**/*.test.ts", "*.test.ts", "test/**/*.test.{ts,tsx}"],
     testTimeout: 20_000,
   },
 });
