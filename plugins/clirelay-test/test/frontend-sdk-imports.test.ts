@@ -90,7 +90,7 @@ describe("frontend SDK boundary", () => {
 
   it("доходит до транзитивных lib-модулей фронта", () => {
     const modules = frontendRuntimeModules().map((file) => relative(root, file));
-    expect(modules).toEqual(expect.arrayContaining(["app.tsx", "lib/tokens/contract.ts"]));
+    expect(modules).toEqual(expect.arrayContaining(["app.tsx", "lib/schema.ts", "lib/tokens/contract.ts"]));
   });
 
   it("не содержит value-import серверного SDK во frontend runtime graph", () => {

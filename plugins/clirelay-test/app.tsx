@@ -5,12 +5,12 @@ import type { FormEvent } from "react";
 import { definePluginApp, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "./server";
-import { API_TYPES, MODEL_FIELDS, groupProvidersByBaseUrl } from "./lib/schema";
+import { API_TYPES, COMPAT_FIELDS, MODEL_FIELDS, baseUrlSchema, compatSchema, groupProvidersByBaseUrl, headersPatchSchema, parseJsonField } from "./lib/schema";
 import { groupByFamily } from "./lib/model-groups";
 import { shouldAutoLoad } from "./lib/auto-load";
 import { countdown, quotaResetFallback } from "./lib/countdown";
 import { formatUsd } from "./lib/money";
-import type { ApiType, ModelPatch, ProviderView } from "./lib/schema";
+import type { ApiType, CompatValue, ModelFieldSpec, ModelPatch, ProviderView } from "./lib/schema";
 import type { RelayAccount } from "./lib/relay-accounts";
 import { accountDisplayName, groupAccountsByProvider, partitionByQuota, relayOrigin, shouldGroupByProvider, successPercent } from "./lib/relay-accounts";
 import { quotaLabel } from "./lib/quota-labels";
@@ -178,21 +178,39 @@ function toDraft(model: Record<string, unknown>): Draft {
     const value = model[field.key];
     if (field.type === "bool") draft[field.key] = value === true;
     else if (field.type === "multiselect") draft[field.key] = Array.isArray(value) ? value.map(String) : ["text"];
+    else if (field.type === "secret" || field.type === "headers") draft[field.key] = ""; // секретные значения не показываются
+    else if (field.type === "json") draft[field.key] = value === undefined || value === null ? "" : JSON.stringify(value, null, 2);
     else draft[field.key] = value === undefined || value === null ? "" : String(value);
   }
   return draft;
 }
 
 /** Форма настроек модели: контролы генерятся из MODEL_FIELDS (тип → контрол). */
-function ModelForm({ providerId, model, rpc, report }: { providerId: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
+function ModelForm({ providerId, providerApi, model, rpc, report }: { providerId: string; providerApi: string; model: Record<string, unknown>; rpc: Rpc; report: Report }) {
   const initial = useMemo(() => toDraft(model), [model]);
   const [draft, setDraft] = useState<Draft>(initial);
-  useEffect(() => setDraft(initial), [initial]);
+  const [apiKeyClear, setApiKeyClear] = useState(false);
+  const [headersClear, setHeadersClear] = useState(false);
+  const [apiOpen, setApiOpen] = useState(false);
+  useEffect(() => { setDraft(initial); setApiKeyClear(false); setHeadersClear(false); }, [initial]);
   const set = (key: string, value: string | boolean | string[]) => setDraft((current) => ({ ...current, [key]: value }));
   const save = () => {
     const patch: Record<string, unknown> = {};
     for (const field of MODEL_FIELDS) {
       const value = draft[field.key];
+      if (field.type === "secret") {
+        if (apiKeyClear) patch[field.key] = "";
+        else if (value !== "") patch[field.key] = value;
+        continue;
+      }
+      if (field.type === "headers") {
+        if (headersClear) { patch[field.key] = null; continue; }
+        if (value === "") continue;
+        const result = parseJsonField({ ...field, schema: field.schema! }, String(value));
+        if (!result.ok) { toast.error(result.error); return; }
+        if (Object.keys(result.value as object).length) patch[field.key] = result.value;
+        continue;
+      }
       if (JSON.stringify(value) === JSON.stringify(initial[field.key])) continue;
       if (field.type === "bool") patch[field.key] = value;
       else if (field.type === "int") {
@@ -203,36 +221,108 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
           patch[field.key] = num;
         }
       } else if (field.type === "multiselect") patch[field.key] = (value as string[]).length ? value : null;
-      else patch[field.key] = value === "" ? null : value;
+      else if (field.type === "json") {
+        if (value === "") { patch[field.key] = null; continue; }
+        const result = parseJsonField({ ...field, schema: field.schema! }, String(value));
+        if (!result.ok) { toast.error(result.error); return; }
+        const current = model[field.key];
+        if (current !== undefined && JSON.stringify(result.value) === JSON.stringify(current)) continue; // переформатирование без изменений
+        patch[field.key] = result.value;
+      } else if (field.key === "baseUrl" && value !== "") {
+        const result = baseUrlSchema.safeParse(value);
+        if (!result.success) { toast.error(result.error.issues[0]!.message); return; }
+        patch[field.key] = value;
+      } else patch[field.key] = value === "" ? null : value;
     }
     if (!Object.keys(patch).length) { toast("Без изменений"); return; }
     rpc.call("model_update", { providerId, modelId: String(model.id), patch: patch as ModelPatch })
       .then(() => toast.success("Сохранено — pi подхватит при открытии /model"), report);
   };
+  const effectiveApi = (draft.api as string) || providerApi;
+  const control = (field: ModelFieldSpec) => {
+    if (field.type === "bool") return (
+      <Checkbox checked={draft[field.key] === true} onCheckedChange={(v) => set(field.key, v === true)} aria-label={field.label} />
+    );
+    if (field.type === "multiselect") return (
+      <span className="flex gap-3">
+        {field.options!.map((option) => (
+          <span key={option} className="flex items-center gap-1.5 text-xs">
+            <Checkbox checked={(draft[field.key] as string[]).includes(option)}
+              onCheckedChange={(v) => set(field.key, v === true ? [...(draft[field.key] as string[]), option] : (draft[field.key] as string[]).filter((x) => x !== option))}
+              aria-label={option} />
+            {option}
+          </span>
+        ))}
+      </span>
+    );
+    if (field.type === "select") {
+      const current = String(model[field.key] ?? "");
+      return (
+        <select className="h-8 rounded-md border border-input bg-transparent px-2 text-xs" value={String(draft[field.key] ?? "")}
+          onChange={(event) => set(field.key, event.target.value)} aria-label={field.label}>
+          <option value="">как у провайдера</option>
+          {field.options!.map((option) => <option key={option} value={option}>{option}</option>)}
+          {current && !field.options!.includes(current) ? <option value={current}>{current} (текущий)</option> : null}
+        </select>
+      );
+    }
+    if (field.type === "secret") return (
+      <span className="flex items-center gap-1.5">
+        <Input className="h-8 w-40" type="password" autoComplete="off"
+          placeholder={model.apiKeySet ? "задан — пусто = не менять" : "не задан"}
+          value={String(draft[field.key] ?? "")}
+          onChange={(event) => { set(field.key, event.target.value); setApiKeyClear(false); }} aria-label={field.label} />
+        {model.apiKeySet ? (
+          <Button type="button" variant="ghost" size="sm" className={apiKeyClear ? "text-destructive" : "text-muted-foreground"}
+            onClick={() => { setApiKeyClear(!apiKeyClear); set(field.key, ""); }} aria-label="Очистить ключ модели">
+            {apiKeyClear ? "Будет очищен" : "Очистить"}
+          </Button>
+        ) : null}
+      </span>
+    );
+    if (field.type === "json" || field.type === "headers") return (
+      <span className="flex w-full flex-col gap-1">
+        <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={4}
+          value={String(draft[field.key] ?? "")} placeholder={field.placeholder}
+          onChange={(event) => { set(field.key, event.target.value); if (field.type === "headers") setHeadersClear(false); }}
+          aria-label={field.label} />
+        {field.type === "headers" ? (
+          <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>{model.headersSet ? `заданы: ${(model.headerNames as string[]).join(", ")}` : "не заданы"}; значения не показываются, ввод мержится по ключам, "" — удалить ключ</span>
+            {model.headersSet ? (
+              <Button type="button" variant="ghost" size="sm" className={headersClear ? "text-destructive" : "text-muted-foreground"}
+                onClick={() => { setHeadersClear(!headersClear); set(field.key, ""); }} aria-label="Очистить заголовки модели">
+                {headersClear ? "Будут очищены" : "Очистить все"}
+              </Button>
+            ) : null}
+          </span>
+        ) : null}
+        {field.key === "compat" ? (
+          <span className="text-[10px] text-muted-foreground">
+            Поля для {effectiveApi}: {(COMPAT_FIELDS[effectiveApi as ApiType] ?? []).join(", ") || "нет документированных полей"}
+          </span>
+        ) : null}
+        {field.hint ? <span className="text-[10px] text-muted-foreground">{field.hint}</span> : null}
+      </span>
+    );
+    return (
+      <Input className="h-8 w-40" type={field.type === "int" ? "number" : "text"} placeholder={field.placeholder}
+        value={String(draft[field.key] ?? "")} onChange={(event) => set(field.key, event.target.value)} aria-label={field.label} />
+    );
+  };
+  const row = (field: ModelFieldSpec) => (
+    <div key={field.key} className={field.type === "json" || field.type === "headers" ? "flex flex-col gap-1 text-sm" : "flex items-center justify-between gap-3 text-sm"}>
+      <span className="text-muted-foreground">{field.label}</span>
+      {control(field)}
+    </div>
+  );
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-background/60 p-3">
-      {MODEL_FIELDS.map((field) => (
-        <div key={field.key} className="flex items-center justify-between gap-3 text-sm">
-          <span className="text-muted-foreground">{field.label}</span>
-          {field.type === "bool" ? (
-            <Checkbox checked={draft[field.key] === true} onCheckedChange={(v) => set(field.key, v === true)} aria-label={field.label} />
-          ) : field.type === "multiselect" ? (
-            <span className="flex gap-3">
-              {field.options!.map((option) => (
-                <span key={option} className="flex items-center gap-1.5 text-xs">
-                  <Checkbox checked={(draft[field.key] as string[]).includes(option)}
-                    onCheckedChange={(v) => set(field.key, v === true ? [...(draft[field.key] as string[]), option] : (draft[field.key] as string[]).filter((x) => x !== option))}
-                    aria-label={option} />
-                  {option}
-                </span>
-              ))}
-            </span>
-          ) : (
-            <Input className="h-8 w-40" type={field.type === "int" ? "number" : "text"} placeholder={field.placeholder}
-              value={String(draft[field.key] ?? "")} onChange={(event) => set(field.key, event.target.value)} aria-label={field.label} />
-          )}
-        </div>
-      ))}
+      {MODEL_FIELDS.filter((field) => !field.advanced).map(row)}
+      <button type="button" className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground" onClick={() => setApiOpen(!apiOpen)} aria-expanded={apiOpen}>
+        <Icon name="ChevronDown" className={`size-3.5 transition-transform ${apiOpen ? "" : "-rotate-90"}`} />API-настройки
+      </button>
+      {apiOpen ? MODEL_FIELDS.filter((field) => field.advanced).map(row) : null}
       <div className="mt-1 flex justify-end">
         <Button size="sm" onClick={save}><Icon name="Check" className="size-3.5" />Сохранить</Button>
       </div>
@@ -240,7 +330,7 @@ function ModelForm({ providerId, model, rpc, report }: { providerId: string; mod
   );
 }
 
-function ModelAccordion({ providerId, model, enabled, onToggle, rpc, report }: { providerId: string; model: Record<string, unknown>; enabled: boolean; onToggle: (value: boolean) => void; rpc: Rpc; report: Report }) {
+function ModelAccordion({ providerId, providerApi, model, enabled, onToggle, rpc, report }: { providerId: string; providerApi: string; model: Record<string, unknown>; enabled: boolean; onToggle: (value: boolean) => void; rpc: Rpc; report: Report }) {
   const [open, setOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const modelId = String(model.id);
@@ -272,7 +362,7 @@ function ModelAccordion({ providerId, model, enabled, onToggle, rpc, report }: {
         <ConfirmButton icon="Trash2" label="" confirmLabel="Точно?"
           onConfirm={() => rpc.call("model_disconnect", { providerId, modelId }).then(() => toast.success(`Отключена ${modelId}`), report)} />
       </div>
-      {open ? <div className="px-2 pb-2"><ModelForm providerId={providerId} model={model} rpc={rpc} report={report} /></div> : null}
+      {open ? <div className="px-2 pb-2"><ModelForm providerId={providerId} providerApi={providerApi} model={model} rpc={rpc} report={report} /></div> : null}
     </div>
   );
 }
@@ -378,7 +468,7 @@ function ProviderSection({ provider, rpc, report, onEdit, nested = false }: { pr
                   </div>
                   <div className="flex flex-col gap-1.5">
                     {group.items.map(({ entry, on }) => (
-                      <ModelAccordion key={String(entry.id)} providerId={provider.id} model={entry} enabled={on}
+                      <ModelAccordion key={String(entry.id)} providerId={provider.id} providerApi={provider.api} model={entry} enabled={on}
                         onToggle={(value) => rpc.call("model_toggle", { providerId: provider.id, modelId: String(entry.id), enabled: value })
                           .then(() => toast.success(value ? `Включена ${entry.id}` : `Выключена ${entry.id} — настройки сохранены`), report)}
                         rpc={rpc} report={report} />
@@ -424,14 +514,40 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
   const [baseUrl, setBaseUrl] = useState(editing?.baseUrl ?? "");
   const [api, setApi] = useState<string>(editing?.api ?? "openai-completions");
   const [apiKey, setApiKey] = useState("");
+  const [authHeader, setAuthHeader] = useState(editing?.authHeader ?? false);
+  const [oauth, setOauth] = useState(editing?.oauth ?? "");
+  const [compat, setCompat] = useState(editing?.compat ? JSON.stringify(editing.compat, null, 2) : "");
+  const [headers, setHeaders] = useState("");
+  const [headersClear, setHeadersClear] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    rpc.call("provider_save", { id, name: name || undefined, baseUrl, api: api as ApiType, apiKey: apiKey || undefined })
+    const payload: {
+      id: string; name?: string; baseUrl: string; api: ApiType; apiKey?: string;
+      authHeader?: boolean | null; oauth?: "radius" | null; compat?: CompatValue | null; headers?: Record<string, string> | null;
+    } = { id, name: name || undefined, baseUrl, api: api as ApiType, apiKey: apiKey || undefined };
+    if (authHeader !== (editing?.authHeader ?? false)) payload.authHeader = authHeader ? true : null;
+    if (oauth !== (editing?.oauth ?? "")) payload.oauth = oauth === "" ? null : "radius";
+    const compatInitial = editing?.compat ? JSON.stringify(editing.compat, null, 2) : "";
+    if (compat !== compatInitial) {
+      if (compat.trim() === "") payload.compat = null;
+      else {
+        const result = parseJsonField({ key: "compat", label: "Совместимость провайдера", type: "json", schema: compatSchema }, compat);
+        if (!result.ok) { toast.error(result.error); return; }
+        payload.compat = result.value;
+      }
+    }
+    if (headersClear) payload.headers = null;
+    else if (headers.trim() !== "") {
+      const result = parseJsonField({ key: "headers", label: "Заголовки провайдера", type: "headers", schema: headersPatchSchema }, headers);
+      if (!result.ok) { toast.error(result.error); return; }
+      if (Object.keys(result.value as object).length) payload.headers = result.value;
+    }
+    rpc.call("provider_save", payload)
       .then(() => { toast.success("Адрес сохранён"); onClose(); }, report);
   };
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{editing ? "Настроить API" : "Добавить API"}</DialogTitle></DialogHeader>
         <form className="flex flex-col gap-3" onSubmit={submit}>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">id (slug)</span>
@@ -446,6 +562,27 @@ function ProviderDialog({ editing, rpc, report, onClose }: { editing: ProviderVi
             </select></label>
           <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">API-ключ {editing ? "(пусто = не менять)" : ""}</span>
             <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" aria-label="API-ключ" /></label>
+          <label className="flex items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">Authorization: Bearer (authHeader)</span>
+            <Checkbox checked={authHeader} onCheckedChange={(v) => setAuthHeader(v === true)} aria-label="authHeader" /></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">OAuth</span>
+            <select className="h-9 rounded-md border border-input bg-transparent px-3 text-sm" value={oauth} onChange={(event) => setOauth(event.target.value)} aria-label="oauth">
+              <option value="">нет</option><option value="radius">radius</option>
+            </select></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Совместимость провайдера (compat, JSON)</span>
+            <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={4} value={compat}
+              placeholder='{"supportsStore": false}' onChange={(event) => setCompat(event.target.value)} aria-label="compat провайдера" /></label>
+          <label className="flex flex-col gap-1 text-sm"><span className="text-muted-foreground">Заголовки провайдера (JSON)</span>
+            <textarea className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 font-mono text-xs" rows={3} value={headers}
+              placeholder='{"X-Api-Key": "$ENV_NAME"}' onChange={(event) => { setHeaders(event.target.value); setHeadersClear(false); }} aria-label="Заголовки провайдера" />
+            <span className="flex items-center gap-2 text-[10px] text-muted-foreground">
+              <span>{editing?.headersSet ? `заданы: ${editing.headerNames.join(", ")}` : "не заданы"}; значения не показываются, мерж по ключам, "" — удалить ключ</span>
+              {editing?.headersSet ? (
+                <Button type="button" variant="ghost" size="sm" className={headersClear ? "text-destructive" : "text-muted-foreground"}
+                  onClick={() => { setHeadersClear(!headersClear); setHeaders(""); }} aria-label="Очистить заголовки провайдера">
+                  {headersClear ? "Будут очищены" : "Очистить все"}
+                </Button>
+              ) : null}
+            </span></label>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>Отмена</Button>
             <Button type="submit"><Icon name="Check" className="size-3.5" />Сохранить</Button>
