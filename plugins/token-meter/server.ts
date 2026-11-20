@@ -71,7 +71,7 @@ async function findTurnModel(
     for (const row of rows) {
       const parsed = modelRequestRowSchema.safeParse(row);
       if (!parsed.success || !parsed.data.model) continue;
-      // Запросы модели, отправленные уже внутри хода, — не модель этого хода.
+      // Граница включительная: createdAt == startedAt — запрос этого хода; строго позже — уже нет.
       if (boundary.startedAt !== null && parsed.data.createdAt > boundary.startedAt) continue;
       return parsed.data.model;
     }

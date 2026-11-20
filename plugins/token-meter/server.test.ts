@@ -82,6 +82,7 @@ async function load(
   defaultExecutionOptions?: OptionsLookup,
   settings: Record<string, string | boolean> = {},
   threadLookup?: ThreadLookup,
+  onList?: (args: ListArgs) => void,
 ) {
   const calls: ListArgs[] = [];
   const host = createFakePluginHost({
@@ -94,6 +95,7 @@ async function load(
         events: {
           list: async (args: ListArgs) => {
             calls.push(args);
+            onList?.(args);
             if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
             return listEvents(rows, args);
           },
@@ -487,6 +489,28 @@ it("модель хода — из client/turn/requested, providerId — из th
     expect(await host.bb.storage.kv.get(turnKey("turn-1"))).toMatchObject({ model: "default-model" });
   });
 
+  it("без turn/started запрос после usage не подменяет модель хода", async () => {
+    const { host } = await load([
+      requestRow("model-before-usage", 1, 500),
+      row("turn/completed", 2, 2_000),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }),
+      requestRow("model-after-usage", 4, 2_500),
+    ]);
+    await emit(host, 4);
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({ model: "model-before-usage" });
+  });
+
+  it("запрос с createdAt == turn/started относится к этому ходу", async () => {
+    const { host } = await load([
+      requestRow("model-at-turn-start", 1, 1_000),
+      row("turn/started", 2, 1_000),
+      row("turn/completed", 3, 2_000),
+      row("thread/tokenUsage/updated", 4, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, async () => ({ model: "default-model" }));
+    await emit(host, 4);
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({ model: "model-at-turn-start" });
+  });
+
   it("без client/turn/requested → fallback на каждый ход, кэша модели нет", async () => {
     const options = vi.fn<OptionsLookup>(async () => ({ model: "default-model" }));
     const rows = [
@@ -526,6 +550,67 @@ it("модель хода — из client/turn/requested, providerId — из th
     expect(thread).toHaveBeenCalledOnce();
     expect(host.harness.inspection.logEntries).toEqual([]);
     expect(await host.bb.storage.kv.get(turnKey("turn-2"))).toMatchObject({ providerId: "prov" });
+  });
+
+  it("providerId кэш истекает через 60 секунд", async () => {
+    vi.useFakeTimers({ now: BASE });
+    const thread = vi.fn<ThreadLookup>(async () => ({ providerId: "prov" }));
+    const rows = [
+      row("turn/started", 1, 1_000, {}, "turn-1"),
+      row("turn/completed", 2, 2_000, {}, "turn-1"),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
+    ];
+    const { host } = await load(rows, undefined, 0, undefined, {}, thread);
+    await emit(host, 3);
+    vi.setSystemTime(BASE + 60_001);
+    rows.push(
+      row("turn/started", 4, 3_000, {}, "turn-2"),
+      row("turn/completed", 5, 4_000, {}, "turn-2"),
+      row("thread/tokenUsage/updated", 6, 4_000, { tokenUsage: tokenUsage() }, "turn-2"),
+    );
+    await emit(host, 6);
+    expect(thread).toHaveBeenCalledTimes(2);
+  });
+
+  it("ошибка threads.get кэшируется на 60 секунд", async () => {
+    vi.useFakeTimers({ now: BASE });
+    const thread = vi.fn<ThreadLookup>(async () => { throw new Error("SDK unavailable"); });
+    const rows = [
+      row("turn/started", 1, 1_000, {}, "turn-1"),
+      row("turn/completed", 2, 2_000, {}, "turn-1"),
+      row("thread/tokenUsage/updated", 3, 2_000, { tokenUsage: tokenUsage() }, "turn-1"),
+    ];
+    const { host } = await load(rows, undefined, 0, undefined, {}, thread);
+    await emit(host, 3);
+    vi.setSystemTime(BASE + 59_999);
+    rows.push(
+      row("turn/started", 4, 3_000, {}, "turn-2"),
+      row("turn/completed", 5, 4_000, {}, "turn-2"),
+      row("thread/tokenUsage/updated", 6, 4_000, { tokenUsage: tokenUsage() }, "turn-2"),
+    );
+    await emit(host, 6);
+    expect(thread).toHaveBeenCalledOnce();
+    expect(await host.bb.storage.kv.get(turnKey("turn-2"))).toMatchObject({ input: 40, output: 60 });
+  });
+
+  it("ошибка list client/turn/requested → fallback, usage сохраняется", async () => {
+    const options = vi.fn<OptionsLookup>(async () => ({ model: "default-model" }));
+    const { host } = await load([
+      requestRow("model-from-event", 1, 500),
+      row("turn/started", 2, 1_000),
+      row("turn/completed", 3, 2_000),
+      row("thread/tokenUsage/updated", 4, 2_000, { tokenUsage: tokenUsage() }),
+    ], undefined, 0, options, {}, undefined, (args) => {
+      if (args.types?.length === 1 && args.types[0] === "client/turn/requested") {
+        throw new Error("SDK unavailable");
+      }
+    });
+    await emit(host, 4);
+    expect(options).toHaveBeenCalledOnce();
+    expect(await host.bb.storage.kv.get(turnKey())).toMatchObject({
+      input: 40, output: 60, model: "default-model",
+    });
+    expect(host.harness.inspection.logEntries).toEqual([]);
   });
 
   it.each(["null", "error"])("defaultExecutionOptions=%s → вызывается, но model отсутствует", async (mode) => {

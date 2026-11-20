@@ -200,6 +200,7 @@ describe("benchmarkModel", () => {
 
   it.each([
     ["http://user:super-secret@localhost:8317/v1", "логин/пароль"],
+    ["http://user@localhost:8317/v1", "логин/пароль"],
     ["не-url", "не является URL"],
   ])("endpoint %s → отказ без сети и без утечки", async (endpoint, message) => {
     const fetchMock = vi.fn();
