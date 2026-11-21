@@ -1,9 +1,47 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import { contract, resetHostContract, preferencesSchema, usageResponseSchema, type Overview } from "./contract.ts";
 import { orderedProviders } from "./limits.ts";
 
+const externalResourceListSchema = z.object({ resources: z.array(z.object({
+  id: z.string(), providerId: z.string(), label: z.string(),
+  scope: z.object({ kind: z.enum(["shared", "host"]), hostId: z.string().optional() }),
+})) });
+const externalUsageSchema = z.object({
+  usage: z.object({
+    status: z.string(), accountEmail: z.string().nullable().optional(), planLabel: z.string().nullable().optional(),
+    windows: z.array(z.object({ label: z.string(), usedPercent: z.number(), resetsAt: z.string().nullable().optional() })).optional(),
+  }),
+});
+
 export default function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: resetHostContract });
+  async function readExternalUsage(hostId: string | null, providers: any[], refresh = false, signal?: AbortSignal) {
+    const methods = await bb.sdk.plugins.experimental_discoverRpc({ method: "provider-usage.v1.listResources", signal });
+    const listMethods = methods.filter(method => method.method === "provider-usage.v1.listResources");
+    const result: { providerId: string; id: string; label: string; usage: any }[] = [];
+    for (const method of listMethods) {
+      const listed = externalResourceListSchema.parse(await bb.sdk.plugins.callRpc({
+        pluginId: method.pluginId, method: method.method, input: {}, outputSchema: externalResourceListSchema, signal,
+      }));
+      const getMethod = methods.find(candidate => candidate.pluginId === method.pluginId && candidate.method === "provider-usage.v1.getResource");
+      if (!getMethod) continue;
+      for (const resource of listed.resources) {
+        if (resource.scope.kind === "host" && resource.scope.hostId !== hostId) continue;
+        try {
+          const data = externalUsageSchema.parse(await bb.sdk.plugins.callRpc({
+            pluginId: getMethod.pluginId, method: getMethod.method,
+            input: { resourceId: resource.id, refresh }, outputSchema: externalUsageSchema, signal,
+          }));
+          result.push({ providerId: resource.providerId, id: resource.id, label: resource.label, usage: data.usage });
+        } catch { /* One external provider must not hide native limits. */ }
+      }
+    }
+    return result.map(resource => ({
+      ...resource,
+      displayName: providers.find(provider => provider.id === resource.providerId)?.displayName ?? resource.label,
+    }));
+  }
   async function resetTarget(input: { hostId: string | null; accountId: string }, signal?: AbortSignal) {
     const hostId = input.hostId ?? (await bb.sdk.system.config()).primaryHostId;
     if (!hostId) throw new Error("Выберите компьютер с установленным Codex CLI.");
@@ -19,9 +57,10 @@ export default function plugin(bb: BbPluginApi) {
   }
   async function read(hostId: string | null, force = false, signal?: AbortSignal): Promise<Overview> {
     const selectedHost = hostId ?? (await bb.sdk.system.config()).primaryHostId;
-    const [saved, roster] = await Promise.all([
+    const [saved, nativeRoster, allRoster] = await Promise.all([
       preferences(),
       bb.sdk.providers.list(selectedHost ? { capability: "usage", hostId: selectedHost } : { capability: "usage" }),
+      bb.sdk.providers.list(selectedHost ? { hostId: selectedHost } : {}),
     ]);
     const input = { force: false, machineIds: selectedHost ? [selectedHost] : null, providerIds: [] as string[], maxAgeMs: 60_000 };
     const getUsage = (args: typeof input) => bb.sdk.plugins.callRpc({
@@ -32,7 +71,7 @@ export default function plugin(bb: BbPluginApi) {
     try {
       const inventory = await getUsage(input);
       machine = selectedHost ? inventory.machines.find(m => m.id === selectedHost) : inventory.machines.find(m => m.status === "connected");
-      const enabled = roster.filter(provider => saved.find(p => p.id === provider.id)?.enabled
+      const enabled = nativeRoster.filter(provider => saved.find(p => p.id === provider.id)?.enabled
         ?? machine?.providers.some(p => p.providerId === provider.id && p.usage?.status !== "not_installed") ?? false);
       if (machine?.status === "connected" && enabled.length) {
         const machineId = machine.id;
@@ -45,8 +84,24 @@ export default function plugin(bb: BbPluginApi) {
     } catch {
       error = "Не удалось прочитать лимиты. Проверьте, включён ли встроенный Provider Usage.";
     }
+    let external: Awaited<ReturnType<typeof readExternalUsage>> = [];
+    try { external = await readExternalUsage(selectedHost, allRoster, force, signal); } catch { /* Native provider limits remain available. */ }
+    const externalProviders = external.map(resource => allRoster.find(provider => provider.id === resource.providerId) ?? {
+      id: resource.providerId, displayName: resource.displayName, logoUrl: null, icon: null, strings: null,
+    });
+    const roster = [...nativeRoster, ...externalProviders.filter(provider => !nativeRoster.some(native => native.id === provider.id))];
     const providers = roster.map(provider => {
-      const accounts = machine?.providers.filter(p => p.providerId === provider.id) ?? [];
+      const accounts = [
+        ...(machine?.providers.filter(p => p.providerId === provider.id) ?? []),
+        ...external.filter(resource => resource.providerId === provider.id).map(resource => ({
+          id: resource.id, accountLabel: resource.label,
+          usage: resource.usage.status === "ok" ? {
+            status: "ok" as const, accountEmail: resource.usage.accountEmail ?? null,
+            planLabel: resource.usage.planLabel ?? null,
+            windows: (resource.usage.windows ?? []).map((window: { label: string; usedPercent: number; resetsAt?: string | null }) => ({ label: window.label, usedPercent: window.usedPercent, resetsAt: window.resetsAt ?? null })),
+          } : { status: "error" as const, message: "Не удалось получить лимиты." },
+        })),
+      ];
       return {
         id: provider.id, displayName: provider.displayName, logoUrl: provider.logoUrl ?? null, icon: provider.icon ?? null,
         strings: { iconTint: provider.strings?.iconTint ?? null }, accounts,
