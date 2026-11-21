@@ -11,9 +11,9 @@ export interface ProviderPreference {
 
 export function selectWindow(windows: readonly UsageWindow[]): UsageWindow | null {
   return windows.find(w => /^(Five-hour limit|5 hours?|5h)$/i.test(w.label))
-    ?? windows.find(w => /^Five-hour limit · /i.test(w.label))
+    ?? windows.find(w => /^(Five-hour limit|5 hours?|5h)\s*[·:-].+$/i.test(w.label))
     ?? windows.find(w => /^(Weekly limit|Weekly|7d)$/i.test(w.label))
-    ?? windows.find(w => /^Weekly\b/i.test(w.label))
+    ?? windows.find(w => /^(Weekly|7d)\s*[·:-].+$/i.test(w.label))
     ?? null;
 }
 
