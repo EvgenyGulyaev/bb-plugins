@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { orderedProviders, remainingPercent, selectWindow } from "./limits.ts";
+import { groupWindows, orderedProviders, remainingPercent, selectWindow } from "./limits.ts";
 
 const weekly = { label: "Weekly limit", usedPercent: 99, resetsAt: null };
 const fiveHour = { label: "Five-hour limit", usedPercent: 30, resetsAt: null };
@@ -38,4 +38,21 @@ test("saved ordering survives disappearing providers and adds new ones last", ()
 test("a model-specific 5-hour window also takes priority over weekly", () => {
   const modelWindow = { ...fiveHour, label: "Five-hour limit · Sonnet" };
   assert.equal(selectWindow([weekly, modelWindow]), modelWindow);
+});
+
+test("grouped Antigravity windows prioritize Gemini Models 5h or weekly over other model groups", () => {
+  const geminiWeekly = { group: "Gemini Models", label: "Weekly limit", usedPercent: 12, resetsAt: "2026-11-27T17:12:23Z" };
+  const gemini5h = { group: "Gemini Models", label: "Five-hour limit", usedPercent: 4, resetsAt: "2026-11-20T22:12:23Z" };
+  const claude5h = { group: "Claude and GPT models", label: "Five-hour limit", usedPercent: 50, resetsAt: "2026-11-20T22:12:23Z" };
+  const argonWeekly = { group: "Gemini 4 Argon", label: "Weekly limit", usedPercent: 0, resetsAt: null };
+
+  assert.equal(selectWindow([claude5h, geminiWeekly, gemini5h, argonWeekly]), gemini5h);
+  assert.equal(selectWindow([claude5h, geminiWeekly, argonWeekly]), geminiWeekly);
+
+  const grouped = groupWindows([geminiWeekly, gemini5h, claude5h, argonWeekly]);
+  assert.deepEqual(grouped.map(g => [g.name, g.windows.length]), [
+    ["Gemini Models", 2],
+    ["Claude and GPT models", 1],
+    ["Gemini 4 Argon", 1],
+  ]);
 });

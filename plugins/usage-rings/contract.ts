@@ -4,11 +4,17 @@ import { z } from "zod";
 const id = z.string().min(1).max(256);
 export const preferencesSchema = z.array(z.object({ id, enabled: z.boolean() }).strict()).max(100)
   .refine(rows => new Set(rows.map(row => row.id)).size === rows.length, "Провайдеры не должны повторяться");
-const windowSchema = z.object({ label: z.string(), usedPercent: z.number().finite(), resetsAt: z.string().nullable() });
-const usageSchema = z.discriminatedUnion("status", [
+const windowSchema = z.object({
+  label: z.string(),
+  usedPercent: z.number().finite(),
+  resetsAt: z.string().nullable(),
+  group: z.string().nullable().optional(),
+});
+export const usageSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ok"), windows: z.array(windowSchema), accountEmail: z.string().nullable(), planLabel: z.string().nullable() }),
   z.object({ status: z.enum(["not_installed", "unauthenticated", "expired", "error"]), message: z.string().optional() }),
 ]);
+export type Usage = z.infer<typeof usageSchema>;
 const artwork = {
   logoUrl: z.string().nullable().optional(),
   icon: z.union([z.string(), z.object({ glyph: z.string() })]).nullable().optional(),
@@ -40,10 +46,12 @@ const consumeFields = {
   creditId: id, expectedAccountId: id, idempotencyKey: z.string().uuid(), confirmed: z.literal(true),
 };
 export const resetOutcomeSchema = z.enum(["reset", "nothingToReset", "noCredit", "alreadyRedeemed"]);
-export const resetHostContract = {
+export const hostContract = {
   readResets: { input: z.object({ expectedEmail: z.string().min(1) }).strict(), output: resetsSchema },
   consumeReset: { input: z.object({ expectedEmail: z.string().min(1), ...consumeFields }).strict(), output: resetOutcomeSchema },
+  readAntigravityUsage: { input: z.object({}).strict(), output: usageSchema },
 } satisfies PluginRpcContract;
+export const resetHostContract = hostContract;
 export type Resets = z.infer<typeof resetsSchema>;
 export type ResetCredit = z.infer<typeof resetCreditSchema>;
 export function availableCredits(data: Resets, now = Date.now()) {

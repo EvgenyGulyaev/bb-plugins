@@ -1,4 +1,4 @@
-import type { ThreadUsage, TokenUsage, TurnUsage } from "./contract";
+import type { ContextWindowUsage, ThreadUsage, TokenUsage, TurnUsage } from "./contract";
 
 export const MAX_TURNS_PER_THREAD = 500;
 export const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -44,6 +44,44 @@ export function makeTurnUsage(input: {
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(turnDurationMs === undefined ? {} : { turnDurationMs }),
     ...(tokPerSec === undefined ? {} : { tokPerSec }),
+    ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.providerId === undefined ? {} : { providerId: input.providerId }),
+    at: input.at,
+  };
+}
+
+export function makeContextWindowTurnUsage(input: {
+  threadId: string;
+  turnId: string;
+  contextWindowUsage: ContextWindowUsage;
+  windowStartedAt?: number | null;
+  endedAt: number;
+  turnStartedAt: number | null;
+  model?: string;
+  providerId?: string;
+  at: number;
+}): TurnUsage {
+  const windowStartedAt = input.windowStartedAt;
+  const elapsed = windowStartedAt === undefined || windowStartedAt === null
+    ? null
+    : input.endedAt - windowStartedAt;
+  const durationMs = elapsed !== null && elapsed > 0 ? elapsed : undefined;
+  const turnElapsed = input.turnStartedAt === null ? null : input.endedAt - input.turnStartedAt;
+  const turnDurationMs = turnElapsed !== null && turnElapsed > 0 ? turnElapsed : undefined;
+  return {
+    threadId: input.threadId,
+    turnId: input.turnId,
+    usageSource: "contextWindow",
+    input: 0,
+    cached: 0,
+    output: 0,
+    reasoning: 0,
+    total: input.contextWindowUsage.usedTokens,
+    ...(input.contextWindowUsage.modelContextWindow === null
+      ? {}
+      : { modelContextWindow: input.contextWindowUsage.modelContextWindow }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(turnDurationMs === undefined ? {} : { turnDurationMs }),
     ...(input.model === undefined ? {} : { model: input.model }),
     ...(input.providerId === undefined ? {} : { providerId: input.providerId }),
     at: input.at,

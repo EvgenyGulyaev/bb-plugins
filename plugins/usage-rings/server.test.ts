@@ -50,6 +50,94 @@ test("RPC returns JSON with sparse provider artwork, persists selection/order, a
   await assert.rejects(() => call("savePreferences", [{ id: "codex", enabled: true }, { id: "codex", enabled: false }]));
 });
 
+test("discovers Google Antigravity, caches host usage until refresh/event, skips when disabled, and isolates errors", async () => {
+  const values = new Map<string, unknown>();
+  const requestedUsageIds: string[][] = [];
+  let antigravityReads = 0;
+  let shouldFailAntigravity = false;
+  let handlers: Record<string, (input: unknown, context: unknown) => Promise<unknown>>;
+  const listeners = new Map<string, () => void>();
+  const nativeProviders = [{ id: "codex", displayName: "Codex" }];
+  const allProviders = [
+    { id: "codex", displayName: "Codex" },
+    { id: "acp-antigravity-acp", displayName: "Google Antigravity", logoUrl: "/api/v1/system/providers/acp-antigravity-acp/logo" },
+  ];
+  const bb = {
+    hosts: { experimental_client: () => ({ call: async (method: string) => {
+      if (method === "readAntigravityUsage") {
+        antigravityReads++;
+        if (shouldFailAntigravity) throw new Error("boom");
+        return {
+          status: "ok",
+          accountEmail: null,
+          planLabel: null,
+          windows: [
+            { label: "Weekly limit", usedPercent: 2, resetsAt: "2026-11-27T17:12:23Z", group: "Gemini Models" },
+            { label: "Five-hour limit", usedPercent: 4, resetsAt: "2026-11-20T22:12:23Z", group: "Gemini Models" },
+            { label: "Five-hour limit", usedPercent: 0, resetsAt: null, group: "Claude and GPT models" },
+          ],
+        };
+      }
+      throw new Error(`unexpected ${method}`);
+    } }) },
+    storage: { kv: { get: async (key: string) => values.get(key), set: async (key: string, value: unknown) => { values.set(key, value); } } },
+    sdk: {
+      system: { config: async () => ({ primaryHostId: "host-1" }) },
+      providers: { list: async (args?: { capability?: string }) => args?.capability === "usage" ? nativeProviders : allProviders },
+      plugins: { callRpc: async ({ input }: { input: { providerIds: string[] } }) => {
+        requestedUsageIds.push(input.providerIds);
+        return { machines: [{ id: "host-1", displayName: "Laptop", status: "connected", error: null,
+          providers: [{ id: "codex-account", providerId: "codex", displayName: "Codex",
+            usage: { status: "ok", accountEmail: "user@example.com", planLabel: null, windows: [{ label: "Weekly limit", usedPercent: 21, resetsAt: null }] } }] }] };
+      } },
+    },
+    rpc: { register: (_contract: unknown, registered: typeof handlers) => { handlers = registered; }, experimental_invalidate: () => {} },
+    events: { on: (event: string, listener: () => void) => { listeners.set(event, listener); } },
+  } as unknown as BbPluginApi;
+  plugin(bb);
+
+  async function call(method: keyof typeof contract, input: unknown) {
+    const parsed = contract[method].input.parse(input);
+    const result = await handlers![method]!(parsed, {});
+    assert.deepEqual(result, JSON.parse(JSON.stringify(result)), "RPC output must contain no undefined fields");
+    return contract[method].output.parse(result);
+  }
+
+  const first = await call("overview", { hostId: null }) as { providers: { id: string; enabled: boolean; accounts: { usage?: { status: string; windows?: unknown[] } }[] }[] };
+  assert.deepEqual(first.providers.map(p => [p.id, p.enabled]), [["codex", true], ["acp-antigravity-acp", true]]);
+  assert.equal(first.providers[1]!.accounts[0]!.usage?.status, "ok");
+  assert.equal(first.providers[1]!.accounts[0]!.usage?.windows?.length, 3);
+  assert.equal(antigravityReads, 1);
+  assert.deepEqual(requestedUsageIds.at(-1), ["codex"]);
+
+  // Cached read does not re-invoke agy on host.
+  await call("overview", { hostId: null });
+  assert.equal(antigravityReads, 1);
+
+  // Manual refresh bypasses cache.
+  await call("refresh", { hostId: null });
+  assert.equal(antigravityReads, 2);
+
+  // Thread completion clears cache so next overview refreshes.
+  listeners.get("thread.idle")?.();
+  await call("overview", { hostId: null });
+  assert.equal(antigravityReads, 3);
+
+  // Disabling Google Antigravity skips host calls completely.
+  await call("savePreferences", [{ id: "codex", enabled: true }, { id: "acp-antigravity-acp", enabled: false }]);
+  listeners.get("thread.idle")?.();
+  const disabled = await call("overview", { hostId: null }) as typeof first;
+  assert.equal(disabled.providers[1]!.enabled, false);
+  assert.equal(antigravityReads, 3);
+
+  // Re-enabling with host failure isolates error to Google Antigravity while keeping Codex intact.
+  await call("savePreferences", [{ id: "codex", enabled: true }, { id: "acp-antigravity-acp", enabled: true }]);
+  shouldFailAntigravity = true;
+  const failed = await call("overview", { hostId: null }) as typeof first;
+  assert.equal(failed.providers[0]!.accounts[0]!.usage?.status, "ok");
+  assert.equal(failed.providers[1]!.accounts[0]!.usage?.status, "error");
+});
+
 test("merges provider usage resources so Command Code reaches the rings", async () => {
   let handlers: Record<string, (input: unknown, context: unknown) => Promise<unknown>>;
   const nativeProviders = [{ id: "codex", displayName: "Codex" }];

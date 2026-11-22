@@ -53,7 +53,7 @@ export function TokensMessageBadge({ message }: ExperimentalMessageMetadataProps
   return <span className="api-tokens-badge" title={formatTurnTitle(query.data)}>{text}</span>;
 }
 
-export function TokensContextSummary({ threadId }: ExperimentalThreadContextSegmentProps) {
+export function TokensContextSummary({ threadId, segments }: ExperimentalThreadContextSegmentProps) {
   const display = useTokensDisplay();
   const on = display?.thread.enabled === true;
   const query = experimental_useRpcQuery({
@@ -64,7 +64,11 @@ export function TokensContextSummary({ threadId }: ExperimentalThreadContextSegm
   });
   if (!on || !display || !query.data) return null;
   const text = formatThreadText(query.data, display.thread.fields);
-  return text ? <span className="api-tokens-context">{text}</span> : null;
+  if (!text) return null;
+  const className = segments.length <= 1
+    ? "api-tokens-context api-tokens-context-solo"
+    : "api-tokens-context";
+  return <span className={className}>{text}</span>;
 }
 
 /** `useVisible` сегмента: при выключенной строке он целиком уходит из ряда. */
